@@ -40,16 +40,26 @@ function featureColor(type) {
   return FEATURE_COLORS[type.toLowerCase()] ?? DEFAULT_FEATURE_COLOR;
 }
 
-// Hotlinking: preview.html?setting=<slug>&seed=<seed> loads straight into that layout without the
-// user touching the form - populate the select from the URL's setting (if valid) and auto-preview
-// when both params check out. previewLayout() below also keeps the URL in sync with whatever's
-// currently shown (via history.replaceState) so the address bar itself is always a valid hotlink,
-// even if the user got there by typing into the form rather than following a link.
+// Hotlinking: /preview/<slug>/<seed> loads straight into that layout without the user touching the
+// form - this page is served for that whole path family via the server's MapFallbackToFile (see
+// Program.cs), so setting/seed have to be pulled out of the URL path here rather than routed
+// server-side. ?setting=&seed= query params are still read as a fallback so links shared before
+// this switched to path-style URLs keep working. previewLayout() below keeps the URL in sync with
+// whatever's currently shown (via history.replaceState) so the address bar itself is always a
+// valid hotlink, even if the user got there by typing into the form rather than following a link.
+function paramsFromPath() {
+  // location.pathname is "/preview/<setting>/<seed>" (both segments optional) when reached via a
+  // clean-URL hotlink; "/preview.html" (no extra segments) when the static file is hit directly.
+  const segments = window.location.pathname.split("/").filter(Boolean);
+  return { setting: segments[1] ?? null, seed: segments[2] ?? null };
+}
+
 async function loadSettings() {
   const settings = await fetchSettings();
   const params = new URLSearchParams(window.location.search);
-  const settingFromUrl = params.get("setting");
-  const seedFromUrl = params.get("seed");
+  const fromPath = paramsFromPath();
+  const settingFromUrl = fromPath.setting ?? params.get("setting");
+  const seedFromUrl = fromPath.seed ?? params.get("seed");
 
   populateSettingSelect(settingSelect, settings, settingFromUrl);
 
@@ -161,7 +171,9 @@ function iconPathFor(name) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return `images/appliances/${slug}.png`;
+  // Root-absolute: this page can be served from a deep path (/preview/<setting>/<seed>), where a
+  // relative "images/..." URL would resolve against the wrong base.
+  return `/images/appliances/${slug}.png`;
 }
 
 function renderLayout(layout) {
@@ -326,10 +338,8 @@ async function previewLayout(setting, seed, updateUrl = true) {
     renderLayout(body);
 
     if (updateUrl) {
-      const url = new URL(window.location.href);
-      url.searchParams.set("setting", setting);
-      url.searchParams.set("seed", seed);
-      history.replaceState(null, "", url);
+      const path = `/preview/${encodeURIComponent(setting)}/${encodeURIComponent(seed)}`;
+      history.replaceState(null, "", path);
     }
   } catch (err) {
     setStatus("Failed to reach the server.", true);

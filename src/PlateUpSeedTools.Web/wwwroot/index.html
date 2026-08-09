@@ -4,26 +4,35 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PlateUp Seed Tools</title>
-  <link rel="stylesheet" href="css/theme.css" />
+  <link rel="stylesheet" href="/css/theme.css" />
 </head>
 <body>
-  <header class="app-header">
-    <h1>PlateUp <span class="accent">Seed</span> Tools</h1>
-    <p class="subtitle">See what a seed actually builds, before you play it.</p>
-    <nav class="main-nav">
-      <a href="index.html" class="active">Home</a>
-      <a href="preview.html">Seed Previewer</a>
-    </nav>
+  <header class="site-header">
+    <div class="site-header-inner">
+      <a class="brand" href="/">PlateUp <span class="accent">Seed</span> Tools</a>
+      <button class="nav-toggle" id="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">
+        <span class="sr-only">Menu</span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+      </button>
+      <nav class="main-nav" id="main-nav">
+        <a href="/" class="active">Home</a>
+        <a href="/preview">Seed Previewer</a>
+      </nav>
+    </div>
   </header>
 
   <main>
     <section class="hero">
+      <h1>PlateUp <span class="accent">Seed</span> Tools</h1>
+      <p class="subtitle">See what a seed actually builds, before you play it.</p>
       <p>
         Pick a restaurant setting and a seed, and see the exact kitchen layout it produces —
         room shapes, dining tables, appliance placement, and doors — ported directly from
         PlateUp!'s own seed and layout-generation logic, not an approximation of it.
       </p>
-      <a class="button-link" href="preview.html">Open the seed previewer</a>
+      <a class="button-link" href="/preview">Open the seed previewer</a>
     </section>
 
     <section class="quick-access">
@@ -46,7 +55,8 @@
     </section>
   </main>
 
-  <script src="js/shared.js"></script>
-  <script src="js/home.js"></script>
+  <script src="/js/nav.js"></script>
+  <script src="/js/shared.js"></script>
+  <script src="/js/home.js"></script>
 </body>
 </html>

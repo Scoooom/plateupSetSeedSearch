@@ -27,7 +27,7 @@ form.addEventListener("submit", (event) => {
     return;
   }
 
-  window.location.href = `preview.html?setting=${encodeURIComponent(setting)}&seed=${encodeURIComponent(seed)}`;
+  window.location.href = `/preview/${encodeURIComponent(setting)}/${encodeURIComponent(seed)}`;
 });
 
 loadSettings().catch(() => setStatus("Failed to load restaurant settings.", true));
