@@ -48,13 +48,17 @@ public static partial class LayoutEndpoints
             return Results.BadRequest(new { error = $"Seed must be 1-{Seed.MaxLength} alphanumeric characters." });
         }
 
-        // Real PlateUp seeds are always uppercase internally - not enforced above (any case is
-        // accepted as valid input) but normalized here so "abc"/"ABC"/"AbC" are treated as the same
-        // seed: same cache entry, same hash, matching what the game itself would compute. This is
-        // deliberately NOT done inside Engine.Seeding.Seed - that's a faithful, verified port of the
-        // real Seed struct, which hashes exactly the bytes it's given with no case transform (see its
-        // doc comment); normalizing belongs at this application boundary, not in the port.
-        seed = seed.ToUpperInvariant();
+        // CORRECTED (was ToUpperInvariant - confirmed wrong via ground-truth capture, see
+        // game-domain-knowledge.md's "Seed case normalization" section): the real game's seed text
+        // input (Common/Kitchen/TextInputView.cs, `_Value = IsSeedMode ? value.ToLower() : value`)
+        // lowercases what the player types before it's ever used to construct a Seed - the uppercase
+        // shown on screen is a display style over a lowercase-stored string. Normalized here so
+        // "abc"/"ABC"/"AbC" are treated as the same seed (same cache entry, same hash) matching what
+        // the game itself actually computes. This is deliberately NOT done inside Engine.Seeding.Seed
+        // - that's a faithful, verified port of the real Seed struct, which hashes exactly the bytes
+        // it's given with no case transform (see its doc comment); normalizing belongs at this
+        // application boundary, not in the port.
+        seed = seed.ToLowerInvariant();
 
         var cacheKey = $"{setting}:{seed}";
         var cached = await cache.GetAsync(cacheKey);
