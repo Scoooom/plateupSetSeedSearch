@@ -59,10 +59,69 @@ body {
   color: var(--text-muted);
 }
 
+.main-nav {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+}
+
+.main-nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 600;
+  padding-bottom: 0.25rem;
+  border-bottom: 2px solid transparent;
+}
+
+.main-nav a:hover {
+  color: var(--text);
+}
+
+.main-nav a.active {
+  color: var(--accent-strong);
+  border-bottom-color: var(--accent-strong);
+}
+
 main {
   max-width: 960px;
   margin: 0 auto;
   padding: 1.5rem;
+}
+
+.hero {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+.hero p {
+  color: var(--text-muted);
+  max-width: 640px;
+  margin: 0 auto 1rem;
+}
+
+.button-link {
+  display: inline-block;
+  background: var(--accent);
+  color: #1b1410;
+  text-decoration: none;
+  font-weight: 700;
+  border-radius: 6px;
+  padding: 0.6rem 1.2rem;
+}
+
+.button-link:hover {
+  background: var(--accent-strong);
+}
+
+.quick-access h2 {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  margin: 0 0 0.75rem;
 }
 
 .controls {
@@ -127,6 +186,25 @@ button[type="submit"]:hover {
 .result-meta {
   margin-bottom: 0.75rem;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.link-button {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .grid {

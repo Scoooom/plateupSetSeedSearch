@@ -9,35 +9,44 @@
 <body>
   <header class="app-header">
     <h1>PlateUp <span class="accent">Seed</span> Tools</h1>
-    <p class="subtitle">Preview a kitchen layout for any seed, in any restaurant setting.</p>
+    <p class="subtitle">See what a seed actually builds, before you play it.</p>
+    <nav class="main-nav">
+      <a href="index.html" class="active">Home</a>
+      <a href="preview.html">Seed Previewer</a>
+    </nav>
   </header>
 
   <main>
-    <form id="layout-form" class="controls">
-      <label class="field">
-        <span>Restaurant setting</span>
-        <select id="setting-select" required></select>
-      </label>
+    <section class="hero">
+      <p>
+        Pick a restaurant setting and a seed, and see the exact kitchen layout it produces —
+        room shapes, dining tables, appliance placement, and doors — ported directly from
+        PlateUp!'s own seed and layout-generation logic, not an approximation of it.
+      </p>
+      <a class="button-link" href="preview.html">Open the seed previewer</a>
+    </section>
 
-      <label class="field">
-        <span>Seed</span>
-        <input id="seed-input" type="text" maxlength="8" placeholder="bdghjmqr" autocomplete="off" required />
-      </label>
+    <section class="quick-access">
+      <h2>Quick preview</h2>
+      <form id="quick-form" class="controls">
+        <label class="field">
+          <span>Restaurant setting</span>
+          <select id="setting-select" required></select>
+        </label>
 
-      <button type="submit">Preview</button>
-    </form>
+        <label class="field">
+          <span>Seed</span>
+          <input id="seed-input" type="text" maxlength="8" placeholder="bdghjmqr" autocomplete="off" required />
+        </label>
 
-    <p id="status" class="status" role="status" aria-live="polite"></p>
+        <button type="submit">Preview</button>
+      </form>
 
-    <section id="result" class="result" hidden>
-      <div class="result-meta">
-        <span id="result-title"></span>
-      </div>
-      <div id="grid" class="grid"></div>
-      <p class="legend" id="legend"></p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </section>
   </main>
 
-  <script src="js/app.js"></script>
+  <script src="js/shared.js"></script>
+  <script src="js/home.js"></script>
 </body>
 </html>

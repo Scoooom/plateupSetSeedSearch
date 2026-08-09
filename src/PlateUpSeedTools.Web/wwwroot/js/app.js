@@ -6,6 +6,7 @@ const resultEl = document.getElementById("result");
 const resultTitle = document.getElementById("result-title");
 const gridEl = document.getElementById("grid");
 const legendEl = document.getElementById("legend");
+const copyLinkButton = document.getElementById("copy-link");
 
 // One reusable tooltip element, created once (not per-appliance/per-render) - a custom styled
 // popup instead of the native title-attribute tooltip, positioned to follow the cursor.
@@ -25,11 +26,7 @@ function hideTooltip() {
   tooltipEl.hidden = true;
 }
 
-// Seeds can be any alphanumeric string up to 8 characters - the game's "friendly" alphabet
-// (bdghjmqrtvwxy346789) is only used when it auto-generates a seed for display, it doesn't
-// restrict what a typed/shared seed can contain. Case matters (the hash is case-sensitive), so
-// this must NOT lowercase the input.
-const VALID_SEED = /^[a-zA-Z0-9]{1,8}$/;
+// VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
 
 // Kept in sync with theme.css's .feature.type-* rules.
 const FEATURE_COLORS = {
@@ -43,33 +40,29 @@ function featureColor(type) {
   return FEATURE_COLORS[type.toLowerCase()] ?? DEFAULT_FEATURE_COLOR;
 }
 
+// Hotlinking: preview.html?setting=<slug>&seed=<seed> loads straight into that layout without the
+// user touching the form - populate the select from the URL's setting (if valid) and auto-preview
+// when both params check out. previewLayout() below also keeps the URL in sync with whatever's
+// currently shown (via history.replaceState) so the address bar itself is always a valid hotlink,
+// even if the user got there by typing into the form rather than following a link.
 async function loadSettings() {
-  const response = await fetch("/api/settings");
-  const settings = await response.json();
-  settingSelect.innerHTML = "";
-  for (const setting of settings) {
-    const option = document.createElement("option");
-    option.value = setting.slug;
-    option.textContent = setting.displayName;
-    settingSelect.appendChild(option);
-  }
+  const settings = await fetchSettings();
+  const params = new URLSearchParams(window.location.search);
+  const settingFromUrl = params.get("setting");
+  const seedFromUrl = params.get("seed");
 
-  const banquet = settings.find((s) => s.slug === "banquet-hall");
-  if (banquet) {
-    settingSelect.value = banquet.slug;
+  populateSettingSelect(settingSelect, settings, settingFromUrl);
+
+  const settingIsValid = settings.some((s) => s.slug === settingFromUrl);
+  if (settingIsValid && seedFromUrl && !validateSeed(seedFromUrl)) {
+    seedInput.value = seedFromUrl;
+    await previewLayout(settingFromUrl, seedFromUrl, false);
   }
 }
 
 function setStatus(message, isError) {
   statusEl.textContent = message;
   statusEl.classList.toggle("error", Boolean(isError));
-}
-
-function validateSeed(seed) {
-  if (!VALID_SEED.test(seed)) {
-    return "Seed must be 1-8 alphanumeric characters.";
-  }
-  return null;
 }
 
 // Which edge of Tile1's cell a feature sits on, based on the direction to Tile2. North is up
@@ -317,18 +310,7 @@ function renderLayout(layout) {
   resultEl.hidden = false;
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-
-  const setting = settingSelect.value;
-  const seed = seedInput.value.trim();
-
-  const seedError = validateSeed(seed);
-  if (seedError) {
-    setStatus(seedError, true);
-    return;
-  }
-
+async function previewLayout(setting, seed, updateUrl = true) {
   setStatus("Loading...", false);
   resultEl.hidden = true;
 
@@ -342,8 +324,39 @@ form.addEventListener("submit", async (event) => {
 
     setStatus("", false);
     renderLayout(body);
+
+    if (updateUrl) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("setting", setting);
+      url.searchParams.set("seed", seed);
+      history.replaceState(null, "", url);
+    }
   } catch (err) {
     setStatus("Failed to reach the server.", true);
+  }
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const setting = settingSelect.value;
+  const seed = seedInput.value.trim();
+
+  const seedError = validateSeed(seed);
+  if (seedError) {
+    setStatus(seedError, true);
+    return;
+  }
+
+  await previewLayout(setting, seed);
+});
+
+copyLinkButton.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    setStatus("Link copied to clipboard.", false);
+  } catch {
+    setStatus("Couldn't copy the link automatically - copy it from the address bar.", true);
   }
 });
 
