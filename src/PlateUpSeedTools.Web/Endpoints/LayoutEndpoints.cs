@@ -4,6 +4,7 @@ using PlateUpSeedTools.Engine.Layouts;
 using PlateUpSeedTools.Engine.Seeding;
 using PlateUpSeedTools.Infrastructure.Cache;
 using PlateUpSeedTools.Web.Contracts;
+using PlateUpSeedTools.Web.Rendering;
 
 namespace PlateUpSeedTools.Web.Endpoints;
 
@@ -26,6 +27,10 @@ public static partial class LayoutEndpoints
     // that can't say what it actually is adds visual noise rather than information.
     private const string GenericProviderApplianceName = "Provider";
 
+    // OG_META is the marker comment GetPreviewHtml injects <meta property="og:..."> tags at - see
+    // wwwroot/preview.html's <head>.
+    private const string OgMetaMarker = "<!-- OG_META -->";
+
     public static void MapLayoutEndpoints(this WebApplication app)
     {
         app.MapGet("/api/settings", (GameDataRepository repo) => repo.ListSettings());
@@ -33,19 +38,77 @@ public static partial class LayoutEndpoints
         app.MapGet("/api/layout/{setting}/{seed}", GetLayout);
         app.MapPost("/api/layout", (LayoutRequest request, GameDataRepository repo, ICacheStore<LayoutResponse> cache) =>
             GetLayout(request.Setting, request.Seed, repo, cache));
+
+        // Shareable image (see Rendering/LayoutImageRenderer) - the single source of truth also
+        // displayed by the interactive page itself (wwwroot/js/app.js). Registered as an explicit,
+        // more-specific route ("{seed}.png" has literal text after the parameter, same mechanism as
+        // a typical "{id}.json"-style route) so it's matched in preference to the bare-seed route
+        // below for the same URL shape, regardless of registration order.
+        app.MapGet("/preview/{setting}/{seed}.png", GetLayoutPng);
+
+        // Real (non-fallback) HTML endpoint for the bare hotlink, so it can inject an og:image tag
+        // pointing at the .png above - Discord (and similar link-unfurlers) can then show *a* image
+        // embed for a bare share, even though only a true image/* response gets the fully
+        // chrome-less embed treatment. Takes over from Program.cs's MapFallbackToFile for this exact
+        // 2-segment shape, so it must reproduce "just serve the static file" for invalid input itself.
+        app.MapGet("/preview/{setting}/{seed}", GetPreviewHtml);
     }
 
     private static async Task<IResult> GetLayout(
         string setting, string seed, GameDataRepository repo, ICacheStore<LayoutResponse> cache)
     {
+        var (layout, error) = await ResolveLayout(setting, seed, repo, cache);
+        return layout is not null ? Results.Ok(layout) : Results.BadRequest(new { error });
+    }
+
+    private static async Task<IResult> GetLayoutPng(
+        string setting, string seed, HttpContext httpContext, GameDataRepository repo,
+        ICacheStore<LayoutResponse> cache, IWebHostEnvironment env)
+    {
+        var (layout, error) = await ResolveLayout(setting, seed, repo, cache);
+        if (layout is null)
+        {
+            return Results.BadRequest(new { error });
+        }
+
+        // Content is deterministic per setting+seed - safe for browsers/Discord's own fetcher to cache.
+        httpContext.Response.Headers.CacheControl = "public, max-age=86400";
+        var png = LayoutImageRenderer.Render(layout, env.WebRootPath);
+        return Results.File(png, "image/png");
+    }
+
+    private static IResult GetPreviewHtml(
+        string setting, string seed, HttpContext httpContext, GameDataRepository repo, IWebHostEnvironment env)
+    {
+        var html = File.ReadAllText(Path.Combine(env.WebRootPath, "preview.html"));
+
+        var isValidSetting = repo.ListSettings().Any(s => s.Slug == setting);
+        var isValidSeed = ValidSeedPattern().IsMatch(seed);
+        if (isValidSetting && isValidSeed)
+        {
+            var request = httpContext.Request;
+            var imageUrl = $"{request.Scheme}://{request.Host}/preview/{Uri.EscapeDataString(setting)}/{Uri.EscapeDataString(seed.ToLowerInvariant())}.png";
+            // og:title/og:description are deliberately omitted - either would reintroduce the
+            // title-bar chrome around the embed that a bare-URL share was hoping to minimize (see
+            // project plan's "Open Graph tags on the bare URL" section).
+            var ogTags = $"""<meta property="og:image" content="{imageUrl}" /><meta property="og:type" content="website" />""";
+            html = html.Replace(OgMetaMarker, ogTags);
+        }
+
+        return Results.Content(html, "text/html");
+    }
+
+    private static async Task<(LayoutResponse? Layout, string? Error)> ResolveLayout(
+        string setting, string seed, GameDataRepository repo, ICacheStore<LayoutResponse> cache)
+    {
         if (!repo.ListSettings().Any(s => s.Slug == setting))
         {
-            return Results.BadRequest(new { error = $"Unknown setting '{setting}'." });
+            return (null, $"Unknown setting '{setting}'.");
         }
 
         if (!ValidSeedPattern().IsMatch(seed))
         {
-            return Results.BadRequest(new { error = $"Seed must be 1-{Seed.MaxLength} alphanumeric characters." });
+            return (null, $"Seed must be 1-{Seed.MaxLength} alphanumeric characters.");
         }
 
         // CORRECTED (was ToUpperInvariant - confirmed wrong via ground-truth capture, see
@@ -64,7 +127,7 @@ public static partial class LayoutEndpoints
         var cached = await cache.GetAsync(cacheKey);
         if (cached is not null)
         {
-            return Results.Ok(cached);
+            return (cached, null);
         }
 
         var settingData = repo.GetSetting(setting);
@@ -76,7 +139,7 @@ public static partial class LayoutEndpoints
 
         var response = ToResponse(seedObj.Value, setting, settingData.DisplayName, layoutProfileId, constructed, repo);
         await cache.SetAsync(cacheKey, response);
-        return Results.Ok(response);
+        return (response, null);
     }
 
     private static LayoutResponse ToResponse(

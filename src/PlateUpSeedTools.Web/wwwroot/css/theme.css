@@ -283,18 +283,32 @@ button[type="submit"]:hover {
 .grid {
   position: relative;
   display: inline-grid;
-  gap: 1px;
-  background: var(--panel-border);
+  /* Gap must stay 0: the server-rendered layout image (.layout-image) is stretched to fill this
+     grid's exact box, so tile/appliance/feature hotspot divs only line up with the image if both
+     are simple W-way/H-way subdivisions of that box with no gap eating into the fractions. The
+     hairline separator this used to draw via `background` showing through the gap is now baked
+     into the image itself (see Rendering/LayoutImageRenderer.cs). */
+  gap: 0;
   border: 1px solid var(--panel-border);
   border-radius: 4px;
   overflow: auto;
   max-width: 100%;
 }
 
+/* Fills the whole grid, underneath the tile/appliance/feature hotspot divs (DOM order, not
+   z-index) - see app.js's renderLayout for how this stays aligned with those hotspots. */
+.layout-image {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
 .tile {
   width: var(--tile-size);
   height: var(--tile-size);
-  background: var(--room-unassigned);
 }
 
 /* Door/hatch/etc. markers sit in the same grid cell as their Tile1, pinned to whichever edge

@@ -5,6 +5,10 @@ RUN dotnet publish src/PlateUpSeedTools.Web/PlateUpSeedTools.Web.csproj -c Relea
 RUN dotnet publish src/PlateUpSeedTools.Cli/PlateUpSeedTools.Cli.csproj -c Release -o /app/cli
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS web
+# libfontconfig1: SkiaSharp's native lib needs it on Linux even for the small amount of text
+# rendering LayoutImageRenderer does (the abbreviated-text fallback for appliances with no icon).
+RUN apt-get update && apt-get install -y --no-install-recommends libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/web .
 COPY data/settings ./data/settings

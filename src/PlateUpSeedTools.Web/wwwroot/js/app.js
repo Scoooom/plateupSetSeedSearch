@@ -152,30 +152,6 @@ function shadeColor(baseHex, index) {
   return rgbToHex(nr, ng, nb);
 }
 
-// Short label for an appliance's on-tile text - used as a fallback for appliances with no matching
-// icon (see iconPathFor), since names like "Blueprint Cabinet" don't fit the small appliance box.
-function abbreviate(name) {
-  const words = name.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "?";
-  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
-  return words.slice(0, 3).map((w) => w[0].toUpperCase()).join("");
-}
-
-// Appliance icons (images/appliances/*.png) are keyed by kebab-cased display name, sourced from
-// https://github.com/plateupplanner/plateupplanner.github.io (community PlateUp planner's sprite
-// set) - not every resolved appliance name has a matching icon there (e.g. "Enchanting Desk", and
-// "Provider" is our own synthesized label for a generic placeholder slot with no single real-world
-// appliance to depict), so callers must handle the <img> failing to load (see renderLayout).
-function iconPathFor(name) {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  // Root-absolute: this page can be served from a deep path (/preview/<setting>/<seed>), where a
-  // relative "images/..." URL would resolve against the wrong base.
-  return `/images/appliances/${slug}.png`;
-}
-
 function renderLayout(layout) {
   hideTooltip();
 
@@ -193,6 +169,18 @@ function renderLayout(layout) {
   gridEl.style.gridTemplateColumns = `repeat(${width}, var(--tile-size))`;
   gridEl.style.gridTemplateRows = `repeat(${height}, var(--tile-size))`;
   gridEl.innerHTML = "";
+
+  // The server-rendered layout image (see Rendering/LayoutImageRenderer.cs) is the single visual
+  // source of truth - also what gets shared/unfurled at /preview/<setting>/<seed>.png. It's stretched
+  // to fill the whole grid via CSS (see .layout-image in theme.css), so every tile/appliance/feature
+  // hotspot div below - still positioned via the same gridColumn/gridRow math as before - lines up
+  // with the image regardless of on-screen scale/zoom: both are simple W-way/H-way subdivisions of
+  // the same box (this is *why* .grid's `gap` had to become 0 - see theme.css's comment on .grid).
+  const image = document.createElement("img");
+  image.className = "layout-image";
+  image.alt = `${layout.settingName} — seed "${layout.seed}"`;
+  image.src = `/preview/${encodeURIComponent(layout.settingSlug)}/${encodeURIComponent(layout.seed)}.png`;
+  gridEl.appendChild(image);
 
   // Group tiles by physical room instance (roomId), not just roomType, for the two room types where
   // that distinction actually matters to a player:
@@ -242,7 +230,6 @@ function renderLayout(layout) {
     const div = document.createElement("div");
     const style = styleForTile(tile);
     div.className = "tile";
-    div.style.background = style.color;
     div.style.gridColumn = String(tile.x - minX + 1);
     div.style.gridRow = String(maxY - tile.y + 1); // flip Y so north is up
     div.title = `${style.label} (${tile.x}, ${tile.y})`;
@@ -256,20 +243,9 @@ function renderLayout(layout) {
     div.style.gridColumn = String(appliance.x - minX + 1);
     div.style.gridRow = String(maxY - appliance.y + 1);
 
-    // Real appliance icon when one exists for this name; falls back to the abbreviated-text box
-    // (rotated, matching the old behavior) if the image 404s - not every appliance name has a
-    // matching sprite (see iconPathFor).
-    const img = document.createElement("img");
-    img.src = iconPathFor(appliance.applianceName);
-    img.alt = appliance.applianceName;
-    img.style.transform = `rotate(${appliance.rotationDegrees}deg)`;
-    img.addEventListener("error", () => {
-      img.remove();
-      div.textContent = abbreviate(appliance.applianceName);
-      div.style.transform = `rotate(${appliance.rotationDegrees}deg)`;
-    });
-    div.appendChild(img);
-
+    // Icon/text-abbreviation rendering (icon-if-available, rotated abbreviated text otherwise) now
+    // happens server-side, baked into the shared layout image (see Rendering/LayoutImageRenderer.cs)
+    // - this div is just an invisible hover target lined up with the image's cell.
     const tooltipText = `${appliance.applianceName} (${appliance.x}, ${appliance.y}), ${appliance.rotationDegrees}°`;
     div.addEventListener("pointerenter", (event) => showTooltip(tooltipText, event.clientX, event.clientY));
     div.addEventListener("pointermove", (event) => showTooltip(tooltipText, event.clientX, event.clientY));
@@ -285,7 +261,6 @@ function renderLayout(layout) {
     const div = document.createElement("div");
     const typeClass = feature.type.toLowerCase();
     div.className = `feature type-${typeClass} ${edgeClassFor(dx, dy)}`;
-    div.style.background = featureColor(feature.type);
     div.style.gridColumn = String(feature.tile1X - minX + 1);
     div.style.gridRow = String(maxY - feature.tile1Y + 1);
     div.title = `${feature.type} between (${feature.tile1X}, ${feature.tile1Y}) and (${feature.tile2X}, ${feature.tile2Y})`;
