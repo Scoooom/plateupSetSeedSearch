@@ -58,5 +58,8 @@ var indexJson = JsonSerializer.Serialize(
     new JsonSerializerOptions { WriteIndented = true });
 File.WriteAllText(indexPath, indexJson);
 
+SettingExtractor.WriteAppliancesFile(outputRoot);
+
 Console.WriteLine($"Done. Wrote index with {indexEntries.Count} setting(s) to {indexPath}");
+Console.WriteLine($"Wrote {SettingExtractor.KnownAppliances.Count} known appliance(s) to {Path.Combine(outputRoot, "appliances.json")}");
 return 0;

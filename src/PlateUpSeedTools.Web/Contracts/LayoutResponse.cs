@@ -11,9 +11,9 @@ public sealed record LayoutResponse(
     IReadOnlyList<ApplianceDto> Appliances,
     IReadOnlyList<FeatureDto> Features);
 
-public readonly record struct TileDto(int X, int Y, string RoomType);
+public readonly record struct TileDto(int X, int Y, string RoomType, int RoomId);
 
-public readonly record struct ApplianceDto(int X, int Y, int ApplianceId, int RotationDegrees);
+public readonly record struct ApplianceDto(int X, int Y, int ApplianceId, string ApplianceName, int RotationDegrees);
 
 /// <summary>
 /// A door/hatch/etc. on the wall segment between two adjacent tiles (Kitchen.Layouts.Features.Feature).

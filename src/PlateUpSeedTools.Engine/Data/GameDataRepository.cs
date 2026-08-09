@@ -12,6 +12,7 @@ public sealed class GameDataRepository
 
     private readonly string _root;
     private readonly Dictionary<string, RestaurantSettingData> _settingsBySlug;
+    private readonly Dictionary<int, string> _applianceNames;
 
     public GameDataRepository(string dataRoot)
     {
@@ -21,7 +22,19 @@ public sealed class GameDataRepository
         _settingsBySlug = index.ToDictionary(
             e => e.Slug,
             e => JsonSerializer.Deserialize<RestaurantSettingData>(File.ReadAllText(Path.Combine(_root, e.Slug, "setting.json")), JsonOptions)!);
+
+        var appliancesPath = Path.Combine(_root, "appliances.json");
+        _applianceNames = JsonSerializer.Deserialize<Dictionary<int, string>>(File.ReadAllText(appliancesPath), JsonOptions) ?? [];
     }
+
+    /// <summary>
+    /// Resolves an appliance's real display name (from data/settings/appliances.json, produced by
+    /// the DataExtractor's ResolveAppliance). Falls back to a synthesized label for any ID missing
+    /// from that file (shouldn't happen once extraction is re-run, but keeps a stale data/settings
+    /// from crashing the app rather than just showing an unlabeled appliance).
+    /// </summary>
+    public string GetApplianceName(int applianceId) =>
+        _applianceNames.TryGetValue(applianceId, out var name) ? name : $"Appliance {applianceId}";
 
     public IReadOnlyList<SettingIndexEntry> ListSettings() =>
         _settingsBySlug.Values.Select(s => new SettingIndexEntry(s.Slug, s.DisplayName, s.Id)).ToList();

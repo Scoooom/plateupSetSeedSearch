@@ -7,6 +7,24 @@ const resultTitle = document.getElementById("result-title");
 const gridEl = document.getElementById("grid");
 const legendEl = document.getElementById("legend");
 
+// One reusable tooltip element, created once (not per-appliance/per-render) - a custom styled
+// popup instead of the native title-attribute tooltip, positioned to follow the cursor.
+const tooltipEl = document.createElement("div");
+tooltipEl.className = "tooltip";
+tooltipEl.hidden = true;
+document.body.appendChild(tooltipEl);
+
+function showTooltip(text, x, y) {
+  tooltipEl.textContent = text;
+  tooltipEl.style.left = `${x + 14}px`;
+  tooltipEl.style.top = `${y + 14}px`;
+  tooltipEl.hidden = false;
+}
+
+function hideTooltip() {
+  tooltipEl.hidden = true;
+}
+
 // Seeds can be any alphanumeric string up to 8 characters - the game's "friendly" alphabet
 // (bdghjmqrtvwxy346789) is only used when it auto-generates a seed for display, it doesn't
 // restrict what a typed/shared seed can contain. Case matters (the hash is case-sensitive), so
@@ -64,7 +82,91 @@ function edgeClassFor(dx, dy) {
   return "edge-west";
 }
 
+function hexToRgb(hex) {
+  const h = hex.trim().replace("#", "");
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+function rgbToHex(r, g, b) {
+  const c = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  switch (max) {
+    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+    case g: h = (b - r) / d + 2; break;
+    default: h = (r - g) / d + 4; break;
+  }
+  return [h / 6, s, l];
+}
+
+function hslToRgb(h, s, l) {
+  if (s === 0) {
+    const v = l * 255;
+    return [v, v, v];
+  }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [hue2rgb(p, q, h + 1 / 3) * 255, hue2rgb(p, q, h) * 255, hue2rgb(p, q, h - 1 / 3) * 255];
+}
+
+// Derives a visually distinct variant of a base room color for the Nth (0-based) separate physical
+// room of the same type in one layout (currently only used for Dining - see renderLayout) - shifts
+// hue/lightness by a fixed step per index so instances stay "in the family" of the base color while
+// being distinguishable from each other.
+function shadeColor(baseHex, index) {
+  if (index === 0) {
+    return baseHex;
+  }
+  const [r, g, b] = hexToRgb(baseHex);
+  let [h, s, l] = rgbToHsl(r, g, b);
+  h = (h + 0.09 * index) % 1;
+  l = Math.min(0.78, Math.max(0.22, l + (index % 2 === 0 ? 0.12 : -0.12) * Math.ceil(index / 2)));
+  const [nr, ng, nb] = hslToRgb(h, s, l);
+  return rgbToHex(nr, ng, nb);
+}
+
+// Short label for an appliance's on-tile text - used as a fallback for appliances with no matching
+// icon (see iconPathFor), since names like "Blueprint Cabinet" don't fit the small appliance box.
+function abbreviate(name) {
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+  return words.slice(0, 3).map((w) => w[0].toUpperCase()).join("");
+}
+
+// Appliance icons (images/appliances/*.png) are keyed by kebab-cased display name, sourced from
+// https://github.com/plateupplanner/plateupplanner.github.io (community PlateUp planner's sprite
+// set) - not every resolved appliance name has a matching icon there (e.g. "Enchanting Desk", and
+// "Provider" is our own synthesized label for a generic placeholder slot with no single real-world
+// appliance to depict), so callers must handle the <img> failing to load (see renderLayout).
+function iconPathFor(name) {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `images/appliances/${slug}.png`;
+}
+
 function renderLayout(layout) {
+  hideTooltip();
+
   const xs = layout.tiles.map((t) => t.x);
   const ys = layout.tiles.map((t) => t.y);
   const applianceXs = layout.appliances.map((a) => a.x);
@@ -80,18 +182,43 @@ function renderLayout(layout) {
   gridEl.style.gridTemplateRows = `repeat(${height}, var(--tile-size))`;
   gridEl.innerHTML = "";
 
-  const roomTypesSeen = new Set();
+  // Group tiles by physical room instance (roomId), not just roomType. Dining is the one room type
+  // that gets split per-instance (DiningDecorator only ever places tables in Dining rooms - it's
+  // the only type where "customers can eat" is literally true), so two separate dining rooms in one
+  // layout get their own color/legend entry instead of collapsing into one "Dining" swatch. Every
+  // other room type keeps today's behavior: one color/legend entry per type, however many separate
+  // physical rooms of that type exist.
+  const diningRoomOrder = [];
+  const seenRoomIds = new Set();
+  for (const tile of layout.tiles) {
+    if (tile.roomType === "Dining" && !seenRoomIds.has(tile.roomId)) {
+      diningRoomOrder.push(tile.roomId);
+    }
+    seenRoomIds.add(tile.roomId);
+  }
+  const diningIndexByRoomId = new Map(diningRoomOrder.map((id, i) => [id, i]));
+  const diningBaseColor = getComputedStyle(document.documentElement).getPropertyValue("--room-dining");
+
+  function styleForTile(tile) {
+    if (tile.roomType === "Dining" && diningRoomOrder.length > 1) {
+      const index = diningIndexByRoomId.get(tile.roomId);
+      return { color: shadeColor(diningBaseColor, index), label: `Dining ${index + 1}` };
+    }
+    return { color: `var(--room-${tile.roomType.toLowerCase()}, var(--room-unassigned))`, label: tile.roomType };
+  }
+
+  const legendRoomsSeen = new Map();
 
   for (const tile of layout.tiles) {
     const div = document.createElement("div");
-    const cssClass = tile.roomType.toLowerCase();
+    const style = styleForTile(tile);
     div.className = "tile";
-    div.style.background = `var(--room-${cssClass}, var(--room-unassigned))`;
+    div.style.background = style.color;
     div.style.gridColumn = String(tile.x - minX + 1);
     div.style.gridRow = String(maxY - tile.y + 1); // flip Y so north is up
-    div.title = `${tile.roomType} (${tile.x}, ${tile.y})`;
+    div.title = `${style.label} (${tile.x}, ${tile.y})`;
     gridEl.appendChild(div);
-    roomTypesSeen.add(tile.roomType);
+    legendRoomsSeen.set(style.label, style.color);
   }
 
   for (const appliance of layout.appliances) {
@@ -99,9 +226,25 @@ function renderLayout(layout) {
     div.className = "appliance";
     div.style.gridColumn = String(appliance.x - minX + 1);
     div.style.gridRow = String(maxY - appliance.y + 1);
-    div.style.transform = `rotate(${appliance.rotationDegrees}deg)`;
-    div.textContent = appliance.applianceId;
-    div.title = `Appliance ${appliance.applianceId} (${appliance.x}, ${appliance.y}), ${appliance.rotationDegrees}°`;
+
+    // Real appliance icon when one exists for this name; falls back to the abbreviated-text box
+    // (rotated, matching the old behavior) if the image 404s - not every appliance name has a
+    // matching sprite (see iconPathFor).
+    const img = document.createElement("img");
+    img.src = iconPathFor(appliance.applianceName);
+    img.alt = appliance.applianceName;
+    img.style.transform = `rotate(${appliance.rotationDegrees}deg)`;
+    img.addEventListener("error", () => {
+      img.remove();
+      div.textContent = abbreviate(appliance.applianceName);
+      div.style.transform = `rotate(${appliance.rotationDegrees}deg)`;
+    });
+    div.appendChild(img);
+
+    const tooltipText = `${appliance.applianceName} (${appliance.x}, ${appliance.y}), ${appliance.rotationDegrees}°`;
+    div.addEventListener("pointerenter", (event) => showTooltip(tooltipText, event.clientX, event.clientY));
+    div.addEventListener("pointermove", (event) => showTooltip(tooltipText, event.clientX, event.clientY));
+    div.addEventListener("pointerleave", hideTooltip);
     gridEl.appendChild(div);
   }
 
@@ -122,13 +265,13 @@ function renderLayout(layout) {
   }
 
   legendEl.innerHTML = "";
-  for (const roomType of [...roomTypesSeen].sort()) {
+  for (const label of [...legendRoomsSeen.keys()].sort()) {
     const span = document.createElement("span");
     const swatch = document.createElement("span");
     swatch.className = "swatch";
-    swatch.style.background = `var(--room-${roomType.toLowerCase()}, var(--room-unassigned))`;
+    swatch.style.background = legendRoomsSeen.get(label);
     span.appendChild(swatch);
-    span.appendChild(document.createTextNode(roomType));
+    span.appendChild(document.createTextNode(label));
     legendEl.appendChild(span);
   }
   for (const featureType of [...featureTypesSeen].sort()) {

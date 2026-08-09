@@ -52,6 +52,24 @@ public class GameDataRepositoryTests
         Assert.Equal(15, repo.ListSettings().Count);
     }
 
+    [Fact]
+    public void ResolvesKnownApplianceNames()
+    {
+        var repo = CreateRepository();
+
+        Assert.Equal("Dining Table", repo.GetApplianceName(209074140));
+        Assert.Equal("Counter", repo.GetApplianceName(-1248669347));
+        Assert.Equal("Provider", repo.GetApplianceName(1270423542));
+    }
+
+    [Fact]
+    public void UnknownApplianceIdFallsBackToSyntheticLabel()
+    {
+        var repo = CreateRepository();
+
+        Assert.Equal("Appliance 12345", repo.GetApplianceName(12345));
+    }
+
     [Theory]
     [InlineData("bakery")]
     [InlineData("february")]

@@ -18,6 +18,14 @@ public static partial class LayoutEndpoints
     // control characters/whitespace/URL-unsafe input reaching the cache key and hash function).
     [GeneratedRegex("^[a-zA-Z0-9]{1,8}$")]
     private static partial Regex ValidSeedPattern();
+
+    // Matches the synthesized fallback label SettingExtractor.ResolveAppliance assigns to appliance
+    // IDs with no real English display name in any locale (currently only "Item Source Reservation",
+    // id 1270423542 - a generic dish-dependent ingredient-provider slot, not a concrete appliance).
+    // Excluded from the response entirely (not just given a generic icon) - user decision: a box
+    // that can't say what it actually is adds visual noise rather than information.
+    private const string GenericProviderApplianceName = "Provider";
+
     public static void MapLayoutEndpoints(this WebApplication app)
     {
         app.MapGet("/api/settings", (GameDataRepository repo) => repo.ListSettings());
@@ -62,21 +70,22 @@ public static partial class LayoutEndpoints
         var constructionSeed = LayoutSeed.ConstructionSeed(seedObj);
         var constructed = CreateLayoutHelper.ConstructLayout(graph, profile, constructionSeed);
 
-        var response = ToResponse(seedObj.Value, setting, settingData.DisplayName, layoutProfileId, constructed);
+        var response = ToResponse(seedObj.Value, setting, settingData.DisplayName, layoutProfileId, constructed, repo);
         await cache.SetAsync(cacheKey, response);
         return Results.Ok(response);
     }
 
     private static LayoutResponse ToResponse(
-        string seed, string settingSlug, string settingName, int layoutProfileId, ConstructedLayout layout)
+        string seed, string settingSlug, string settingName, int layoutProfileId, ConstructedLayout layout, GameDataRepository repo)
     {
         var bounds = layout.Blueprint.GetBounds();
         var tiles = layout.Blueprint.Tiles
             .Where(t => t.Value.Type != RoomType.NoRoom)
-            .Select(t => new TileDto(t.Key.X, t.Key.Y, t.Value.Type.ToString()))
+            .Select(t => new TileDto(t.Key.X, t.Key.Y, t.Value.Type.ToString(), t.Value.Id))
             .ToList();
         var appliances = layout.Decorations
-            .Select(d => new ApplianceDto(d.Position.X, d.Position.Y, d.ApplianceId, d.RotationDegrees))
+            .Select(d => new ApplianceDto(d.Position.X, d.Position.Y, d.ApplianceId, repo.GetApplianceName(d.ApplianceId), d.RotationDegrees))
+            .Where(a => a.ApplianceName != GenericProviderApplianceName)
             .ToList();
         var features = layout.Blueprint.Features
             .Select(f => new FeatureDto(f.Tile1.X, f.Tile1.Y, f.Tile2.X, f.Tile2.Y, f.Type.ToString()))

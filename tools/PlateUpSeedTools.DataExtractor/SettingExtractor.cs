@@ -4,6 +4,16 @@ namespace PlateUpSeedTools.DataExtractor;
 
 public static class SettingExtractor
 {
+    /// <summary>
+    /// Accumulates every appliance (Id, Name) pair resolved across the whole extractor run (every
+    /// setting's forced layout plus every shared/standard layout) - see ResolveAppliance/
+    /// WriteAppliancesFile. Populated as a side effect of ExtractProfileAndGraph so callers
+    /// (Program.cs's per-setting loop and ExtractStandardLayouts) don't need to thread a collector
+    /// through every call site.
+    /// </summary>
+    internal static readonly Dictionary<int, string> KnownAppliances = new();
+
+
     // Field names (beyond Input/AppendFrom/FixSeed, handled generically via ports) each module type
     // needs read as plain scalars. Matches the constructors in Engine's LayoutGraphFactory exactly.
     private static readonly Dictionary<string, string[]> ModuleParamFields = new()
@@ -115,9 +125,9 @@ public static class SettingExtractor
         {
             id = profileId,
             maximumTables = profile.Int("MaximumTables"),
-            tableApplianceId = ResolveApplianceId(resolver, tableGuid),
-            counterApplianceId = ResolveApplianceId(resolver, counterGuid),
-            requiredApplianceIds = requiredGuids.Select(g => ResolveApplianceId(resolver, g)).ToList(),
+            tableApplianceId = ResolveAppliance(resolver, tableGuid).Id,
+            counterApplianceId = ResolveAppliance(resolver, counterGuid).Id,
+            requiredApplianceIds = requiredGuids.Select(g => ResolveAppliance(resolver, g).Id).ToList(),
         };
         File.WriteAllText(Path.Combine(outDir, "profile.json"), JsonSerializer.Serialize(profileData, jsonOptions));
 
@@ -169,11 +179,39 @@ public static class SettingExtractor
         return null;
     }
 
-    private static int ResolveApplianceId(GuidResolver resolver, string guid)
+    /// <summary>
+    /// Resolves an appliance reference to its (Id, display name) pair, using the same per-locale
+    /// child-asset resolution as ResolveEnglishDisplayName (Appliance assets are
+    /// GenericLocalisation-derived, same shape as RestaurantSetting), and records the pair into
+    /// KnownAppliances for WriteAppliancesFile. Falls back to "Provider" (NOT m_Name) when no
+    /// English child asset has a name - the one appliance ID known to hit this fallback
+    /// ("Item Source Reservation") has a blank English name in every locale AND an m_Name that's
+    /// just internal dev jargon (same "internal name != player-facing name" problem
+    /// ResolveEnglishDisplayName exists to solve for settings, see its doc comment) - it's a
+    /// generic ingredient-provider placeholder slot, not a concrete named appliance, so "Provider"
+    /// is a synthesized label, deliberately not m_Name.
+    /// </summary>
+    private static (int Id, string Name) ResolveAppliance(GuidResolver resolver, string guid)
     {
         var path = resolver.Resolve(guid);
         var reader = AssetYamlReader.Load(path, guid);
-        return reader.Int("ID");
+        var id = reader.Int("ID");
+
+        var name = ResolveEnglishDisplayName(resolver, reader);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = "Provider";
+        }
+
+        KnownAppliances[id] = name;
+        return (id, name);
+    }
+
+    /// <summary>Serializes every appliance (Id, Name) pair discovered across the whole extractor run to appliances.json.</summary>
+    public static void WriteAppliancesFile(string outputRoot)
+    {
+        var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+        File.WriteAllText(Path.Combine(outputRoot, "appliances.json"), JsonSerializer.Serialize(KnownAppliances, jsonOptions));
     }
 
     private static object ExtractGraph(GuidResolver resolver, string graphGuid)
