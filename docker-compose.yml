@@ -1,0 +1,23 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+    ports:
+      - "8080:8080"
+    volumes:
+      - cache-data:/data
+    restart: unless-stopped
+
+  cli:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: cli
+    profiles: ["tools"]
+    volumes:
+      - cache-data:/data
+
+volumes:
+  cache-data:

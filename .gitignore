@@ -1,0 +1,15 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+*.db
+*.db-shm
+*.db-wal
+core.*
+
+# Never accidentally commit raw game data extracted locally
+/PlateUpSourceFiles/
+*.asset
+*.meta
+*.prefab

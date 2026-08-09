@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Deliberately net8.0, NOT net10.0 like the rest of the solution: BinaryFormatter
+    (needed to decode the SerializedBytes blobs in some .asset files) was removed
+    entirely starting in .NET 9. This project is dev-only, run manually against a
+    local PlateUpSourceFiles checkout, and is intentionally excluded from the .sln
+    and from the Docker build.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.2.1" />
+  </ItemGroup>
+
+</Project>

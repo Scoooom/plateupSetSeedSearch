@@ -1,0 +1,42 @@
+[
+  {
+    "slug": "banquet-hall",
+    "displayName": "Banquet Setting",
+    "id": 206822591
+  },
+  {
+    "slug": "christmas-banquet-hall",
+    "displayName": "Christmas Banquet Setting",
+    "id": -1864626837
+  },
+  {
+    "slug": "santa-workshop",
+    "displayName": "Santa Workshop Setting",
+    "id": -851159532
+  },
+  {
+    "slug": "bakery",
+    "displayName": "Bakery Setting",
+    "id": -31920316
+  },
+  {
+    "slug": "february",
+    "displayName": "February Setting",
+    "id": 1766067755
+  },
+  {
+    "slug": "january",
+    "displayName": "January Setting",
+    "id": 507410699
+  },
+  {
+    "slug": "coffeeshop",
+    "displayName": "June Setting - Coffeeshop",
+    "id": 1970109064
+  },
+  {
+    "slug": "turbo",
+    "displayName": "March Setting - Turbo",
+    "id": 1736695492
+  }
+]

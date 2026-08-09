@@ -1,0 +1,46 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlateUpSeedTools.Engine", "src\PlateUpSeedTools.Engine\PlateUpSeedTools.Engine.csproj", "{245A7200-E816-40DF-A869-B8E7ECDEE4EF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlateUpSeedTools.Infrastructure", "src\PlateUpSeedTools.Infrastructure\PlateUpSeedTools.Infrastructure.csproj", "{91707020-C9AD-482B-9B13-6760EBF25D11}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlateUpSeedTools.Web", "src\PlateUpSeedTools.Web\PlateUpSeedTools.Web.csproj", "{3A45F50C-D750-451B-AB33-85820FC9400C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlateUpSeedTools.Cli", "src\PlateUpSeedTools.Cli\PlateUpSeedTools.Cli.csproj", "{ED31D49D-3410-40AA-ACF8-D1C996807DF6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlateUpSeedTools.Engine.Tests", "tests\PlateUpSeedTools.Engine.Tests\PlateUpSeedTools.Engine.Tests.csproj", "{0E2C742E-2596-44DC-8D7D-3A05FF4ABB8C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{245A7200-E816-40DF-A869-B8E7ECDEE4EF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{245A7200-E816-40DF-A869-B8E7ECDEE4EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{245A7200-E816-40DF-A869-B8E7ECDEE4EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{245A7200-E816-40DF-A869-B8E7ECDEE4EF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{91707020-C9AD-482B-9B13-6760EBF25D11}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{91707020-C9AD-482B-9B13-6760EBF25D11}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{91707020-C9AD-482B-9B13-6760EBF25D11}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{91707020-C9AD-482B-9B13-6760EBF25D11}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3A45F50C-D750-451B-AB33-85820FC9400C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3A45F50C-D750-451B-AB33-85820FC9400C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3A45F50C-D750-451B-AB33-85820FC9400C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3A45F50C-D750-451B-AB33-85820FC9400C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ED31D49D-3410-40AA-ACF8-D1C996807DF6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ED31D49D-3410-40AA-ACF8-D1C996807DF6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ED31D49D-3410-40AA-ACF8-D1C996807DF6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ED31D49D-3410-40AA-ACF8-D1C996807DF6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0E2C742E-2596-44DC-8D7D-3A05FF4ABB8C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0E2C742E-2596-44DC-8D7D-3A05FF4ABB8C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0E2C742E-2596-44DC-8D7D-3A05FF4ABB8C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0E2C742E-2596-44DC-8D7D-3A05FF4ABB8C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

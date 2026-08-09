@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.idea/
+.git/
+tools/PlateUpSeedTools.DataExtractor/
+tests/
+*.md

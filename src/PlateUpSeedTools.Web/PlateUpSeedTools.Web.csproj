@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PlateUpSeedTools.Engine\PlateUpSeedTools.Engine.csproj" />
+    <ProjectReference Include="..\PlateUpSeedTools.Infrastructure\PlateUpSeedTools.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

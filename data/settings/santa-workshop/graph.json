@@ -1,0 +1,434 @@
+{
+  "outputNodeId": "6d7204e307ba11b4f9ae5015938a8d4c",
+  "nodes": [
+    {
+      "id": "b3d1d1fda5ba7664d88633e22c8a0e49",
+      "type": "Room Grid",
+      "input": null,
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Width": 2,
+        "Height": 2,
+        "Type": 3,
+        "SetType": 1
+      }
+    },
+    {
+      "id": "8871c5888e901a24bb00dd10223a4fa2",
+      "type": "Set Room",
+      "input": "b3d1d1fda5ba7664d88633e22c8a0e49",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "X": 0,
+        "Y": 0,
+        "Type": 4
+      }
+    },
+    {
+      "id": "9f6a0768364e8104f877f3e8f97ec924",
+      "type": "Split Line",
+      "input": "8871c5888e901a24bb00dd10223a4fa2",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 0,
+        "Count": 0,
+        "IsRow": 0
+      }
+    },
+    {
+      "id": "3127ce7e04052804396b2fc8f8d96587",
+      "type": "Split Line",
+      "input": "9f6a0768364e8104f877f3e8f97ec924",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 0,
+        "Count": 0,
+        "IsRow": 1
+      }
+    },
+    {
+      "id": "c7df997d568d39244bbd1a1619567dbb",
+      "type": "Set Room",
+      "input": "3127ce7e04052804396b2fc8f8d96587",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "X": 0,
+        "Y": 0,
+        "Type": 2
+      }
+    },
+    {
+      "id": "32f92d40abf48f24ab48bffc347efcf3",
+      "type": "Split Rooms",
+      "input": "29010cbc5415e5b4ca70feab1c3fb196",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "UniformX": 0,
+        "UniformY": 0,
+        "RandomX": 2,
+        "RandomY": 2
+      }
+    },
+    {
+      "id": "71cb14a459b659b458b78a5b088cb0d6",
+      "type": "Split Line",
+      "input": "c7df997d568d39244bbd1a1619567dbb",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 0,
+        "Count": 1,
+        "IsRow": 0
+      }
+    },
+    {
+      "id": "19c42397af7d6c740a7d90ca469c04d2",
+      "type": "Split Line",
+      "input": "71cb14a459b659b458b78a5b088cb0d6",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 0,
+        "Count": 1,
+        "IsRow": 1
+      }
+    },
+    {
+      "id": "790abd2ca61a37149a94b334e358cbb2",
+      "type": "Split Line",
+      "input": "19c42397af7d6c740a7d90ca469c04d2",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 4,
+        "Count": 3,
+        "IsRow": 0
+      }
+    },
+    {
+      "id": "5bc5986c83d9c2048b7d70ec7e98e7bf",
+      "type": "Split Line",
+      "input": "790abd2ca61a37149a94b334e358cbb2",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 4,
+        "Count": 1,
+        "IsRow": 1
+      }
+    },
+    {
+      "id": "b6e50fab662d35c42837226bfc0a59dc",
+      "type": "Split Line",
+      "input": "5bc5986c83d9c2048b7d70ec7e98e7bf",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 3,
+        "Count": 0,
+        "IsRow": 0
+      }
+    },
+    {
+      "id": "77a0237e3890e6c48933daf253aa9955",
+      "type": "Split Line",
+      "input": "b6e50fab662d35c42837226bfc0a59dc",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 3,
+        "Count": 0,
+        "IsRow": 1
+      }
+    },
+    {
+      "id": "c53644fcf52146f4bb53893ab2208f82",
+      "type": "Split Line",
+      "input": "77a0237e3890e6c48933daf253aa9955",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 0,
+        "Count": 1,
+        "IsRow": 1
+      }
+    },
+    {
+      "id": "29010cbc5415e5b4ca70feab1c3fb196",
+      "type": "Split Line",
+      "input": "c53644fcf52146f4bb53893ab2208f82",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Position": 0,
+        "Count": 1,
+        "IsRow": 0
+      }
+    },
+    {
+      "id": "558550566f638a84abe496e9cbf59358",
+      "type": "Recentre Layout",
+      "input": "defa7fcffc0106d4183b3724710cfbb9",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "fb0d0b22791cb0545bb5eed6bfde5575",
+      "type": "Create Front Door",
+      "input": "981fcd1e85e405d4397fceceac9f6cf3",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Type": 2,
+        "ForceFirstHalf": 0
+      }
+    },
+    {
+      "id": "1ca2572dc29a3b74994278128fb19717",
+      "type": "Find All Features",
+      "input": "32f92d40abf48f24ab48bffc347efcf3",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Feature": 1
+      }
+    },
+    {
+      "id": "4224e6cfd69d1664ea97c07e80c41828",
+      "type": "Filter By Free Space",
+      "input": "1ca2572dc29a3b74994278128fb19717",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "95224019d54c6be46a7f7c902686a55b",
+      "type": "Append Features",
+      "input": "12e40471b3da1064fb17785737046efd",
+      "appendFrom": [
+        "102d5619dec4203428b48f56776a02be",
+        "cf48724a5f6f6dc4aa85f1c371a05ef0",
+        "33050a5d17fd655408823d8c726fe5f4",
+        "e42bd19c875f8194e87f24062f5e017d",
+        "316ef608b1b5b154d849f87f1f7f0a26"
+      ],
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "6d7204e307ba11b4f9ae5015938a8d4c",
+      "type": "Output",
+      "input": "558550566f638a84abe496e9cbf59358",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "33050a5d17fd655408823d8c726fe5f4",
+      "type": "Filter Opposite Pair",
+      "input": "4224e6cfd69d1664ea97c07e80c41828",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "5ef3aaa6932b39e4d909f4acfbfc5bd6",
+      "type": "Find All Features",
+      "input": "32f92d40abf48f24ab48bffc347efcf3",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Feature": 2
+      }
+    },
+    {
+      "id": "9a2971ffc75c1fe43a929d3e8b001313",
+      "type": "Filter By Free Space",
+      "input": "5ef3aaa6932b39e4d909f4acfbfc5bd6",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "e42bd19c875f8194e87f24062f5e017d",
+      "type": "Filter Opposite Pair",
+      "input": "9a2971ffc75c1fe43a929d3e8b001313",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "8b7cd3955495db149b9adaa9f5fac3e7",
+      "type": "Find All Features",
+      "input": "981fcd1e85e405d4397fceceac9f6cf3",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Feature": 2
+      }
+    },
+    {
+      "id": "c73bc5a380ed9484fb60acc74e2f106a",
+      "type": "Filter By Room",
+      "input": "8b7cd3955495db149b9adaa9f5fac3e7",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "RemoveMode": 0,
+        "Type1": 2,
+        "FilterSecond": 1,
+        "Type2": 11
+      }
+    },
+    {
+      "id": "9c6da38734041b14eada981cfa7a9685",
+      "type": "Filter By Room",
+      "input": "8b7cd3955495db149b9adaa9f5fac3e7",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "RemoveMode": 0,
+        "Type1": 3,
+        "FilterSecond": 1,
+        "Type2": 11
+      }
+    },
+    {
+      "id": "102d5619dec4203428b48f56776a02be",
+      "type": "Filter Select Count",
+      "input": "c73bc5a380ed9484fb60acc74e2f106a",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Count": 2
+      }
+    },
+    {
+      "id": "cf48724a5f6f6dc4aa85f1c371a05ef0",
+      "type": "Filter Select Count",
+      "input": "9c6da38734041b14eada981cfa7a9685",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Count": 3
+      }
+    },
+    {
+      "id": "981fcd1e85e405d4397fceceac9f6cf3",
+      "type": "Pad With Room",
+      "input": "c8ef9e5fcaf9b6c46812ea367efd74da",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Type": 11,
+        "Above": 0,
+        "Left": 3,
+        "Right": 0,
+        "Below": 0
+      }
+    },
+    {
+      "id": "12e40471b3da1064fb17785737046efd",
+      "type": "Swap Room Type",
+      "input": "07d0c237b09dfd1448cd794bded872b1",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "X": -1,
+        "Y": 0,
+        "Type": 4
+      }
+    },
+    {
+      "id": "c8ef9e5fcaf9b6c46812ea367efd74da",
+      "type": "Pad With Room",
+      "input": "32f92d40abf48f24ab48bffc347efcf3",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Type": 10,
+        "Above": 0,
+        "Left": 0,
+        "Right": 3,
+        "Below": 0
+      }
+    },
+    {
+      "id": "49a152e5983950d42b641ffdf45a0d0e",
+      "type": "Filter By Room",
+      "input": "8b7cd3955495db149b9adaa9f5fac3e7",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "RemoveMode": 0,
+        "Type1": 3,
+        "FilterSecond": 1,
+        "Type2": 10
+      }
+    },
+    {
+      "id": "316ef608b1b5b154d849f87f1f7f0a26",
+      "type": "Filter Select Count",
+      "input": "49a152e5983950d42b641ffdf45a0d0e",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Count": 3
+      }
+    },
+    {
+      "id": "07d0c237b09dfd1448cd794bded872b1",
+      "type": "Swap Room Type",
+      "input": "dde69e4fd7f88ac4cb49bea3d95a7968",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "X": 15,
+        "Y": 0,
+        "Type": 4
+      }
+    },
+    {
+      "id": "defa7fcffc0106d4183b3724710cfbb9",
+      "type": "Require Feature Count Even",
+      "input": "95224019d54c6be46a7f7c902686a55b",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Type": 2,
+        "RequireEven": 1
+      }
+    },
+    {
+      "id": "c09a5702fa628cf47b5149ee5c9d13cd",
+      "type": "Move Feature In Direction",
+      "input": "fb0d0b22791cb0545bb5eed6bfde5575",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "OffsetX": 1,
+        "OffsetY": 0,
+        "MaxSteps": 10
+      }
+    },
+    {
+      "id": "dde69e4fd7f88ac4cb49bea3d95a7968",
+      "type": "Move Feature In Direction",
+      "input": "c09a5702fa628cf47b5149ee5c9d13cd",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "OffsetX": -1,
+        "OffsetY": 0,
+        "MaxSteps": 1
+      }
+    }
+  ]
+}

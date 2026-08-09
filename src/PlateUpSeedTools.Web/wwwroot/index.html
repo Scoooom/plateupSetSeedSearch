@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PlateUp Seed Tools</title>
+  <link rel="stylesheet" href="css/theme.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>PlateUp <span class="accent">Seed</span> Tools</h1>
+    <p class="subtitle">Preview a kitchen layout for any seed, in any restaurant setting.</p>
+  </header>
+
+  <main>
+    <form id="layout-form" class="controls">
+      <label class="field">
+        <span>Restaurant setting</span>
+        <select id="setting-select" required></select>
+      </label>
+
+      <label class="field">
+        <span>Seed</span>
+        <input id="seed-input" type="text" maxlength="8" placeholder="bdghjmqr" autocomplete="off" required />
+      </label>
+
+      <button type="submit">Preview</button>
+    </form>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <section id="result" class="result" hidden>
+      <div class="result-meta">
+        <span id="result-title"></span>
+      </div>
+      <div id="grid" class="grid"></div>
+      <p class="legend" id="legend"></p>
+    </section>
+  </main>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
