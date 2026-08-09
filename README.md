@@ -10,11 +10,12 @@ Seed search (find seeds with a specific card) is a future feature, not yet built
 docker compose up -d
 ```
 
-Then visit http://localhost:8080. Pick a restaurant setting, type a seed (1-8 characters from
-`bdghjmqrtvwxy346789`, same alphabet the game itself generates), and preview.
+Then visit http://localhost:8080. Pick a restaurant setting, type a seed (1-8 alphanumeric
+characters, case-sensitive - matches what the real game's seed field accepts), and preview.
 
-Currently supported settings: Banquet Setting, Christmas Banquet Setting, Santa Workshop Setting,
-Bakery Setting, February Setting, January Setting, June Setting - Coffeeshop, March Setting - Turbo.
+Currently supported settings: City, Alpine, Country, Autumn, Halloween, Halloween - With Cards,
+Witch Hut, Banquet Setting, Christmas Banquet Setting, Santa Workshop Setting, Bakery Setting,
+February Setting, January Setting, June Setting - Coffeeshop, March Setting - Turbo.
 
 ## Cache
 

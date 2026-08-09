@@ -45,6 +45,13 @@ public class GameDataRepositoryTests
         Assert.Equal(fromHandFixture.Decorations, fromExtractor.Decorations);
     }
 
+    [Fact]
+    public void ListsAllFifteenSettings()
+    {
+        var repo = CreateRepository();
+        Assert.Equal(15, repo.ListSettings().Count);
+    }
+
     [Theory]
     [InlineData("bakery")]
     [InlineData("february")]
@@ -53,10 +60,19 @@ public class GameDataRepositoryTests
     [InlineData("turbo")]
     [InlineData("santa-workshop")]
     [InlineData("christmas-banquet-hall")]
+    [InlineData("city")]
+    [InlineData("alpine")]
+    [InlineData("country")]
+    [InlineData("autumn")]
+    [InlineData("halloween")]
+    [InlineData("halloween-with-cards")]
+    [InlineData("witch-hut")]
     public void EveryExtractedSettingProducesAPlausibleLayoutForSeveralSeeds(string slug)
     {
         var repo = CreateRepository();
-        foreach (var seedString in new[] { "bdghjmqr", "tvwxy346", "b", "789" })
+        // Includes a mixed-case alphanumeric seed (not just the lowercase "friendly" alphabet) -
+        // the game's actual Seed constructor has no character restriction, see Seed.cs.
+        foreach (var seedString in new[] { "bdghjmqr", "tvwxy346", "b", "789", "AbC123xZ" })
         {
             var seed = new Seed(seedString);
             var (profile, graph) = repo.ResolveLayout(slug, seed);

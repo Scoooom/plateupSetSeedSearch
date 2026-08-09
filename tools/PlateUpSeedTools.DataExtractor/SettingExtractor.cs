@@ -46,7 +46,7 @@ public static class SettingExtractor
         var setting = AssetYamlReader.Load(settingPath, settingGuid);
 
         var settingId = setting.Int("ID");
-        var displayName = setting.GetName();
+        var displayName = ResolveEnglishDisplayName(resolver, setting) ?? setting.GetName();
         var forceLayoutGuid = setting.Reference("ForceLayout");
 
         var outDir = Path.Combine(outputRoot, slug);
@@ -126,6 +126,47 @@ public static class SettingExtractor
         File.WriteAllText(Path.Combine(outDir, "graph.json"), JsonSerializer.Serialize(graphData, jsonOptions));
 
         return profileId;
+    }
+
+    /// <summary>
+    /// GenericLocalisation-derived assets (RestaurantSetting among them) store their player-facing
+    /// title in a per-locale child asset referenced from serializationData.ReferencedUnityObjects -
+    /// NOT in m_Name, which is just the internal/editor object name (e.g. "February Setting" vs the
+    /// real in-game title "Romantic"). Each child asset is plain YAML with Locale/Name/Description
+    /// fields (Locale: 1 = English), so this avoids needing to decode the Odin-serialized blob at all.
+    /// Returns null if no English child asset is found (falls back to m_Name).
+    /// </summary>
+    private static string? ResolveEnglishDisplayName(GuidResolver resolver, AssetYamlReader asset)
+    {
+        const int englishLocale = 1;
+        foreach (var guid in asset.ReferencedUnityObjectGuids())
+        {
+            if (!resolver.TryResolve(guid, out var path))
+            {
+                continue;
+            }
+
+            AssetYamlReader child;
+            try
+            {
+                child = AssetYamlReader.Load(path, guid);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (child.TryScalar("Locale", out var localeStr)
+                && int.TryParse(localeStr, out var locale)
+                && locale == englishLocale
+                && child.TryScalar("Name", out var name)
+                && !string.IsNullOrWhiteSpace(name))
+            {
+                return name;
+            }
+        }
+
+        return null;
     }
 
     private static int ResolveApplianceId(GuidResolver resolver, string guid)

@@ -27,6 +27,20 @@ var settingsToExtract = new (string SettingAssetName, string Slug)[]
     ("January Setting.asset", "january"),
     ("June Setting - Coffeeshop.asset", "coffeeshop"),
     ("March Setting - Turbo.asset", "turbo"),
+
+    // Discovered after an initial filename-based search ("*Setting*.asset") missed every setting
+    // whose asset isn't literally named "<Something> Setting.asset" - these are the base game's
+    // default/seasonal locations. Found by scanning every .asset for the exact RestaurantSetting
+    // field signature (WeatherMode/ForceLayout/UnlockPack/AlwaysLight/FixedRunSeason/StartingUnlock)
+    // rather than trusting filenames or a script GUID (AssetRipper maps many unrelated MonoBehaviour
+    // types to the same guid for this stripped assembly, so guid-matching alone isn't reliable either).
+    ("City.asset", "city"),
+    ("Alpine.asset", "alpine"),
+    ("Country.asset", "country"),
+    ("Autumn.asset", "autumn"),
+    ("Halloween.asset", "halloween"),
+    ("Halloween - With Cards.asset", "halloween-with-cards"),
+    ("2310 Witch Hut.asset", "witch-hut"),
 };
 
 var indexEntries = new List<(string Slug, string DisplayName, int Id)>();

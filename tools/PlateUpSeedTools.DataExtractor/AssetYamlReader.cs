@@ -75,6 +75,31 @@ public sealed class AssetYamlReader
     }
 
     /// <summary>
+    /// Reads serializationData.ReferencedUnityObjects - the guids of Unity objects referenced from
+    /// within the (possibly undecoded) Odin-serialized SerializedBytes blob. Used to find a
+    /// GenericLocalisation-derived asset's per-locale "BasicInfo" child assets (each is its own
+    /// plain-YAML asset with a Locale/Name/Description field - see GuidResolver-based lookup in
+    /// SettingExtractor.ResolveEnglishDisplayName) without needing to decode the Odin blob itself.
+    /// </summary>
+    public List<string> ReferencedUnityObjectGuids()
+    {
+        if (!_root.Children.TryGetValue(new YamlScalarNode("serializationData"), out var sdNode)
+            || sdNode is not YamlMappingNode sd
+            || !sd.Children.TryGetValue(new YamlScalarNode("ReferencedUnityObjects"), out var listNode)
+            || listNode is not YamlSequenceNode seq)
+        {
+            return [];
+        }
+
+        return seq.Children
+            .Select(c => (YamlMappingNode)c)
+            .Select(m => m.Children.TryGetValue(new YamlScalarNode("guid"), out var g) ? ((YamlScalarNode)g).Value : null)
+            .Where(g => !string.IsNullOrEmpty(g))
+            .Select(g => g!)
+            .ToList();
+    }
+
+    /// <summary>
     /// Reads an xNode `ports` map, returning, per port field name, the list of (sourcePortName, sourceNodeGuid)
     /// it's connected to (i.e. this node's inputs on that port).
     /// </summary>

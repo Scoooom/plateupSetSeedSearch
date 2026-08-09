@@ -1,0 +1,216 @@
+{
+  "outputNodeId": "96c7b00e9b2d7ee42b4f7eb0f806b92c",
+  "nodes": [
+    {
+      "id": "5d3e47cbeebaba243a96808d911ff075",
+      "type": "Room Grid",
+      "input": null,
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Width": 4,
+        "Height": 4,
+        "Type": 0,
+        "SetType": 0
+      }
+    },
+    {
+      "id": "8c34c55b9fb3ac54db8558a13e9a89d3",
+      "type": "Merge Rooms By Type",
+      "input": "b713fc54240ac144a8acfde49c63254d",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "4817facfe8de1884e845eb9a6087ad34",
+      "type": "Recentre Layout",
+      "input": "bcf4a8558fa4e734dba2aa30393cef68",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "6cb1b16069951464bae0f106d6def0e0",
+      "type": "Create Front Door",
+      "input": "4817facfe8de1884e845eb9a6087ad34",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Type": 2,
+        "ForceFirstHalf": 0
+      }
+    },
+    {
+      "id": "96c7b00e9b2d7ee42b4f7eb0f806b92c",
+      "type": "Output",
+      "input": "3ef50a0b3e55cf54e8b25a3dcea414cf",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "f62db65e38502b64db3114711dc7ef57",
+      "type": "Create Room By Joins",
+      "input": "5d3e47cbeebaba243a96808d911ff075",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "StartX": 0,
+        "StartY": 0,
+        "Joins": 7,
+        "Type": 2,
+        "Required": 0
+      }
+    },
+    {
+      "id": "cf6d9228db7119349996ece35435b750",
+      "type": "Create Room By Joins",
+      "input": "f62db65e38502b64db3114711dc7ef57",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "StartX": 3,
+        "StartY": 2,
+        "Joins": 4,
+        "Type": 3,
+        "Required": 0
+      }
+    },
+    {
+      "id": "b713fc54240ac144a8acfde49c63254d",
+      "type": "Split Rooms",
+      "input": "cf6d9228db7119349996ece35435b750",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "UniformX": 1,
+        "UniformY": 1,
+        "RandomX": 3,
+        "RandomY": 3
+      }
+    },
+    {
+      "id": "7e675c4401540564d95d28c1e22d5463",
+      "type": "Find All Features",
+      "input": "4817facfe8de1884e845eb9a6087ad34",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Feature": 1
+      }
+    },
+    {
+      "id": "8e1b484738a3f15408e1a381265e9d7e",
+      "type": "Filter By Free Space",
+      "input": "7e675c4401540564d95d28c1e22d5463",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "fa2283ef81e3a6e4fb772bc3696462cf",
+      "type": "Filter One Per Pair",
+      "input": "8e1b484738a3f15408e1a381265e9d7e",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "c47ec7babdfb9054c844433a3a997dbd",
+      "type": "Filter Adjacent Pair",
+      "input": "dc2708f8c696bc446af7e815b59953d1",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "dc2708f8c696bc446af7e815b59953d1",
+      "type": "Filter By Room",
+      "input": "7e675c4401540564d95d28c1e22d5463",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "RemoveMode": 0,
+        "Type1": 3,
+        "FilterSecond": 1,
+        "Type2": 2
+      }
+    },
+    {
+      "id": "7d96d57eb6b840642bb152091d6e315b",
+      "type": "Append Features",
+      "input": "6cb1b16069951464bae0f106d6def0e0",
+      "appendFrom": [
+        "38daa2312aaf46043bfcf580cc85adf1",
+        "fa2283ef81e3a6e4fb772bc3696462cf",
+        "915543560d2c7a2429e4bc0d7542c6ca"
+      ],
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "38daa2312aaf46043bfcf580cc85adf1",
+      "type": "Switch Features",
+      "input": "c47ec7babdfb9054c844433a3a997dbd",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "SetToFeature": 2
+      }
+    },
+    {
+      "id": "b3038cd0e1bb5464982b9ff38a4565c7",
+      "type": "Require Accessible",
+      "input": "7d96d57eb6b840642bb152091d6e315b",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "AllowGardens": 0
+      }
+    },
+    {
+      "id": "3ef50a0b3e55cf54e8b25a3dcea414cf",
+      "type": "Require Features",
+      "input": "b3038cd0e1bb5464982b9ff38a4565c7",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Type": 2,
+        "Minimum": 2
+      }
+    },
+    {
+      "id": "6d736e907956971478cc1854af1f509b",
+      "type": "Filter Adjacent Pair",
+      "input": "dc2708f8c696bc446af7e815b59953d1",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {}
+    },
+    {
+      "id": "915543560d2c7a2429e4bc0d7542c6ca",
+      "type": "Switch Features",
+      "input": "6d736e907956971478cc1854af1f509b",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "SetToFeature": 2
+      }
+    },
+    {
+      "id": "bcf4a8558fa4e734dba2aa30393cef68",
+      "type": "Pad With Room",
+      "input": "8c34c55b9fb3ac54db8558a13e9a89d3",
+      "appendFrom": null,
+      "fixSeed": 0,
+      "params": {
+        "Type": 4,
+        "Above": 1,
+        "Left": 1,
+        "Right": 1,
+        "Below": 0
+      }
+    }
+  ]
+}

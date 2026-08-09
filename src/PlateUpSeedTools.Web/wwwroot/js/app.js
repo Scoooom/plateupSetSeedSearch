@@ -7,7 +7,11 @@ const resultTitle = document.getElementById("result-title");
 const gridEl = document.getElementById("grid");
 const legendEl = document.getElementById("legend");
 
-const FRIENDLY_ALPHABET = "bdghjmqrtvwxy346789";
+// Seeds can be any alphanumeric string up to 8 characters - the game's "friendly" alphabet
+// (bdghjmqrtvwxy346789) is only used when it auto-generates a seed for display, it doesn't
+// restrict what a typed/shared seed can contain. Case matters (the hash is case-sensitive), so
+// this must NOT lowercase the input.
+const VALID_SEED = /^[a-zA-Z0-9]{1,8}$/;
 
 async function loadSettings() {
   const response = await fetch("/api/settings");
@@ -32,13 +36,8 @@ function setStatus(message, isError) {
 }
 
 function validateSeed(seed) {
-  if (seed.length === 0 || seed.length > 8) {
-    return "Seed must be 1-8 characters.";
-  }
-  for (const ch of seed) {
-    if (!FRIENDLY_ALPHABET.includes(ch)) {
-      return `Seed can only contain: ${FRIENDLY_ALPHABET}`;
-    }
+  if (!VALID_SEED.test(seed)) {
+    return "Seed must be 1-8 alphanumeric characters.";
   }
   return null;
 }
@@ -105,7 +104,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const setting = settingSelect.value;
-  const seed = seedInput.value.trim().toLowerCase();
+  const seed = seedInput.value.trim();
 
   const seedError = validateSeed(seed);
   if (seedError) {

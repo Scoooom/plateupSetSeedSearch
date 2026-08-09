@@ -95,9 +95,6 @@ main {
   min-width: 180px;
 }
 
-.field input {
-  text-transform: lowercase;
-}
 
 button[type="submit"] {
   background: var(--accent);

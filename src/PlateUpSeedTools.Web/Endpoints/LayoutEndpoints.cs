@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Layouts;
 using PlateUpSeedTools.Engine.Seeding;
@@ -6,8 +7,17 @@ using PlateUpSeedTools.Web.Contracts;
 
 namespace PlateUpSeedTools.Web.Endpoints;
 
-public static class LayoutEndpoints
+public static partial class LayoutEndpoints
 {
+    // Kitchen.Seed's constructor (DecompiledSource/GameData/Kitchen/Seed.cs) accepts ANY string,
+    // only truncating to 8 chars - Seed.FriendlyCharacters (bdghjmqrtvwxy346789) is just the
+    // alphabet the game uses to auto-*generate* a seed for display, not an input restriction, and
+    // Seed.Characters (a-z1-9) is declared but never actually referenced/enforced anywhere in the
+    // decompiled source either. Real seeds people type/share can be any alphanumeric string up to
+    // 8 characters. We still reject non-alphanumeric input here (not a game rule - just avoids
+    // control characters/whitespace/URL-unsafe input reaching the cache key and hash function).
+    [GeneratedRegex("^[a-zA-Z0-9]{1,8}$")]
+    private static partial Regex ValidSeedPattern();
     public static void MapLayoutEndpoints(this WebApplication app)
     {
         app.MapGet("/api/settings", (GameDataRepository repo) => repo.ListSettings());
@@ -25,9 +35,9 @@ public static class LayoutEndpoints
             return Results.BadRequest(new { error = $"Unknown setting '{setting}'." });
         }
 
-        if (seed.Length is 0 or > Seed.MaxLength || !seed.All(c => Seed.FriendlyCharacters.Contains(c)))
+        if (!ValidSeedPattern().IsMatch(seed))
         {
-            return Results.BadRequest(new { error = $"Seed must be 1-{Seed.MaxLength} characters from '{Seed.FriendlyCharacters}'." });
+            return Results.BadRequest(new { error = $"Seed must be 1-{Seed.MaxLength} alphanumeric characters." });
         }
 
         var cacheKey = $"{setting}:{seed}";
