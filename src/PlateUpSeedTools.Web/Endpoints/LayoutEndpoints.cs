@@ -40,6 +40,14 @@ public static partial class LayoutEndpoints
             return Results.BadRequest(new { error = $"Seed must be 1-{Seed.MaxLength} alphanumeric characters." });
         }
 
+        // Real PlateUp seeds are always uppercase internally - not enforced above (any case is
+        // accepted as valid input) but normalized here so "abc"/"ABC"/"AbC" are treated as the same
+        // seed: same cache entry, same hash, matching what the game itself would compute. This is
+        // deliberately NOT done inside Engine.Seeding.Seed - that's a faithful, verified port of the
+        // real Seed struct, which hashes exactly the bytes it's given with no case transform (see its
+        // doc comment); normalizing belongs at this application boundary, not in the port.
+        seed = seed.ToUpperInvariant();
+
         var cacheKey = $"{setting}:{seed}";
         var cached = await cache.GetAsync(cacheKey);
         if (cached is not null)
@@ -70,6 +78,9 @@ public static partial class LayoutEndpoints
         var appliances = layout.Decorations
             .Select(d => new ApplianceDto(d.Position.X, d.Position.Y, d.ApplianceId, d.RotationDegrees))
             .ToList();
+        var features = layout.Blueprint.Features
+            .Select(f => new FeatureDto(f.Tile1.X, f.Tile1.Y, f.Tile2.X, f.Tile2.Y, f.Type.ToString()))
+            .ToList();
 
         return new LayoutResponse(
             seed,
@@ -79,7 +90,8 @@ public static partial class LayoutEndpoints
             bounds.MaxX - bounds.MinX + 1,
             bounds.MaxY - bounds.MinY + 1,
             tiles,
-            appliances);
+            appliances,
+            features);
     }
 
     private sealed record LayoutRequest(string Setting, string Seed);

@@ -13,6 +13,18 @@ const legendEl = document.getElementById("legend");
 // this must NOT lowercase the input.
 const VALID_SEED = /^[a-zA-Z0-9]{1,8}$/;
 
+// Kept in sync with theme.css's .feature.type-* rules.
+const FEATURE_COLORS = {
+  frontdoor: "#ffe066",
+  door: "#f1e6d8",
+  doorreversed: "#f1e6d8",
+  hatch: "#7fd4c1",
+};
+const DEFAULT_FEATURE_COLOR = "#9a8a76";
+function featureColor(type) {
+  return FEATURE_COLORS[type.toLowerCase()] ?? DEFAULT_FEATURE_COLOR;
+}
+
 async function loadSettings() {
   const response = await fetch("/api/settings");
   const settings = await response.json();
@@ -40,6 +52,16 @@ function validateSeed(seed) {
     return "Seed must be 1-8 alphanumeric characters.";
   }
   return null;
+}
+
+// Which edge of Tile1's cell a feature sits on, based on the direction to Tile2. North is up
+// (matches the tile rendering's Y-flip below). FrontDoor's Tile2 is one step *outside* the tile
+// grid (see CreateFrontDoorNode) so it's always a cardinal direction here, never zero.
+function edgeClassFor(dx, dy) {
+  if (dy > 0) return "edge-north";
+  if (dy < 0) return "edge-south";
+  if (dx > 0) return "edge-east";
+  return "edge-west";
 }
 
 function renderLayout(layout) {
@@ -83,6 +105,22 @@ function renderLayout(layout) {
     gridEl.appendChild(div);
   }
 
+  const featureTypesSeen = new Set();
+
+  for (const feature of layout.features) {
+    const dx = feature.tile2X - feature.tile1X;
+    const dy = feature.tile2Y - feature.tile1Y;
+    const div = document.createElement("div");
+    const typeClass = feature.type.toLowerCase();
+    div.className = `feature type-${typeClass} ${edgeClassFor(dx, dy)}`;
+    div.style.background = featureColor(feature.type);
+    div.style.gridColumn = String(feature.tile1X - minX + 1);
+    div.style.gridRow = String(maxY - feature.tile1Y + 1);
+    div.title = `${feature.type} between (${feature.tile1X}, ${feature.tile1Y}) and (${feature.tile2X}, ${feature.tile2Y})`;
+    gridEl.appendChild(div);
+    featureTypesSeen.add(feature.type);
+  }
+
   legendEl.innerHTML = "";
   for (const roomType of [...roomTypesSeen].sort()) {
     const span = document.createElement("span");
@@ -93,10 +131,22 @@ function renderLayout(layout) {
     span.appendChild(document.createTextNode(roomType));
     legendEl.appendChild(span);
   }
+  for (const featureType of [...featureTypesSeen].sort()) {
+    const span = document.createElement("span");
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = featureColor(featureType);
+    span.appendChild(swatch);
+    span.appendChild(document.createTextNode(featureType));
+    legendEl.appendChild(span);
+  }
+
+  const frontDoor = layout.features.find((f) => f.type === "FrontDoor");
+  const frontDoorText = frontDoor ? `, front door at (${frontDoor.tile1X}, ${frontDoor.tile1Y})` : "";
 
   resultTitle.textContent =
     `${layout.settingName} — seed "${layout.seed}" — ${width}×${height} tiles, ` +
-    `${layout.appliances.length} appliance placement(s)`;
+    `${layout.appliances.length} appliance placement(s)${frontDoorText}`;
   resultEl.hidden = false;
 }
 

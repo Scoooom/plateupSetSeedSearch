@@ -146,6 +146,24 @@ button[type="submit"]:hover {
   background: var(--room-unassigned);
 }
 
+/* Door/hatch/etc. markers sit in the same grid cell as their Tile1, pinned to whichever edge
+   faces Tile2 (see app.js edgeClassFor) - a thin bar on the shared wall, not a full tile. */
+.feature {
+  pointer-events: none;
+  z-index: 2;
+  border-radius: 2px;
+}
+
+.feature.edge-north { align-self: start; justify-self: stretch; width: auto; height: 5px; }
+.feature.edge-south { align-self: end; justify-self: stretch; width: auto; height: 5px; }
+.feature.edge-east { justify-self: end; align-self: stretch; height: auto; width: 5px; }
+.feature.edge-west { justify-self: start; align-self: stretch; height: auto; width: 5px; }
+
+/* FrontDoor is where each customer wave spawns/exits - drawn thicker since it's the
+   single most speedrun-relevant coordinate in a layout. */
+.feature.type-frontdoor { height: 7px; }
+.feature.edge-east.type-frontdoor, .feature.edge-west.type-frontdoor { width: 7px; }
+
 .appliance {
   display: flex;
   align-items: center;
