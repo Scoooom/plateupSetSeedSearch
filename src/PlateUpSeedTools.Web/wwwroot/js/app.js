@@ -127,17 +127,24 @@ function hslToRgb(h, s, l) {
 }
 
 // Derives a visually distinct variant of a base room color for the Nth (0-based) separate physical
-// room of the same type in one layout (currently only used for Dining - see renderLayout) - shifts
+// room of the same type in one layout (used for Dining and Unassigned - see renderLayout) - shifts
 // hue/lightness by a fixed step per index so instances stay "in the family" of the base color while
 // being distinguishable from each other.
+//
+// Saturation is floored (not just shifted) because the "Unassigned" base color is a near-neutral
+// gray (~0 saturation) - hue rotation alone is invisible on a desaturated color (hue is meaningless
+// once there's no color to rotate), which made "Unassigned 1"/"Unassigned 2" render as two shades
+// of gray 2/255 apart, indistinguishable in practice. Flooring saturation makes the hue shift
+// actually show up as a real color difference; it's a no-op for already-saturated bases like Dining.
 function shadeColor(baseHex, index) {
   if (index === 0) {
     return baseHex;
   }
   const [r, g, b] = hexToRgb(baseHex);
   let [h, s, l] = rgbToHsl(r, g, b);
-  h = (h + 0.09 * index) % 1;
-  l = Math.min(0.78, Math.max(0.22, l + (index % 2 === 0 ? 0.12 : -0.12) * Math.ceil(index / 2)));
+  h = (h + 0.13 * index) % 1;
+  s = Math.max(s, 0.4);
+  l = Math.min(0.72, Math.max(0.28, l + (index % 2 === 0 ? 0.12 : -0.12) * Math.ceil(index / 2)));
   const [nr, ng, nb] = hslToRgb(h, s, l);
   return rgbToHex(nr, ng, nb);
 }
@@ -182,27 +189,44 @@ function renderLayout(layout) {
   gridEl.style.gridTemplateRows = `repeat(${height}, var(--tile-size))`;
   gridEl.innerHTML = "";
 
-  // Group tiles by physical room instance (roomId), not just roomType. Dining is the one room type
-  // that gets split per-instance (DiningDecorator only ever places tables in Dining rooms - it's
-  // the only type where "customers can eat" is literally true), so two separate dining rooms in one
-  // layout get their own color/legend entry instead of collapsing into one "Dining" swatch. Every
-  // other room type keeps today's behavior: one color/legend entry per type, however many separate
-  // physical rooms of that type exist.
-  const diningRoomOrder = [];
+  // Group tiles by physical room instance (roomId), not just roomType, for the two room types where
+  // that distinction actually matters to a player:
+  //  - Dining: DiningDecorator only ever places tables in Dining rooms, so two separate dining
+  //    rooms in one layout are two real rooms a player eats in, not one.
+  //  - Unassigned: confirmed via real-game ground truth (session 3) that these are NOT empty
+  //    padding - they're genuine walkable side-rooms/corridors, each connected to the rest of the
+  //    layout by its own door, that the graph's room-generation modules just never assign a
+  //    gameplay type to (see game-domain-knowledge.md's Extended/Huge Layout room-shape notes).
+  //    This is exactly the "extra rooms" a user originally asked to see distinguished.
+  // Every other room type (Kitchen, Garden, ...) keeps one color/legend entry per type, however
+  // many separate physical rooms of that type exist - per explicit user decision, only rooms that
+  // are individually meaningful to a player (eaten in, or walked through as their own space) get
+  // split out.
+  const PER_INSTANCE_ROOM_TYPES = new Set(["Dining", "Unassigned"]);
+  const roomOrderByType = new Map(); // roomType -> [roomId, ...] in first-seen order
   const seenRoomIds = new Set();
   for (const tile of layout.tiles) {
-    if (tile.roomType === "Dining" && !seenRoomIds.has(tile.roomId)) {
-      diningRoomOrder.push(tile.roomId);
+    if (PER_INSTANCE_ROOM_TYPES.has(tile.roomType) && !seenRoomIds.has(tile.roomId)) {
+      if (!roomOrderByType.has(tile.roomType)) {
+        roomOrderByType.set(tile.roomType, []);
+      }
+      roomOrderByType.get(tile.roomType).push(tile.roomId);
     }
     seenRoomIds.add(tile.roomId);
   }
-  const diningIndexByRoomId = new Map(diningRoomOrder.map((id, i) => [id, i]));
-  const diningBaseColor = getComputedStyle(document.documentElement).getPropertyValue("--room-dining");
+  const indexByRoomId = new Map();
+  for (const order of roomOrderByType.values()) {
+    order.forEach((id, i) => indexByRoomId.set(id, i));
+  }
+  const baseColorByType = new Map(
+    [...PER_INSTANCE_ROOM_TYPES].map((t) => [t, getComputedStyle(document.documentElement).getPropertyValue(`--room-${t.toLowerCase()}`)])
+  );
 
   function styleForTile(tile) {
-    if (tile.roomType === "Dining" && diningRoomOrder.length > 1) {
-      const index = diningIndexByRoomId.get(tile.roomId);
-      return { color: shadeColor(diningBaseColor, index), label: `Dining ${index + 1}` };
+    const order = roomOrderByType.get(tile.roomType);
+    if (order && order.length > 1) {
+      const index = indexByRoomId.get(tile.roomId);
+      return { color: shadeColor(baseColorByType.get(tile.roomType), index), label: `${tile.roomType} ${index + 1}` };
     }
     return { color: `var(--room-${tile.roomType.toLowerCase()}, var(--room-unassigned))`, label: tile.roomType };
   }
