@@ -8,27 +8,10 @@ const gridEl = document.getElementById("grid");
 const legendEl = document.getElementById("legend");
 const copyLinkButton = document.getElementById("copy-link");
 
-// One reusable tooltip element, created once (not per-appliance/per-render) - a custom styled
-// popup instead of the native title-attribute tooltip, positioned to follow the cursor.
-const tooltipEl = document.createElement("div");
-tooltipEl.className = "tooltip";
-tooltipEl.hidden = true;
-document.body.appendChild(tooltipEl);
-
-function showTooltip(text, x, y) {
-  tooltipEl.textContent = text;
-  tooltipEl.style.left = `${x + 14}px`;
-  tooltipEl.style.top = `${y + 14}px`;
-  tooltipEl.hidden = false;
-}
-
-function hideTooltip() {
-  tooltipEl.hidden = true;
-}
-
 // VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
 
-// Kept in sync with theme.css's .feature.type-* rules.
+// Used only for the legend's feature swatches now (the layout image itself draws features
+// server-side, see LayoutColors.cs) - kept in sync with that C# copy by convention.
 const FEATURE_COLORS = {
   frontdoor: "#ffe066",
   door: "#f1e6d8",
@@ -73,16 +56,6 @@ async function loadSettings() {
 function setStatus(message, isError) {
   statusEl.textContent = message;
   statusEl.classList.toggle("error", Boolean(isError));
-}
-
-// Which edge of Tile1's cell a feature sits on, based on the direction to Tile2. North is up
-// (matches the tile rendering's Y-flip below). FrontDoor's Tile2 is one step *outside* the tile
-// grid (see CreateFrontDoorNode) so it's always a cardinal direction here, never zero.
-function edgeClassFor(dx, dy) {
-  if (dy > 0) return "edge-north";
-  if (dy < 0) return "edge-south";
-  if (dx > 0) return "edge-east";
-  return "edge-west";
 }
 
 function hexToRgb(hex) {
@@ -153,8 +126,6 @@ function shadeColor(baseHex, index) {
 }
 
 function renderLayout(layout) {
-  hideTooltip();
-
   const xs = layout.tiles.map((t) => t.x);
   const ys = layout.tiles.map((t) => t.y);
   const applianceXs = layout.appliances.map((a) => a.x);
@@ -166,23 +137,20 @@ function renderLayout(layout) {
   const width = maxX - minX + 1;
   const height = maxY - minY + 1;
 
-  gridEl.style.gridTemplateColumns = `repeat(${width}, var(--tile-size))`;
-  gridEl.style.gridTemplateRows = `repeat(${height}, var(--tile-size))`;
-  gridEl.innerHTML = "";
-
   // The server-rendered layout image (see Rendering/LayoutImageRenderer.cs) is the single visual
-  // source of truth - also what gets shared/unfurled at /preview/<setting>/<seed>.png. It's stretched
-  // to fill the whole grid via CSS (see .layout-image in theme.css), so every tile/appliance/feature
-  // hotspot div below - still positioned via the same gridColumn/gridRow math as before - lines up
-  // with the image regardless of on-screen scale/zoom: both are simple W-way/H-way subdivisions of
-  // the same box (this is *why* .grid's `gap` had to become 0 - see theme.css's comment on .grid).
+  // source of truth - also what gets shared/unfurled at /preview/<setting>/<seed>.png. No hover
+  // hotspots/tooltips over it (dropped from scope) - it's just the image.
+  gridEl.innerHTML = "";
   const image = document.createElement("img");
   image.className = "layout-image";
   image.alt = `${layout.settingName} — seed "${layout.seed}"`;
   image.src = `/preview/${encodeURIComponent(layout.settingSlug)}/${encodeURIComponent(layout.seed)}.png`;
   gridEl.appendChild(image);
 
-  // Group tiles by physical room instance (roomId), not just roomType, for the two room types where
+  // Tile/feature loops below don't touch the DOM anymore - they only exist to compute the legend
+  // (color per room-type/instance, feature types present), which still needs the same per-instance
+  // Dining/Unassigned grouping used server-side. Group tiles by physical room instance (roomId), not
+  // just roomType, for the two room types where
   // that distinction actually matters to a player:
   //  - Dining: DiningDecorator only ever places tables in Dining rooms, so two separate dining
   //    rooms in one layout are two real rooms a player eats in, not one.
@@ -225,46 +193,13 @@ function renderLayout(layout) {
   }
 
   const legendRoomsSeen = new Map();
-
   for (const tile of layout.tiles) {
-    const div = document.createElement("div");
     const style = styleForTile(tile);
-    div.className = "tile";
-    div.style.gridColumn = String(tile.x - minX + 1);
-    div.style.gridRow = String(maxY - tile.y + 1); // flip Y so north is up
-    div.title = `${style.label} (${tile.x}, ${tile.y})`;
-    gridEl.appendChild(div);
     legendRoomsSeen.set(style.label, style.color);
   }
 
-  for (const appliance of layout.appliances) {
-    const div = document.createElement("div");
-    div.className = "appliance";
-    div.style.gridColumn = String(appliance.x - minX + 1);
-    div.style.gridRow = String(maxY - appliance.y + 1);
-
-    // Icon/text-abbreviation rendering (icon-if-available, rotated abbreviated text otherwise) now
-    // happens server-side, baked into the shared layout image (see Rendering/LayoutImageRenderer.cs)
-    // - this div is just an invisible hover target lined up with the image's cell.
-    const tooltipText = `${appliance.applianceName} (${appliance.x}, ${appliance.y}), ${appliance.rotationDegrees}°`;
-    div.addEventListener("pointerenter", (event) => showTooltip(tooltipText, event.clientX, event.clientY));
-    div.addEventListener("pointermove", (event) => showTooltip(tooltipText, event.clientX, event.clientY));
-    div.addEventListener("pointerleave", hideTooltip);
-    gridEl.appendChild(div);
-  }
-
   const featureTypesSeen = new Set();
-
   for (const feature of layout.features) {
-    const dx = feature.tile2X - feature.tile1X;
-    const dy = feature.tile2Y - feature.tile1Y;
-    const div = document.createElement("div");
-    const typeClass = feature.type.toLowerCase();
-    div.className = `feature type-${typeClass} ${edgeClassFor(dx, dy)}`;
-    div.style.gridColumn = String(feature.tile1X - minX + 1);
-    div.style.gridRow = String(maxY - feature.tile1Y + 1);
-    div.title = `${feature.type} between (${feature.tile1X}, ${feature.tile1Y}) and (${feature.tile2X}, ${feature.tile2Y})`;
-    gridEl.appendChild(div);
     featureTypesSeen.add(feature.type);
   }
 

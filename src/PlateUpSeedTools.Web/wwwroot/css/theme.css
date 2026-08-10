@@ -21,9 +21,6 @@
   --room-locations: #4c8a6b;
   --room-storage: #5a4c3a;
   --room-unassigned: #3a3a3a;
-
-  --appliance: #e0793c;
-  --tile-size: 28px;
 }
 
 * {
@@ -282,73 +279,18 @@ button[type="submit"]:hover {
 
 .grid {
   position: relative;
-  display: inline-grid;
-  /* Gap must stay 0: the server-rendered layout image (.layout-image) is stretched to fill this
-     grid's exact box, so tile/appliance/feature hotspot divs only line up with the image if both
-     are simple W-way/H-way subdivisions of that box with no gap eating into the fractions. The
-     hairline separator this used to draw via `background` showing through the gap is now baked
-     into the image itself (see Rendering/LayoutImageRenderer.cs). */
-  gap: 0;
   border: 1px solid var(--panel-border);
   border-radius: 4px;
   overflow: auto;
   max-width: 100%;
+  line-height: 0;
 }
 
-/* Fills the whole grid, underneath the tile/appliance/feature hotspot divs (DOM order, not
-   z-index) - see app.js's renderLayout for how this stays aligned with those hotspots. */
+/* The server-rendered layout image (see Rendering/LayoutImageRenderer.cs) - just displayed as-is,
+   no hover hotspots/tooltips over it (dropped from scope, see app.js's renderLayout). */
 .layout-image {
-  grid-column: 1 / -1;
-  grid-row: 1 / -1;
-  width: 100%;
-  height: 100%;
   display: block;
-  pointer-events: none;
-}
-
-.tile {
-  width: var(--tile-size);
-  height: var(--tile-size);
-}
-
-/* Door/hatch/etc. markers sit in the same grid cell as their Tile1, pinned to whichever edge
-   faces Tile2 (see app.js edgeClassFor) - a thin bar on the shared wall, not a full tile. */
-.feature {
-  pointer-events: none;
-  z-index: 2;
-  border-radius: 2px;
-}
-
-.feature.edge-north { align-self: start; justify-self: stretch; width: auto; height: 5px; }
-.feature.edge-south { align-self: end; justify-self: stretch; width: auto; height: 5px; }
-.feature.edge-east { justify-self: end; align-self: stretch; height: auto; width: 5px; }
-.feature.edge-west { justify-self: start; align-self: stretch; height: auto; width: 5px; }
-
-/* FrontDoor is where each customer wave spawns/exits - drawn thicker since it's the
-   single most speedrun-relevant coordinate in a layout. */
-.feature.type-frontdoor { height: 7px; }
-.feature.edge-east.type-frontdoor, .feature.edge-west.type-frontdoor { width: 7px; }
-
-.appliance {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--tile-size) - 4px);
-  height: calc(var(--tile-size) - 4px);
-  margin: 2px;
-  background: var(--appliance);
-  color: #1b1410;
-  font-size: 0.55rem;
-  font-weight: 700;
-  border-radius: 3px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.appliance img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+  max-width: 100%;
 }
 
 .legend {
@@ -367,22 +309,6 @@ button[type="submit"]:hover {
   border-radius: 2px;
   margin-right: 0.35rem;
   vertical-align: middle;
-}
-
-/* Custom hover tooltip for appliances (replaces the native title-attribute tooltip) - follows the
-   cursor, styled to match the rest of the panel/theme rather than the browser default. */
-.tooltip {
-  position: fixed;
-  pointer-events: none;
-  z-index: 10;
-  background: var(--panel);
-  border: 1px solid var(--panel-border);
-  color: var(--text);
-  padding: 0.35rem 0.55rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  max-width: 220px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 @media (max-width: 640px) {

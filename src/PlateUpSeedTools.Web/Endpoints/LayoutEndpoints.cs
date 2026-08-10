@@ -77,13 +77,29 @@ public static partial class LayoutEndpoints
         return Results.File(png, "image/png");
     }
 
-    private static IResult GetPreviewHtml(
-        string setting, string seed, HttpContext httpContext, GameDataRepository repo, IWebHostEnvironment env)
+    private static async Task<IResult> GetPreviewHtml(
+        string setting, string seed, HttpContext httpContext, GameDataRepository repo,
+        ICacheStore<LayoutResponse> cache, IWebHostEnvironment env)
     {
-        var html = File.ReadAllText(Path.Combine(env.WebRootPath, "preview.html"));
-
         var isValidSetting = repo.ListSettings().Any(s => s.Slug == setting);
         var isValidSeed = ValidSeedPattern().IsMatch(seed);
+
+        // Discord's link-unfurl crawler identifies itself via this substring (its real UA is
+        // something like "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)").
+        // Serving it the PNG directly - rather than this HTML page with an og:image tag - gets the
+        // fully chrome-less "just the image" embed that Discord only gives to genuine image/*
+        // responses (see GetLayoutPng); an og:image-tagged HTML page still gets wrapped in Discord's
+        // rich-embed chrome (title bar/site name). User-Agent sniffing is inherently
+        // spoofable/fragile - bots can change their UA without notice - so this is purely a
+        // best-effort embed-quality enhancement, never a security boundary. A real browser hitting
+        // this same URL always gets the interactive HTML page below.
+        var userAgent = httpContext.Request.Headers.UserAgent.ToString();
+        if (isValidSetting && isValidSeed && userAgent.Contains("Discordbot", StringComparison.OrdinalIgnoreCase))
+        {
+            return await GetLayoutPng(setting, seed, httpContext, repo, cache, env);
+        }
+
+        var html = File.ReadAllText(Path.Combine(env.WebRootPath, "preview.html"));
         if (isValidSetting && isValidSeed)
         {
             var request = httpContext.Request;
