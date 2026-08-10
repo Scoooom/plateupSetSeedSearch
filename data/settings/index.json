@@ -5,73 +5,18 @@
     "id": 206822591
   },
   {
-    "slug": "christmas-banquet-hall",
-    "displayName": "Elf Banquet",
-    "id": -1864626837
-  },
-  {
     "slug": "santa-workshop",
     "displayName": "North Pole",
     "id": -851159532
   },
   {
-    "slug": "bakery",
-    "displayName": "Bakery",
-    "id": -31920316
-  },
-  {
-    "slug": "february",
-    "displayName": "Romantic",
-    "id": 1766067755
-  },
-  {
-    "slug": "january",
-    "displayName": "Lake",
-    "id": 507410699
-  },
-  {
-    "slug": "coffeeshop",
-    "displayName": "Coffee Shop",
-    "id": 1970109064
-  },
-  {
-    "slug": "turbo",
-    "displayName": "Turbo",
-    "id": 1736695492
-  },
-  {
-    "slug": "city",
-    "displayName": "City",
-    "id": 2002876295
-  },
-  {
-    "slug": "alpine",
-    "displayName": "Alpine",
-    "id": -1864906012
-  },
-  {
-    "slug": "country",
-    "displayName": "Country",
-    "id": 447437163
-  },
-  {
-    "slug": "autumn",
-    "displayName": "Autumn",
-    "id": -405456638
-  },
-  {
-    "slug": "halloween",
-    "displayName": "Halloween",
-    "id": 82131534
-  },
-  {
-    "slug": "halloween-with-cards",
-    "displayName": "Witch Hut",
-    "id": 726229627
-  },
-  {
     "slug": "witch-hut",
     "displayName": "Witch Hut",
     "id": 424841351
+  },
+  {
+    "slug": "normal",
+    "displayName": "Normal",
+    "id": 0
   }
 ]

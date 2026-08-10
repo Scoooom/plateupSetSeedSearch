@@ -59,26 +59,37 @@ public static class SettingExtractor
         var displayName = ResolveEnglishDisplayName(resolver, setting) ?? setting.GetName();
         var forceLayoutGuid = setting.Reference("ForceLayout");
 
-        var outDir = Path.Combine(outputRoot, slug);
-        Directory.CreateDirectory(outDir);
-
-        var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
-
         if (forceLayoutGuid is not null)
         {
+            var outDir = Path.Combine(outputRoot, slug);
+            Directory.CreateDirectory(outDir);
             var profileId = ExtractProfileAndGraph(resolver, forceLayoutGuid, outDir);
+            var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
             var settingData = new { slug, displayName, id = settingId, forceLayoutId = (int?)profileId };
             File.WriteAllText(Path.Combine(outDir, "setting.json"), JsonSerializer.Serialize(settingData, jsonOptions));
-        }
-        else
-        {
-            // No forced layout: at request time, the web layer picks one of the shared/standard
-            // layout profiles at random-by-seed (LayoutSeed.LayoutIdFromSeed) - see ExtractStandardLayouts.
-            var settingData = new { slug, displayName, id = settingId, forceLayoutId = (int?)null };
-            File.WriteAllText(Path.Combine(outDir, "setting.json"), JsonSerializer.Serialize(settingData, jsonOptions));
+            return (slug, displayName, settingId);
         }
 
-        return (slug, displayName, settingId);
+        // No forced layout: at request time, the web layer picks one of the shared/standard layout
+        // profiles at random-by-seed (LayoutSeed.LayoutIdFromSeed) - see ExtractStandardLayouts.
+        return WriteSynthetic(outputRoot, slug, displayName, settingId);
+    }
+
+    /// <summary>
+    /// Writes outputRoot/&lt;slug&gt;/setting.json with forceLayoutId: null and no backing profile/graph
+    /// files - the same shape Extract's no-ForceLayout branch produces for a real asset, but for a
+    /// setting that has no corresponding RestaurantSetting asset at all. Used to synthesize the
+    /// "Normal" setting that replaces several real settings which all resolved to this exact same
+    /// shared-pool behaviour (and therefore produced byte-identical layouts) - see project-history.md.
+    /// </summary>
+    public static (string Slug, string DisplayName, int Id) WriteSynthetic(string outputRoot, string slug, string displayName, int id)
+    {
+        var outDir = Path.Combine(outputRoot, slug);
+        Directory.CreateDirectory(outDir);
+        var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+        var settingData = new { slug, displayName, id, forceLayoutId = (int?)null };
+        File.WriteAllText(Path.Combine(outDir, "setting.json"), JsonSerializer.Serialize(settingData, jsonOptions));
+        return (slug, displayName, id);
     }
 
     /// <summary>

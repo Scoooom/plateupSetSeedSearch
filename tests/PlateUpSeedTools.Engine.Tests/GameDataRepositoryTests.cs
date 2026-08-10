@@ -46,10 +46,22 @@ public class GameDataRepositoryTests
     }
 
     [Fact]
-    public void ListsAllFifteenSettings()
+    public void ListsAllFourSettings()
     {
         var repo = CreateRepository();
-        Assert.Equal(15, repo.ListSettings().Count);
+        Assert.Equal(4, repo.ListSettings().Count);
+    }
+
+    [Fact]
+    public void UnknownSettingSlugThrows()
+    {
+        // Several previously-distinct slugs (alpine, city, country, turbo, autumn, halloween,
+        // bakery, february, january, coffeeshop, christmas-banquet-hall, halloween-with-cards) were
+        // consolidated away because they all produced byte-identical layouts to another setting
+        // (see project-history.md) - old links to these slugs are expected to just stop resolving,
+        // not silently redirect/alias.
+        var repo = CreateRepository();
+        Assert.Throws<KeyNotFoundException>(() => repo.GetSetting("alpine"));
     }
 
     [Fact]
@@ -71,19 +83,9 @@ public class GameDataRepositoryTests
     }
 
     [Theory]
-    [InlineData("bakery")]
-    [InlineData("february")]
-    [InlineData("january")]
-    [InlineData("coffeeshop")]
-    [InlineData("turbo")]
+    [InlineData("normal")]
+    [InlineData("banquet-hall")]
     [InlineData("santa-workshop")]
-    [InlineData("christmas-banquet-hall")]
-    [InlineData("city")]
-    [InlineData("alpine")]
-    [InlineData("country")]
-    [InlineData("autumn")]
-    [InlineData("halloween")]
-    [InlineData("halloween-with-cards")]
     [InlineData("witch-hut")]
     public void EveryExtractedSettingProducesAPlausibleLayoutForSeveralSeeds(string slug)
     {

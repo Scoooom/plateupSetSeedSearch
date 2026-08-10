@@ -17,29 +17,18 @@ var resolver = GuidResolver.BuildFrom(assetsRoot);
 Console.WriteLine("Extracting shared/standard layout pool (AssetReference.FixedRunLayout)...");
 SettingExtractor.ExtractStandardLayouts(resolver, assetsRoot, outputRoot);
 
+// Only the settings with a genuinely distinct layout get their own extracted asset. Several other
+// real RestaurantSetting assets (Bakery/February/January/Coffeeshop/Turbo/City/Alpine/Country/
+// Autumn/Halloween, plus the "Christmas Banquet"/"Halloween - With Cards" reskins of Banquet Hall
+// and Witch Hut) all had ForceLayout unset or pointed at a layout byte-identical to one of these -
+// i.e. they produced the exact same generated layout as each other for any given seed. Consolidated
+// into the single synthetic "normal" entry below (for the shared-pool group) and by simply dropping
+// the redundant reskins (for the two ForceLayout duplicate pairs) - see project-history.md for the
+// investigation and rationale.
 var settingsToExtract = new (string SettingAssetName, string Slug)[]
 {
     ("Banquet Setting.asset", "banquet-hall"),
-    ("Christmas Banquet Setting.asset", "christmas-banquet-hall"),
     ("Santa Workshop Setting.asset", "santa-workshop"),
-    ("Bakery Setting.asset", "bakery"),
-    ("February Setting.asset", "february"),
-    ("January Setting.asset", "january"),
-    ("June Setting - Coffeeshop.asset", "coffeeshop"),
-    ("March Setting - Turbo.asset", "turbo"),
-
-    // Discovered after an initial filename-based search ("*Setting*.asset") missed every setting
-    // whose asset isn't literally named "<Something> Setting.asset" - these are the base game's
-    // default/seasonal locations. Found by scanning every .asset for the exact RestaurantSetting
-    // field signature (WeatherMode/ForceLayout/UnlockPack/AlwaysLight/FixedRunSeason/StartingUnlock)
-    // rather than trusting filenames or a script GUID (AssetRipper maps many unrelated MonoBehaviour
-    // types to the same guid for this stripped assembly, so guid-matching alone isn't reliable either).
-    ("City.asset", "city"),
-    ("Alpine.asset", "alpine"),
-    ("Country.asset", "country"),
-    ("Autumn.asset", "autumn"),
-    ("Halloween.asset", "halloween"),
-    ("Halloween - With Cards.asset", "halloween-with-cards"),
     ("2310 Witch Hut.asset", "witch-hut"),
 };
 
@@ -51,6 +40,9 @@ foreach (var (settingAssetName, slug) in settingsToExtract)
     var entry = SettingExtractor.Extract(assetsRoot, resolver, settingAssetName, slug, outputRoot);
     indexEntries.Add(entry);
 }
+
+Console.WriteLine("Writing synthetic 'normal' setting (replaces the byte-identical shared-pool settings)...");
+indexEntries.Add(SettingExtractor.WriteSynthetic(outputRoot, "normal", "Normal", id: 0));
 
 var indexPath = Path.Combine(outputRoot, "index.json");
 var indexJson = JsonSerializer.Serialize(
