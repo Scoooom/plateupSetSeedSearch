@@ -331,15 +331,25 @@ async function refreshDayTargetRow(row) {
   const datalist = document.getElementById(cardInput.getAttribute("list"));
 
   if (!dishSelect.value) {
+    // Nothing to type against yet, but this doesn't hide anything from validation - the whole
+    // day-targets section is disabled in this state via setDayTargetsEnabled anyway, and the form
+    // is already correctly blocked by dish-select's own separate `required` attribute regardless.
     cardInput.disabled = true;
     setDatalistOptions(datalist, []);
     return;
   }
 
+  // Never disable this field once a dish is chosen, for any reason (invalid/empty day, zero
+  // candidates, etc.) - a disabled field is invisible to native form validation entirely
+  // (setCustomValidity/reportValidity/required are all no-ops on it), which was letting the form
+  // submit despite an incomplete/invalid row in exactly the state that should have blocked it.
+  // validateCardInput's :invalid styling communicates the problem instead, and stays effective.
+  cardInput.disabled = false;
+
   const day = getRowDay(row);
   if (day === null || day < 1) {
-    cardInput.disabled = true;
     setDatalistOptions(datalist, []);
+    validateCardInput(cardInput);
     return;
   }
 
@@ -357,12 +367,6 @@ async function refreshDayTargetRow(row) {
     return; // a newer request for this row superseded this one - drop the stale result
   }
 
-  // Never disable purely because this day has zero (or no-longer-matching) candidates - a disabled
-  // field is invisible to native form validation (setCustomValidity/reportValidity are no-ops on
-  // it), which was silently swallowing the "this card isn't valid for this day" error entirely, and
-  // looked to the user like the field had been cleared. Keep it enabled and editable; validateCardInput
-  // below marks it :invalid (see theme.css) instead, which stays visible and actually blocks submit.
-  cardInput.disabled = false;
   setDatalistOptions(datalist, cardNames);
   validateCardInput(cardInput);
 }

@@ -257,25 +257,41 @@ async function fetchExplorerDay(node, day) {
 }
 
 function nodeLabel(node) {
-  if (node.cardId === null) {
-    return `Day ${node.day}: skipped`;
-  }
   return `Day ${node.day}: ${node.label}`;
 }
 
 function renderTree() {
   treeViewEl.innerHTML = "";
-  if (!rootNode || rootNode.children.size === 0) {
+  if (!rootNode) {
     treeViewEl.textContent = "Nothing explored yet.";
     return;
   }
 
   const rootList = document.createElement("ul");
   rootList.className = "tree-list";
-  for (const child of rootNode.children.values()) {
-    rootList.appendChild(renderTreeNode(child));
+  appendVisibleChildren(rootNode, rootList);
+
+  if (rootList.children.length === 0) {
+    treeViewEl.textContent = "Nothing explored yet.";
+    return;
   }
+
   treeViewEl.appendChild(rootList);
+}
+
+// Skipped days (node.cardId === null) are still tracked as real tree nodes internally - back-
+// navigation/branching needs them - but per user feedback they're just noise in the tree view (a
+// long run of empty days shouldn't produce a matching run of "Day N: skipped" lines). Walk straight
+// through a skip node and attach ITS children to the nearest visible ancestor's list instead of
+// rendering the skip node itself.
+function appendVisibleChildren(node, parentList) {
+  for (const child of node.children.values()) {
+    if (child.cardId === null) {
+      appendVisibleChildren(child, parentList);
+      continue;
+    }
+    parentList.appendChild(renderTreeNode(child));
+  }
 }
 
 function renderTreeNode(node) {
@@ -290,12 +306,10 @@ function renderTreeNode(node) {
   button.addEventListener("click", () => viewNode(node));
   li.appendChild(button);
 
-  if (node.children.size > 0) {
-    const childList = document.createElement("ul");
-    childList.className = "tree-list";
-    for (const child of node.children.values()) {
-      childList.appendChild(renderTreeNode(child));
-    }
+  const childList = document.createElement("ul");
+  childList.className = "tree-list";
+  appendVisibleChildren(node, childList);
+  if (childList.children.length > 0) {
     li.appendChild(childList);
   }
 
