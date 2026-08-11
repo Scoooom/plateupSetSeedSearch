@@ -4,6 +4,7 @@ const subOptionField = document.getElementById("sub-option-field");
 const subOption1Label = document.getElementById("sub-option-1-label");
 const subOption2Label = document.getElementById("sub-option-2-label");
 const heatSelect = document.getElementById("heat-select");
+const cardPackSelect = document.getElementById("card-pack-select");
 const tierInput = document.getElementById("tier-input");
 const alphabetInput = document.getElementById("alphabet-input");
 const lengthInput = document.getElementById("length-input");
@@ -13,6 +14,7 @@ const addDayTargetButton = document.getElementById("add-day-target");
 const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
 const addFranchiseCardButton = document.getElementById("add-franchise-card");
 const stopAfterFirstMatchInput = document.getElementById("stop-after-first-match");
+const excludeSeedsInput = document.getElementById("exclude-seeds-input");
 const form = document.getElementById("search-form");
 const statusEl = document.getElementById("status");
 const jobEl = document.getElementById("job");
@@ -22,6 +24,7 @@ const progressBar = document.getElementById("progress-bar");
 const progressBarFill = document.getElementById("progress-bar-fill");
 const jobStats = document.getElementById("job-stats");
 const matchesList = document.getElementById("matches-list");
+const copyMatchesButton = document.getElementById("copy-matches");
 const previewDialog = document.getElementById("preview-dialog");
 const previewDialogTitle = document.getElementById("preview-dialog-title");
 const previewDialogClose = document.getElementById("preview-dialog-close");
@@ -35,22 +38,102 @@ let unlocksForSetting = [];
 let pollHandle = null;
 let currentJobId = null;
 let currentSearchSetting = null;
-let dayTargetRefreshTimer = null;
+let currentMatches = [];
+let datalistCounter = 0;
+
+// Per-row refresh state (debounce timer + a generation counter to drop stale out-of-order
+// responses), keyed by the row's <div class="dynamic-row"> element - see refreshDayTargetRow/
+// refreshFranchiseRow. A WeakMap means rows removed from the DOM are naturally garbage-collected
+// along with their state, no manual cleanup needed.
+const rowState = new WeakMap();
+
+function getRowState(row) {
+  let state = rowState.get(row);
+  if (!state) {
+    state = { generation: 0, timer: null };
+    rowState.set(row, state);
+  }
+  return state;
+}
 
 function setStatus(message, isError) {
   statusEl.textContent = message;
   statusEl.classList.toggle("error", Boolean(isError));
 }
 
-function createCardSelect() {
-  const select = document.createElement("select");
-  for (const unlock of unlocksForSetting) {
+// Builds a text input backed by a <datalist> (rather than a <select>) so it supports typing, not
+// just clicking through a closed list - each row gets its own <datalist> since candidate lists
+// differ per row/day. Repopulating a row's candidates only ever rebuilds the <datalist>'s options,
+// never touches the <input>'s own .value - see refreshDayTargetRow/refreshFranchiseRow for why
+// that matters (a stale/no-longer-reachable selection simply stays typed rather than being
+// silently cleared).
+function createCardInput(className) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = className;
+  input.autocomplete = "off";
+  input.placeholder = "Card name";
+  const datalistId = `card-datalist-${datalistCounter++}`;
+  input.setAttribute("list", datalistId);
+
+  const datalist = document.createElement("datalist");
+  datalist.id = datalistId;
+
+  input.addEventListener("blur", () => validateCardInput(input));
+
+  return { input, datalist };
+}
+
+function setDatalistOptions(datalist, names) {
+  datalist.innerHTML = "";
+  for (const name of names) {
     const option = document.createElement("option");
-    option.value = unlock.name;
-    option.textContent = unlock.name;
-    select.appendChild(option);
+    option.value = name;
+    datalist.appendChild(option);
   }
-  return select;
+}
+
+// Enforces the user's decision: a typed value that isn't one of the row's current valid options
+// blocks submit with a message (via the input's native validity state), rather than silently
+// reverting to the last valid value.
+function validateCardInput(input) {
+  const datalist = document.getElementById(input.getAttribute("list"));
+  const options = datalist ? [...datalist.options].map((o) => o.value) : [];
+  const value = input.value.trim();
+
+  if (value === "" && !input.required) {
+    input.setCustomValidity("");
+    return true;
+  }
+
+  if (!options.includes(value)) {
+    input.setCustomValidity(value === "" ? "Choose a card." : `"${value}" isn't a valid card for this row - pick one from the list.`);
+    return false;
+  }
+
+  input.setCustomValidity("");
+  return true;
+}
+
+function getRowDay(row) {
+  const day = Number(row.querySelector(".day-target-day").value);
+  return Number.isInteger(day) ? day : null;
+}
+
+function getAllDayTargetRows() {
+  return [...dayTargetRowsEl.querySelectorAll(".dynamic-row")];
+}
+
+function getAllFranchiseRows() {
+  return [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")];
+}
+
+function getFranchiseCardNames() {
+  return getAllFranchiseRows().map((row) => row.querySelector(".franchise-card").value).filter(Boolean);
+}
+
+function getDayTargetCardNames() {
+  return getAllDayTargetRows().map((row) => row.querySelector(".day-target-card").value).filter(Boolean);
 }
 
 function addDayTargetRow() {
@@ -67,10 +150,54 @@ function addDayTargetRow() {
 
   // Starts empty and disabled - only populated (via /api/search/possible-cards) once this row has
   // a valid day, and only with cards actually reachable that day given the dish/heat/earlier picks.
-  // See refreshAllDayTargetCandidates.
-  const cardSelect = document.createElement("select");
-  cardSelect.className = "day-target-card";
-  cardSelect.disabled = true;
+  const { input: cardInput, datalist: cardDatalist } = createCardInput("day-target-card");
+  cardInput.disabled = true;
+  cardInput.required = true;
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "link-button";
+  removeButton.textContent = "Remove";
+  removeButton.addEventListener("click", () => {
+    const removedDay = getRowDay(row) ?? 1;
+    row.remove();
+    scheduleAffectedDayTargetRefresh(removedDay);
+    scheduleAllFranchiseRefresh(); // removing a picked card can free up the Theme/tier caps
+  });
+
+  // Editing this row's day only changes what's reachable for rows whose day is >= the smaller of
+  // the old/new day (this row included, since which OTHER rows count as "prior" for it may have
+  // changed too) - rows entirely before that threshold are unaffected.
+  dayInput.addEventListener("input", () => {
+    const previousDay = dayInput.dataset.prevDay ? Number(dayInput.dataset.prevDay) : null;
+    const newDay = getRowDay(row);
+    const threshold = previousDay !== null && newDay !== null ? Math.min(previousDay, newDay) : (newDay ?? 1);
+    dayInput.dataset.prevDay = newDay === null ? "" : String(newDay);
+    scheduleAffectedDayTargetRefresh(threshold);
+  });
+
+  // Changing this row's card only changes what's reachable for rows with a LATER day - and can
+  // change the Theme/franchise-tier caps, so franchise rows need a recheck too.
+  cardInput.addEventListener("change", () => {
+    validateCardInput(cardInput);
+    const day = getRowDay(row) ?? 0;
+    scheduleAffectedDayTargetRefresh(day + 1);
+    scheduleAllFranchiseRefresh();
+  });
+
+  row.appendChild(dayInput);
+  row.appendChild(cardInput);
+  row.appendChild(cardDatalist);
+  row.appendChild(removeButton);
+  dayTargetRowsEl.appendChild(row);
+  scheduleRowRefresh(row);
+}
+
+function addFranchiseCardRow() {
+  const row = document.createElement("div");
+  row.className = "dynamic-row";
+
+  const { input: cardInput, datalist: cardDatalist } = createCardInput("franchise-card");
 
   const removeButton = document.createElement("button");
   removeButton.type = "button";
@@ -78,34 +205,21 @@ function addDayTargetRow() {
   removeButton.textContent = "Remove";
   removeButton.addEventListener("click", () => {
     row.remove();
-    scheduleDayTargetRefresh();
+    scheduleAffectedDayTargetRefresh(1); // a franchise card is owned from day 0 - affects every row
+    scheduleAllFranchiseRefresh();
   });
 
-  dayInput.addEventListener("input", scheduleDayTargetRefresh);
-  cardSelect.addEventListener("change", scheduleDayTargetRefresh);
+  cardInput.addEventListener("change", () => {
+    validateCardInput(cardInput);
+    scheduleAffectedDayTargetRefresh(1);
+    scheduleAllFranchiseRefresh();
+  });
 
-  row.appendChild(dayInput);
-  row.appendChild(cardSelect);
-  row.appendChild(removeButton);
-  dayTargetRowsEl.appendChild(row);
-}
-
-function addFranchiseCardRow() {
-  const row = document.createElement("div");
-  row.className = "dynamic-row";
-
-  const cardSelect = createCardSelect();
-  cardSelect.className = "franchise-card";
-
-  const removeButton = document.createElement("button");
-  removeButton.type = "button";
-  removeButton.className = "link-button";
-  removeButton.textContent = "Remove";
-  removeButton.addEventListener("click", () => row.remove());
-
-  row.appendChild(cardSelect);
+  row.appendChild(cardInput);
+  row.appendChild(cardDatalist);
   row.appendChild(removeButton);
   franchiseCardRowsEl.appendChild(row);
+  scheduleFranchiseRowRefresh(row);
 }
 
 addDayTargetButton.addEventListener("click", () => {
@@ -114,43 +228,48 @@ addDayTargetButton.addEventListener("click", () => {
 });
 addFranchiseCardButton.addEventListener("click", () => {
   addFranchiseCardRow();
-  scheduleDayTargetRefresh(); // a newly-owned franchise card can affect later days' possible cards
+  scheduleAffectedDayTargetRefresh(1); // a newly-owned franchise card can affect any day's possible cards
 });
 
-// Franchise-carryover cards aren't day-sequenced (they represent cards already owned from a prior
-// run, not a night-by-night pick) - that select keeps using the full unfiltered per-setting list.
-// Day-target card selects are populated separately by refreshAllDayTargetCandidates, since their
-// options depend on which day the row is for and what's been picked for earlier days.
-function refreshFranchiseCardSelectOptions() {
-  for (const select of document.querySelectorAll(".franchise-card")) {
-    const previousValue = select.value;
-    select.innerHTML = "";
-    for (const unlock of unlocksForSetting) {
-      const option = document.createElement("option");
-      option.value = unlock.name;
-      option.textContent = unlock.name;
-      select.appendChild(option);
-    }
-    if ([...select.options].some((o) => o.value === previousValue)) {
-      select.value = previousValue;
-    }
-  }
-}
-
-// Disables/enables the entire day-targets section (per user request: it should be unusable until
-// a starting dish is chosen, since "what's possible on day N" is meaningless without one). Card
-// selects specifically are then re-narrowed by refreshAllDayTargetCandidates, which disables any
-// that don't yet have a valid day even when the section overall is enabled.
 function setDayTargetsEnabled(enabled) {
   addDayTargetButton.disabled = !enabled;
-  for (const el of dayTargetRowsEl.querySelectorAll("input, select, button")) {
+  for (const el of dayTargetRowsEl.querySelectorAll("input, button")) {
     el.disabled = !enabled;
   }
 }
 
-function scheduleDayTargetRefresh() {
-  clearTimeout(dayTargetRefreshTimer);
-  dayTargetRefreshTimer = setTimeout(refreshAllDayTargetCandidates, 300);
+function scheduleRowRefresh(row) {
+  const state = getRowState(row);
+  clearTimeout(state.timer);
+  state.timer = setTimeout(() => refreshDayTargetRow(row), 300);
+}
+
+function scheduleFranchiseRowRefresh(row) {
+  const state = getRowState(row);
+  clearTimeout(state.timer);
+  state.timer = setTimeout(() => refreshFranchiseRow(row), 300);
+}
+
+// Only reschedules the rows actually affected (day >= threshold, or not yet given a day at all),
+// each on its own debounce timer - not a single shared timer that rebuilds every row on any edit
+// anywhere in the form.
+function scheduleAffectedDayTargetRefresh(threshold) {
+  for (const row of getAllDayTargetRows()) {
+    const day = getRowDay(row);
+    if (day === null || day >= threshold) {
+      scheduleRowRefresh(row);
+    }
+  }
+}
+
+function scheduleAllDayTargetRefresh() {
+  scheduleAffectedDayTargetRefresh(1);
+}
+
+function scheduleAllFranchiseRefresh() {
+  for (const row of getAllFranchiseRows()) {
+    scheduleFranchiseRowRefresh(row);
+  }
 }
 
 async function fetchPossibleCardNames(day, priorTargets, franchiseCardNames) {
@@ -168,6 +287,7 @@ async function fetchPossibleCardNames(day, priorTargets, franchiseCardNames) {
         franchiseCardNames,
         priorTargets,
         day,
+        cardPack: cardPackSelect.value || null,
       }),
     });
     if (!response.ok) {
@@ -180,54 +300,91 @@ async function fetchPossibleCardNames(day, priorTargets, franchiseCardNames) {
   }
 }
 
-// Recomputes every day-target row's candidate list from scratch based on the current dish/heat/
-// tier/franchise-cards and every *other* row's day+card. Recomputing all rows on any single change
-// (rather than tracking a precise per-row dependency graph) is simplest and cheap given day-target
-// lists are always small - picking a card for an earlier day can affect later rows (e.g. Medium
-// Groups -> Large Groups becomes reachable), so any row could in principle depend on any other.
-async function refreshAllDayTargetCandidates() {
+async function fetchFranchiseCandidates(otherSelectedCardNames) {
+  const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
+  try {
+    const response = await fetch("/api/search/franchise-candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        setting: settingSelect.value,
+        dishName: dishSelect.value,
+        subOptionChoice: subOptionField.hidden ? null : Number(checkedSubOption?.value ?? 1),
+        heat: Number(heatSelect.value),
+        tier: Number(tierInput.value),
+        otherSelectedCardNames,
+      }),
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const body = await response.json();
+    return body.cardNames;
+  } catch {
+    return [];
+  }
+}
+
+async function refreshDayTargetRow(row) {
+  const dayInput = row.querySelector(".day-target-day");
+  const cardInput = row.querySelector(".day-target-card");
+  const datalist = document.getElementById(cardInput.getAttribute("list"));
+
+  if (!dishSelect.value) {
+    cardInput.disabled = true;
+    setDatalistOptions(datalist, []);
+    return;
+  }
+
+  const day = getRowDay(row);
+  if (day === null || day < 1) {
+    cardInput.disabled = true;
+    setDatalistOptions(datalist, []);
+    return;
+  }
+
+  const state = getRowState(row);
+  const myGeneration = ++state.generation;
+
+  const priorTargets = getAllDayTargetRows()
+    .filter((other) => other !== row)
+    .map((other) => ({ day: getRowDay(other), cardName: other.querySelector(".day-target-card").value }))
+    .filter((t) => Number.isInteger(t.day) && t.day < day && t.cardName);
+
+  const cardNames = await fetchPossibleCardNames(day, priorTargets, getFranchiseCardNames());
+
+  if (state.generation !== myGeneration) {
+    return; // a newer request for this row superseded this one - drop the stale result
+  }
+
+  cardInput.disabled = cardNames.length === 0;
+  setDatalistOptions(datalist, cardNames);
+  validateCardInput(cardInput);
+}
+
+async function refreshFranchiseRow(row) {
   if (!dishSelect.value) {
     return;
   }
 
-  const rows = [...dayTargetRowsEl.querySelectorAll(".dynamic-row")].map((row) => ({
-    dayInput: row.querySelector(".day-target-day"),
-    cardSelect: row.querySelector(".day-target-card"),
-  }));
+  const cardInput = row.querySelector(".franchise-card");
+  const datalist = document.getElementById(cardInput.getAttribute("list"));
+  const state = getRowState(row);
+  const myGeneration = ++state.generation;
 
-  const franchiseCardNames = [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")].map(
-    (row) => row.querySelector(".franchise-card").value
-  );
+  const otherSelectedCardNames = [
+    ...getAllFranchiseRows().filter((other) => other !== row).map((other) => other.querySelector(".franchise-card").value),
+    ...getDayTargetCardNames(),
+  ].filter(Boolean);
 
-  await Promise.all(
-    rows.map(async ({ dayInput, cardSelect }) => {
-      const day = Number(dayInput.value);
-      if (!dayInput.value || !Number.isInteger(day) || day < 1) {
-        cardSelect.disabled = true;
-        cardSelect.innerHTML = "";
-        return;
-      }
+  const cardNames = await fetchFranchiseCandidates(otherSelectedCardNames);
 
-      const priorTargets = rows
-        .filter((other) => other.dayInput !== dayInput)
-        .map((other) => ({ day: Number(other.dayInput.value), cardName: other.cardSelect.value }))
-        .filter((t) => Number.isInteger(t.day) && t.day < day && t.cardName);
+  if (state.generation !== myGeneration) {
+    return;
+  }
 
-      const cardNames = await fetchPossibleCardNames(day, priorTargets, franchiseCardNames);
-      const previousValue = cardSelect.value;
-      cardSelect.innerHTML = "";
-      for (const name of cardNames) {
-        const option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
-        cardSelect.appendChild(option);
-      }
-      cardSelect.disabled = cardNames.length === 0;
-      if (cardNames.includes(previousValue)) {
-        cardSelect.value = previousValue;
-      }
-    })
-  );
+  setDatalistOptions(datalist, cardNames);
+  validateCardInput(cardInput);
 }
 
 function updateSubOptionUi() {
@@ -259,15 +416,16 @@ async function loadUnlocksForSetting(setting) {
   onDishChanged();
 }
 
-// Single entry point for anything that can change which cards are reachable/relevant: dish, heat,
-// tier, or franchise-carryover-card selection. Updates the sub-option UI, the day-targets
-// section's enabled state (per user request: unusable before a dish is chosen), the franchise-card
-// dropdown's option list, and re-runs the day-target possibility query.
+// Single entry point for anything that can change which cards are reachable/relevant for the WHOLE
+// form: dish, heat, tier. Updates the sub-option UI, the day-targets section's enabled state (per
+// user request: unusable before a dish is chosen), and re-runs every row's possibility query - this
+// is the one legitimate "refresh everything" case, since a dish/heat/tier change invalidates every
+// row at once.
 function onDishChanged() {
   updateSubOptionUi();
   setDayTargetsEnabled(Boolean(dishSelect.value));
-  refreshFranchiseCardSelectOptions();
-  refreshAllDayTargetCandidates();
+  scheduleAllFranchiseRefresh();
+  scheduleAllDayTargetRefresh();
 }
 
 // Not setting-dependent (heat/chill cards are the same across every restaurant setting), so this
@@ -304,9 +462,33 @@ async function loadHeatLevels() {
   heatSelect.value = "0";
 }
 
+// Not setting-scoped - a card schedule is a selectable pack independent of restaurant setting (see
+// GameDataRepository.ListCardSchedules's doc comment), so this is loaded once like loadHeatLevels.
+async function loadCardPacks() {
+  const response = await fetch("/api/search/card-packs");
+  const packs = await response.json();
+
+  cardPackSelect.innerHTML = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "Normal (use the restaurant setting's own schedule)";
+  cardPackSelect.appendChild(defaultOption);
+
+  for (const pack of packs) {
+    if (pack.slug === "normal") {
+      continue; // already covered by the default option above
+    }
+    const option = document.createElement("option");
+    option.value = pack.slug;
+    option.textContent = pack.displayName;
+    cardPackSelect.appendChild(option);
+  }
+}
+
 dishSelect.addEventListener("change", onDishChanged);
-heatSelect.addEventListener("change", () => refreshAllDayTargetCandidates());
-tierInput.addEventListener("input", scheduleDayTargetRefresh);
+heatSelect.addEventListener("change", onDishChanged);
+tierInput.addEventListener("input", onDishChanged);
+cardPackSelect.addEventListener("change", onDishChanged);
 settingSelect.addEventListener("change", () => {
   loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));
 });
@@ -316,6 +498,7 @@ async function loadInit() {
   populateSettingSelect(settingSelect, settings);
   await loadUnlocksForSetting(settingSelect.value);
   await loadHeatLevels();
+  await loadCardPacks();
   addDayTargetRow();
   onDishChanged();
 }
@@ -329,6 +512,7 @@ function stopPolling() {
 
 function renderJobStatus(job) {
   jobEl.hidden = false;
+  currentMatches = job.matches;
 
   const percent = job.totalToCheck > 0 ? Math.min(100, (job.checkedCount / job.totalToCheck) * 100) : 0;
 
@@ -356,7 +540,8 @@ function renderJobStatus(job) {
       jobStatusText.textContent =
         `Stopped after finding ${job.matches.length} match(es) - every search on this site stops at ` +
         "500 results (or 1, with \"Stop after first match\"). Don't like these? Adjust the seed " +
-        "length/alphabet in Advanced options to search a different space.";
+        "length/alphabet in Advanced options to search a different space, or exclude these seeds " +
+        "and search again to find more.";
     } else if (job.status === "Completed") {
       jobStatusText.textContent = `Done - checked ${job.checkedCount.toLocaleString()} seed(s), found ${job.matches.length} match(es).`;
     } else if (job.status === "Cancelled") {
@@ -368,6 +553,8 @@ function renderJobStatus(job) {
       ? `${job.seedsPerSecond.toFixed(0)} seeds/sec, ${job.elapsedSeconds.toFixed(0)}s total`
       : "";
   }
+
+  copyMatchesButton.hidden = job.matches.length === 0;
 
   // Cap how many match badges get rendered as DOM nodes - some target cards are common enough
   // that a search can turn up thousands of matches, and building/reflowing that many elements on
@@ -425,12 +612,44 @@ cancelButton.addEventListener("click", async () => {
   }
 });
 
+copyMatchesButton?.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(currentMatches.join("\n"));
+    setStatus(`Copied ${currentMatches.length} seed(s) to the clipboard.`, false);
+  } catch {
+    setStatus("Failed to copy - your browser may not allow clipboard access here.", true);
+  }
+});
+
+function parseExcludedSeeds() {
+  return (excludeSeedsInput?.value ?? "")
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   stopPolling();
   setStatus("", false);
 
-  const dayTargets = [...dayTargetRowsEl.querySelectorAll(".dynamic-row")].map((row) => ({
+  const dayTargetInputs = getAllDayTargetRows().map((row) => row.querySelector(".day-target-card"));
+  const franchiseInputs = getAllFranchiseRows().map((row) => row.querySelector(".franchise-card"));
+
+  // Re-validate every card field right before submit (not just on blur) - blocks submit with the
+  // browser's native validation UI if any typed card name isn't currently valid for its row.
+  let allValid = true;
+  for (const input of [...dayTargetInputs, ...franchiseInputs]) {
+    if (!validateCardInput(input)) {
+      allValid = false;
+    }
+  }
+  if (!allValid) {
+    form.reportValidity();
+    return;
+  }
+
+  const dayTargets = getAllDayTargetRows().map((row) => ({
     day: Number(row.querySelector(".day-target-day").value),
     cardName: row.querySelector(".day-target-card").value,
   }));
@@ -440,10 +659,7 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
-  const franchiseCardNames = [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")].map(
-    (row) => row.querySelector(".franchise-card").value
-  );
-
+  const franchiseCardNames = getFranchiseCardNames();
   const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
 
   const payload = {
@@ -458,6 +674,8 @@ form.addEventListener("submit", async (event) => {
     length: Number(lengthInput.value),
     limit: limitInput.value ? Number(limitInput.value) : null,
     stopAfterFirstMatch: stopAfterFirstMatchInput.checked,
+    excludedSeeds: parseExcludedSeeds(),
+    cardPack: cardPackSelect.value || null,
   };
 
   try {

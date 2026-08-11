@@ -13,7 +13,9 @@ public sealed record SearchStartRequest(
     string? Alphabet,
     int Length,
     long? Limit,
-    bool? StopAfterFirstMatch);
+    bool? StopAfterFirstMatch,
+    List<string>? ExcludedSeeds = null,
+    string? CardPack = null);
 
 public sealed record SearchStartResponse(string JobId, long TotalToCheck, string SpaceSize);
 
@@ -43,7 +45,8 @@ public sealed record PossibleCardsRequest(
     int Tier,
     List<string>? FranchiseCardNames,
     List<DayTargetDto> PriorTargets,
-    int Day);
+    int Day,
+    string? CardPack = null);
 
 public sealed record PossibleCardsResponse(IReadOnlyList<string> CardNames);
 
@@ -54,7 +57,32 @@ public sealed record UnlockDto(
     bool HasSubOptions,
     string? OptionCard1Name,
     string? OptionCard2Name,
-    bool IsStartingDish);
+    bool IsStartingDish,
+    int UnlockGroup,
+    int CardType,
+    int MinimumFranchiseTier,
+    bool IsSpecificFranchiseTier,
+    IReadOnlyList<int> RequiresIds,
+    IReadOnlyList<int> BlockedByIds);
 
 /// <summary>Level is signed - positive for Heat N, negative for Chill N (magnitude = N), matching RunSetup's heatLevel parameter directly.</summary>
 public sealed record HeatLevelDto(int Level, string Name);
+
+/// <summary>One selectable card-draw schedule (independent of restaurant setting) - see GameDataRepository.ListCardSchedules.</summary>
+public sealed record CardScheduleDto(string Slug, string DisplayName);
+
+/// <summary>
+/// Candidate list for one franchise-carryover row - Franchise (group 5) and Theme (group 3) cards
+/// only, filtered by Requires/BlockedBy/tier eligibility against the starting dish and every OTHER
+/// already-selected card in the form (day-target picks and other franchise rows alike), plus the
+/// "at most 1 Theme card, at most 1 Franchise card per tier" caps (see SelectionCapValidator).
+/// </summary>
+public sealed record FranchiseCandidatesRequest(
+    string Setting,
+    string DishName,
+    int? SubOptionChoice,
+    int Heat,
+    int Tier,
+    List<string>? OtherSelectedCardNames);
+
+public sealed record FranchiseCandidatesResponse(IReadOnlyList<string> CardNames);

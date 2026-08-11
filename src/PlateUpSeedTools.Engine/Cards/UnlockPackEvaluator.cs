@@ -22,13 +22,24 @@ namespace PlateUpSeedTools.Engine.Cards;
 /// </summary>
 public static class UnlockPackEvaluator
 {
-    public static UnlockOptions GetOptions(GameDataRepository repo, int packId, HashSet<int> currentCards, UnlockRequest request, UnityRandom rng, int skipChoices = 0)
+    public static UnlockOptions GetOptions(GameDataRepository repo, int packId, HashSet<int> currentCards, UnlockRequest request, UnityRandom rng, int skipChoices = 0) =>
+        GetOptionsWithSource(repo, packId, currentCards, request, rng, skipChoices).Options;
+
+    /// <summary>
+    /// Same as <see cref="GetOptions"/> but also reports which leaf modular pack actually produced
+    /// the offer - a composite pack (e.g. the setting's own "Default Composite Pack") tries several
+    /// sub-packs in order and returns whichever fires first, so the top-level packId alone doesn't
+    /// say whether an offer came from, say, the Franchise Cards Pack vs the Theme Cards Pack. Used by
+    /// CardDrawSimulator to label offers for the Seed Explorer UI; GetOptions ignores the source and
+    /// stays the primary/simpler API for everything else.
+    /// </summary>
+    public static (UnlockOptions Options, int? SourcePackId) GetOptionsWithSource(GameDataRepository repo, int packId, HashSet<int> currentCards, UnlockRequest request, UnityRandom rng, int skipChoices = 0)
     {
         var pack = repo.GetPack(packId);
         return pack.Type switch
         {
             "composite" => GetCompositeOptions(repo, pack, currentCards, request, rng, skipChoices),
-            "modular" => GetModularOptions(repo, pack, currentCards, request, rng, skipChoices),
+            "modular" => (GetModularOptions(repo, pack, currentCards, request, rng, skipChoices), packId),
             _ => throw new NotSupportedException($"Unknown pack type '{pack.Type}' for pack {packId}"),
         };
     }
@@ -129,18 +140,18 @@ public static class UnlockPackEvaluator
         return candidates.Where(c => c.UnlockGroup == group1 || c.UnlockGroup == group2).Select(c => c.Id);
     }
 
-    private static UnlockOptions GetCompositeOptions(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, UnityRandom rng, int skipChoices)
+    private static (UnlockOptions Options, int? SourcePackId) GetCompositeOptions(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, UnityRandom rng, int skipChoices)
     {
         foreach (var subPackId in pack.SubPackIds ?? [])
         {
-            var options = GetOptions(repo, subPackId, currentCards, request, rng, skipChoices);
-            if (options.Unlock1Id is not null)
+            var result = GetOptionsWithSource(repo, subPackId, currentCards, request, rng, skipChoices);
+            if (result.Options.Unlock1Id is not null)
             {
-                return options;
+                return result;
             }
         }
 
-        return default;
+        return (default, null);
     }
 
     private static UnlockOptions GetModularOptions(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, UnityRandom rng, int skipChoices)
@@ -167,6 +178,17 @@ public static class UnlockPackEvaluator
 
         return SelectOptions(selector, candidates, skipChoices);
     }
+
+    /// <summary>
+    /// Whether <paramref name="candidate"/> is a legal pick for the given <paramref name="filter"/>
+    /// given the cards already owned/selected so far - reuses <see cref="ShouldBlockCard"/> (the
+    /// single source of truth for unlockability/franchise-tier/duplicate/Requires/BlockedBy
+    /// eligibility) rather than reimplementing it. Intended for validating a manually-chosen card
+    /// (e.g. a franchise-carryover pick in the search UI), not a simulated draw - Day is irrelevant
+    /// to every check ShouldBlockCard performs (only Tier is consulted), so 0 is a safe placeholder.
+    /// </summary>
+    public static bool IsEligible(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier, FilterData filter) =>
+        !ShouldBlockCard(repo, candidate, currentCards, new UnlockRequest(Day: 0, tier), filter);
 
     // --- FilterBasic.ShouldBlockCard ---
 

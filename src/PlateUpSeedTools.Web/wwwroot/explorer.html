@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Seed Explorer — PlateUp Seed Tools</title>
+  <link rel="stylesheet" href="/css/theme.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header-inner">
+      <a class="brand" href="/">PlateUp <span class="accent">Seed</span> Tools</a>
+      <button class="nav-toggle" id="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">
+        <span class="sr-only">Menu</span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+      </button>
+      <nav class="main-nav" id="main-nav">
+        <a href="/">Home</a>
+        <a href="/preview">Seed Previewer</a>
+        <a href="/search">Seed Search</a>
+        <a href="/explorer" class="active">Seed Explorer</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="page-intro">
+      <h1>Seed Explorer</h1>
+      <p class="subtitle">
+        Walk a seed day-by-day (up to day 15) and see exactly what cards it offers. Pick a card to
+        advance, or go back to an earlier day to see what the other option would have led to - both
+        branches stay in the tree below, nothing is thrown away. No blueprint or customer-count data
+        here, just card offers.
+      </p>
+    </div>
+
+    <form id="explorer-form" class="controls search-controls">
+      <label class="field">
+        <span>Restaurant setting</span>
+        <select id="setting-select" required></select>
+      </label>
+
+      <label class="field">
+        <span>Seed</span>
+        <input id="seed-input" type="text" maxlength="8" placeholder="bdghjmqr" autocomplete="off" required />
+      </label>
+
+      <label class="field">
+        <span>Starting dish</span>
+        <select id="dish-select" required></select>
+      </label>
+
+      <div class="field" id="sub-option-field" hidden>
+        <span>Sub-option</span>
+        <label class="radio-option"><input type="radio" name="sub-option" value="1" /> <span id="sub-option-1-label"></span></label>
+        <label class="radio-option"><input type="radio" name="sub-option" value="2" /> <span id="sub-option-2-label"></span></label>
+      </div>
+
+      <label class="field">
+        <span>Heat level</span>
+        <select id="heat-select"></select>
+      </label>
+
+      <details class="advanced-fields full-width">
+        <summary>Advanced options</summary>
+        <div class="advanced-fields-body">
+          <label class="field">
+            <span>Card schedule (overrides which pack drives card draws, e.g. Turbo's every-day schedule - independent of the restaurant setting above)</span>
+            <select id="card-pack-select"></select>
+          </label>
+
+          <label class="field">
+            <span>Franchise tier</span>
+            <input id="tier-input" type="number" value="0" step="1" min="0" />
+          </label>
+
+          <div class="field-group full-width">
+            <span>Franchise carryover cards (already owned from a prior franchise run)</span>
+            <div id="franchise-card-rows" class="dynamic-rows"></div>
+            <button type="button" id="add-franchise-card" class="link-button">+ Add franchise card</button>
+          </div>
+        </div>
+      </details>
+
+      <button type="submit" id="explorer-submit">Start exploring</button>
+    </form>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <section id="explorer-result" class="explorer-result" hidden>
+      <details id="tree-panel" class="explorer-tree-panel" open>
+        <summary>Explored path <span id="tree-toggle-hint" class="tree-toggle-hint"></span></summary>
+        <div id="tree-view" class="tree-view"></div>
+      </details>
+
+      <div id="day-panel" class="day-panel"></div>
+    </section>
+  </main>
+
+  <script src="/js/nav.js"></script>
+  <script src="/js/shared.js"></script>
+  <script src="/js/explorer.js"></script>
+</body>
+</html>

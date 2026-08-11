@@ -11,7 +11,8 @@ public sealed record SeedSearchRequest(
     int Tier,
     string Alphabet,
     int Length,
-    long TotalToCheck);
+    long TotalToCheck,
+    IReadOnlySet<string>? ExcludedSeeds = null);
 
 /// <summary>Result of a <see cref="SeedSearcher.Search"/> call - <see cref="MatchCapReached"/> distinguishes "stopped early because matchCap was hit" from a genuine full-space completion, since both otherwise look like the loop just finishing.</summary>
 public readonly record struct SeedSearchResult(bool MatchCapReached);
@@ -72,7 +73,8 @@ public static class SeedSearcher
             Parallel.For(0L, request.TotalToCheck, parallelOptions, i =>
             {
                 var seedString = IndexToSeedString(i, request.Alphabet, request.Length);
-                if (Matches(repo, new Seed(seedString), request.SettingPackId, request.Setup, request.DayTargets, maxDay, request.Tier))
+                if (request.ExcludedSeeds?.Contains(seedString) != true &&
+                    Matches(repo, new Seed(seedString), request.SettingPackId, request.Setup, request.DayTargets, maxDay, request.Tier))
                 {
                     onMatch(seedString);
                     if (Interlocked.Increment(ref matchCount) >= matchCap)

@@ -277,15 +277,20 @@ public static class CardExtractor
     }
 
     /// <summary>
-    /// Writes data/cards/packs.json - the UnlockPack graph (Default Composite Pack, March Pack, and
-    /// their sub-packs, plus the two known heat-bonus packs). Composite packs' Packs list is plain
-    /// YAML (extracted generically below); ModularUnlockPack internals (Filter/Sorters/
-    /// ConditionalOptions) live inside an Odin-serialized blob with no object references to walk, so
-    /// this is a hand-curated table decoded via the Odin partial-field-read technique documented in
-    /// game-domain-knowledge.md, not a generic parse - extend this table (not a generic decoder) if a
-    /// new setting needs a pack not listed here. `santa-workshop`'s Christmas Pack is NOT included
-    /// yet (its extra Christmas Special Card sub-pack isn't decoded) - don't wire up card-search
-    /// support for santa-workshop until it is.
+    /// Writes data/cards/packs.json - the UnlockPack graph (Default Composite Pack, March/June/
+    /// Halloween/Autumn/January Packs, and their sub-packs, plus the two known heat-bonus packs).
+    /// Composite packs' Packs list is plain YAML (extracted generically below); ModularUnlockPack
+    /// internals (Filter/Sorters/ConditionalOptions) live inside an Odin-serialized blob with no
+    /// object references to walk, so this is a hand-curated table decoded via the Odin partial-
+    /// field-read technique documented in game-domain-knowledge.md, not a generic parse - extend this
+    /// table (not a generic decoder) if a new setting needs a pack not listed here.
+    ///
+    /// NOT included: `santa-workshop`'s Christmas Pack (its extra Christmas Special Card sub-pack
+    /// isn't decoded) and February Pack's `February Special Card` sub-pack - the latter uses
+    /// `UnlockSelectorForcedCard` + a `UnlockSetFixed` specific-card reference list (an Odin
+    /// array/reference structure, not the scalar fields the partial-read technique handles), a
+    /// selector kind this engine doesn't model at all yet. Don't wire up card-search support for
+    /// either setting/schedule until decoded.
     /// </summary>
     public static void WritePacksFile(GuidResolver resolver, string assetsRoot, string outputRoot)
     {
@@ -305,31 +310,50 @@ public static class CardExtractor
         var heat2PackId = FindId("Heat - Food Card After Day 2 Pack.asset");
         var heat10PackId = FindId("Heat - Starter Or Dessert Pack.asset");
 
+        // Session (card-pack coverage): decoded by cross-checking the Odin partial-read technique
+        // against the 6 already-known packs above byte-for-byte before trusting it on new ones (see
+        // game-domain-knowledge.md's card-pack-coverage section for the full writeup, including the
+        // Heat10 filter fix below).
+        var junePackId = FindId("June Pack.asset");
+        var juneCardsId = FindId("June Cards.asset");
+        var halloweenPackId = FindId("Halloween Pack.asset");
+        var halloweenCardsId = FindId("Halloween Cards.asset");
+        var autumnPackId = FindId("Autumn Pack.asset");
+        var autumnDishCardsId = FindId("Autumn Dish Cards.asset");
+        var januaryPackId = FindId("January Pack.asset");
+        var januaryCardsId = FindId("January Cards.asset");
+
         // Default UnlockSorterPriority config shared by the standard schedule packs (Franchise/Normal/
         // Theme): PriorityProbability=0.5, PrioritiseRequirements=true, empty Groups/DishTypes -
         // decoded via the Odin partial-read technique, PrioritiseRequirements/Groups/DishTypes assumed
         // at their class defaults pending ground-truth confirmation (see game-domain-knowledge.md).
-        object StandardPriority(double probability) => new { probability, prioritiseRequirements = true, groups = Array.Empty<int>(), dishTypes = Array.Empty<int>() };
+        object StandardPriority(double probability, bool prioritiseRequirements = true) => new { probability, prioritiseRequirements, groups = Array.Empty<int>(), dishTypes = Array.Empty<int>() };
 
-        // FilterBasic with every Ignore*/Allow* flag at its class default (all false) - assumed
-        // identical across every currently-known pack (all visibly use the same field list in their
-        // Odin blob dump); flag for ground-truth correction if a pack's real behaviour implies
-        // otherwise (e.g. base dishes appearing as card draws would mean AllowBaseDishes=true somewhere).
-        object DefaultFilter() => new
+        // FilterBasic with every Ignore*/Allow* flag at its class default (all false) - the shared
+        // shape for most packs, but NOT actually uniform: byte-verified during the card-pack-coverage
+        // session that `Heat - Starter Or Dessert Pack` has `ignoreFilterByHasMain: true` (differs
+        // from every other pack, corrected below) and `Autumn Dish Cards`/`January Cards` have
+        // `allowBaseDishes: true` - always pass explicit overrides rather than assuming this default
+        // applies to a newly-decoded pack without checking.
+        object DefaultFilter(bool allowBaseDishes = false, bool ignoreFilterByHasMain = false) => new
         {
             ignoreUnlockability = false,
             ignoreFranchiseTier = false,
             ignoreDuplicateFilter = false,
             ignoreRequirements = false,
-            allowBaseDishes = false,
+            allowBaseDishes,
             ignoreBlocksOtherFood = false,
-            ignoreFilterByHasMain = false,
+            ignoreFilterByHasMain,
         };
 
         var packs = new Dictionary<string, object>
         {
             [defaultCompositeId.ToString()] = new { name = "Default Composite Pack", type = "composite", subPackIds = new[] { franchiseId, normalId, themeId } },
             [marchPackId.ToString()] = new { name = "March Pack", type = "composite", subPackIds = new[] { franchiseId, themeId, marchCardsId } },
+            [junePackId.ToString()] = new { name = "June Pack", type = "composite", subPackIds = new[] { franchiseId, juneCardsId, themeId } },
+            [halloweenPackId.ToString()] = new { name = "Halloween Pack", type = "composite", subPackIds = new[] { franchiseId, halloweenCardsId, themeId, normalId } },
+            [autumnPackId.ToString()] = new { name = "Autumn Pack", type = "composite", subPackIds = new[] { franchiseId, autumnDishCardsId, themeId, normalId } },
+            [januaryPackId.ToString()] = new { name = "January Pack", type = "composite", subPackIds = new[] { franchiseId, januaryCardsId, themeId } },
             [franchiseId.ToString()] = new
             {
                 name = "Franchise Cards Pack", type = "modular",
@@ -376,13 +400,71 @@ public static class CardExtractor
                 selector = new { kind = "menuPhase", phase1 = 0, phase2 = 2 },
                 condition = new { kind = "once", day = 1 },
                 sorterPriority = StandardPriority(0.8999999761581421),
+                // Bug fix (card-pack-coverage session): byte-verified this pack really does have
+                // ignoreFilterByHasMain=true (every other currently-known pack has it false) -
+                // previously wrongly using DefaultFilter()'s all-false shape. Makes sense: this
+                // pack's whole purpose is granting a Starter/Dessert dish before a Main is owned, so
+                // the "don't offer a Starter until you own a Main" filter would be self-defeating here.
+                filter = DefaultFilter(ignoreFilterByHasMain: true),
+            },
+            [juneCardsId.ToString()] = new
+            {
+                name = "June Cards", type = "modular",
+                selector = new { kind = "groupChoice", group1 = 1, group2 = 0 },
+                condition = new { kind = "regular", dayInterval = 3, dayOffset = 0, dayMin = 1, dayMax = -1, tierRequired = -1 },
+                sorterPriority = StandardPriority(0.5),
                 filter = DefaultFilter(),
+            },
+            [halloweenCardsId.ToString()] = new
+            {
+                name = "Halloween Cards", type = "modular",
+                selector = new { kind = "groupChoice", group1 = 6, group2 = 6 },
+                condition = new { kind = "regular", dayInterval = 7, dayOffset = 0, dayMin = 0, dayMax = -1, tierRequired = -1 },
+                sorterPriority = StandardPriority(0.5, prioritiseRequirements: false),
+                filter = DefaultFilter(),
+            },
+            [autumnDishCardsId.ToString()] = new
+            {
+                name = "Autumn Dish Cards", type = "modular",
+                selector = new { kind = "groupChoice", group1 = 1, group2 = 1 },
+                condition = new { kind = "regular", dayInterval = 3, dayOffset = 0, dayMin = 1, dayMax = -1, tierRequired = -1 },
+                sorterPriority = StandardPriority(0.5, prioritiseRequirements: false),
+                filter = DefaultFilter(allowBaseDishes: true),
+            },
+            [januaryCardsId.ToString()] = new
+            {
+                name = "January Cards", type = "modular",
+                selector = new { kind = "groupChoice", group1 = 1, group2 = 1 },
+                condition = new { kind = "regular", dayInterval = 3, dayOffset = 0, dayMin = 1, dayMax = -1, tierRequired = -1 },
+                sorterPriority = StandardPriority(0.5, prioritiseRequirements: false),
+                filter = DefaultFilter(allowBaseDishes: true),
             },
         };
 
         var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
         File.WriteAllText(Path.Combine(outputRoot, "cards", "packs.json"), JsonSerializer.Serialize(packs, jsonOptions));
         Console.WriteLine($"  Wrote {packs.Count} pack(s) to cards/packs.json");
+
+        // Card-pack coverage session: which top-level composite packs are actually offered as a
+        // selectable "card schedule" independent of the restaurant-setting/layout picker (session 6
+        // collapsed 10 settings into one synthetic "normal" purely on layout identity, before this
+        // feature existed - several of those settings turned out to have their OWN distinct card
+        // pack, discarded by that merge; this restores them as a separate axis rather than
+        // reintroducing near-duplicate settings into the picker). `Bakery`/`City`/`Alpine`/`Country`
+        // are deliberately omitted - confirmed byte-identical to Default Composite Pack (Bakery) or
+        // UnlockPack unset entirely (City/Alpine/Country), so "normal" already covers them.
+        // `February` is deliberately omitted too - see WritePacksFile's doc comment.
+        var schedules = new object[]
+        {
+            new { slug = "normal", displayName = "Normal", packId = defaultCompositeId },
+            new { slug = "turbo", displayName = "Turbo (card every day)", packId = marchPackId },
+            new { slug = "coffeeshop", displayName = "Coffeeshop", packId = junePackId },
+            new { slug = "halloween", displayName = "Halloween", packId = halloweenPackId },
+            new { slug = "autumn", displayName = "Autumn", packId = autumnPackId },
+            new { slug = "january", displayName = "January", packId = januaryPackId },
+        };
+        File.WriteAllText(Path.Combine(outputRoot, "cards", "card-schedules.json"), JsonSerializer.Serialize(schedules, jsonOptions));
+        Console.WriteLine($"  Wrote {schedules.Length} card schedule(s) to cards/card-schedules.json");
     }
 
     private static bool HasUnlockSignature(string assetPath)

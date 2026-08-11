@@ -1,0 +1,32 @@
+[
+  {
+    "slug": "normal",
+    "displayName": "Normal",
+    "packId": -2020288853
+  },
+  {
+    "slug": "turbo",
+    "displayName": "Turbo (card every day)",
+    "packId": -619515969
+  },
+  {
+    "slug": "coffeeshop",
+    "displayName": "Coffeeshop",
+    "packId": 1774091848
+  },
+  {
+    "slug": "halloween",
+    "displayName": "Halloween",
+    "packId": -839658581
+  },
+  {
+    "slug": "autumn",
+    "displayName": "Autumn",
+    "packId": 698670060
+  },
+  {
+    "slug": "january",
+    "displayName": "January",
+    "packId": -1893039732
+  }
+]

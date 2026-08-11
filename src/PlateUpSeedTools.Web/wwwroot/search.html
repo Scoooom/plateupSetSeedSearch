@@ -20,6 +20,7 @@
         <a href="/">Home</a>
         <a href="/preview">Seed Previewer</a>
         <a href="/search" class="active">Seed Search</a>
+        <a href="/explorer">Seed Explorer</a>
       </nav>
     </div>
   </header>
@@ -72,6 +73,11 @@
 
         <div class="advanced-fields-body">
           <label class="field">
+            <span>Card schedule (overrides which pack drives card draws, e.g. Turbo's every-day schedule - independent of the restaurant setting above)</span>
+            <select id="card-pack-select"></select>
+          </label>
+
+          <label class="field">
             <span>Franchise tier</span>
             <input id="tier-input" type="number" value="0" step="1" min="0" />
           </label>
@@ -96,6 +102,11 @@
             <span>Limit (max seeds to check)</span>
             <input id="limit-input" type="number" value="200000" min="1" step="1" />
           </label>
+
+          <label class="field full-width">
+            <span>Exclude seeds (one per line, or comma-separated - skips seeds you've already found so a rerun surfaces new ones)</span>
+            <textarea id="exclude-seeds-input" rows="3" placeholder="e.g. bdgh, jmqr"></textarea>
+          </label>
         </div>
       </details>
 
@@ -113,6 +124,7 @@
         <div class="progress-bar-fill" id="progress-bar-fill"></div>
       </div>
       <p id="job-stats" class="job-stats"></p>
+      <button type="button" id="copy-matches" class="link-button" hidden>Copy all matches</button>
       <ul id="matches-list" class="matches-list"></ul>
     </section>
 

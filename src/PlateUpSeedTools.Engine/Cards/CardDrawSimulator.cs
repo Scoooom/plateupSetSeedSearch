@@ -3,8 +3,12 @@ using PlateUpSeedTools.Engine.Seeding;
 
 namespace PlateUpSeedTools.Engine.Cards;
 
-/// <summary>One night's simulated card offer. Unlock1Id/Unlock2Id are null if nothing was offered that night.</summary>
-public sealed record CardDayResult(int Day, int? Unlock1Id, int? Unlock2Id, int? SelectedId);
+/// <summary>
+/// One night's simulated card offer. Unlock1Id/Unlock2Id are null if nothing was offered that night.
+/// SourcePackId is the AssetReference ID of whichever pack in the active-pack try-order actually
+/// produced the offer (see data/settings/cards/packs.json) - null when nothing was offered.
+/// </summary>
+public sealed record CardDayResult(int Day, int? Unlock1Id, int? Unlock2Id, int? SelectedId, int? SourcePackId = null);
 
 /// <summary>
 /// Port of RestaurantMode/Kitchen/FindBonusUnlocks.cs's per-night card-draw logic - see
@@ -49,6 +53,7 @@ public sealed class CardDrawSimulator
     {
         var request = new UnlockRequest(day, _tier);
         var offered = default(UnlockOptions);
+        int? sourcePackId = null;
 
         foreach (var packId in _activePackIds)
         {
@@ -56,10 +61,11 @@ public sealed class CardDrawSimulator
             // via FixedSeedContext(seed, 84902921*1231231+day).UseSubcontext(1), not once per night;
             // see game-domain-knowledge.md point 4-5 for why trying multiple packs is RNG-safe.
             var rng = new FixedSeedContext(_seed, unchecked(CardDrawCategorySeed * 1231231 + day)).UseSubcontext(1).CreateRandom();
-            var options = UnlockPackEvaluator.GetOptions(_repo, packId, _ownedIds, request, rng);
-            if (options.Unlock1Id is not null)
+            var result = UnlockPackEvaluator.GetOptionsWithSource(_repo, packId, _ownedIds, request, rng);
+            if (result.Options.Unlock1Id is not null)
             {
-                offered = options;
+                offered = result.Options;
+                sourcePackId = result.SourcePackId;
                 break;
             }
         }
@@ -70,6 +76,6 @@ public sealed class CardDrawSimulator
             _ownedIds.Add(id);
         }
 
-        return new CardDayResult(day, offered.Unlock1Id, offered.Unlock2Id, selectedId);
+        return new CardDayResult(day, offered.Unlock1Id, offered.Unlock2Id, selectedId, sourcePackId);
     }
 }

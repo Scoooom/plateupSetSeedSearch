@@ -21,6 +21,7 @@ app.UseStaticFiles();
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 app.MapLayoutEndpoints();
 app.MapSearchEndpoints();
+app.MapExplorerEndpoints();
 
 // Clean-URL routing for the previewer: /preview, /preview/{setting}, and /preview/{setting}/{seed}
 // all serve the same static preview.html - it reads setting/seed out of the path client-side (see
@@ -32,5 +33,11 @@ app.MapFallbackToFile("/preview/{*path}", "preview.html");
 // reads no path state itself (the form starts empty each visit - unlike /preview, a search isn't
 // meant to be hotlinked to a specific in-progress job).
 app.MapFallbackToFile("/search/{*path}", "search.html");
+
+// Same pattern for the explorer page: /explorer, /explorer/{setting}, and /explorer/{setting}/{seed}
+// all serve the static explorer.html, which prefills only setting+seed from the path client-side
+// (js/explorer.js) - everything else (dish/heat/tier/franchise cards, the in-progress branch tree)
+// starts blank each visit, same rationale as /search.
+app.MapFallbackToFile("/explorer/{*path}", "explorer.html");
 
 app.Run();

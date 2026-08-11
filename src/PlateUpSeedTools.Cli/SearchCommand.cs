@@ -85,27 +85,46 @@ public static class SearchCommand
             franchiseCarryoverIds.Add(card.Id);
         }
 
-        var settingPackId = repo.ResolveUnlockPackId(options.SettingSlug);
+        int settingPackId;
+        try
+        {
+            settingPackId = repo.ResolveCardSchedulePackId(options.CardPack) ?? repo.ResolveUnlockPackId(options.SettingSlug);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            Console.WriteLine(ex.Message);
+            Console.WriteLine($"Known card schedules: {string.Join(", ", repo.ListCardSchedules().Select(s => s.Slug))}");
+            return 1;
+        }
+
         var setup = RunSetup.Resolve(repo, dish.Id, options.SubOptionChoice, options.HeatLevel, setting.StartingUnlockId, franchiseCarryoverIds);
 
         var spaceSize = BigInteger.Pow(options.Alphabet.Length, options.Length);
         var totalToCheck = options.Limit is long l ? Math.Min(l, (long)BigInteger.Min(spaceSize, long.MaxValue)) : (long)BigInteger.Min(spaceSize, long.MaxValue);
 
-        Console.WriteLine($"Setting: {setting.DisplayName}  Dish: {dish.Name}  Heat: {options.HeatLevel}  Tier: {options.Tier}");
-        if (franchiseCarryoverIds.Count > 0)
+        if (!options.MatchesOnly)
         {
-            Console.WriteLine($"Franchise carryover: {string.Join(", ", options.FranchiseCardNames)}");
+            Console.WriteLine($"Setting: {setting.DisplayName}  Dish: {dish.Name}  Heat: {options.HeatLevel}  Tier: {options.Tier}");
+            if (franchiseCarryoverIds.Count > 0)
+            {
+                Console.WriteLine($"Franchise carryover: {string.Join(", ", options.FranchiseCardNames)}");
+            }
+
+            Console.WriteLine($"Targets: {string.Join(", ", targetNames.OrderBy(t => t.Key).Select(t => $"d{t.Key}={t.Value}"))}");
+            Console.WriteLine($"Searching {options.Alphabet.Length}^{options.Length} = {spaceSize:N0} seed(s) (checking {totalToCheck:N0})...");
         }
 
-        Console.WriteLine($"Targets: {string.Join(", ", targetNames.OrderBy(t => t.Key).Select(t => $"d{t.Key}={t.Value}"))}");
-        Console.WriteLine($"Searching {options.Alphabet.Length}^{options.Length} = {spaceSize:N0} seed(s) (checking {totalToCheck:N0})...");
-
-        var request = new SeedSearchRequest(settingPackId, setup, targetIds, options.Tier, options.Alphabet, options.Length, totalToCheck);
+        var request = new SeedSearchRequest(settingPackId, setup, targetIds, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var matchCount = 0;
         var matchLock = new object();
         var checkedCount = 0L;
+
+        if (!options.MatchesOnly && options.ExcludedSeeds.Count > 0)
+        {
+            Console.WriteLine($"Excluding {options.ExcludedSeeds.Count:N0} previously-found seed(s).");
+        }
 
         var result = SeedSearcher.Search(
             repo,
@@ -117,13 +136,18 @@ public static class SearchCommand
                 lock (matchLock)
                 {
                     matchCount++;
-                    Console.WriteLine($"MATCH: {seedString}");
+                    Console.WriteLine(options.MatchesOnly ? seedString : $"MATCH: {seedString}");
                 }
             },
             onProgress: count => checkedCount = count,
             cancellationToken: CancellationToken.None);
 
         stopwatch.Stop();
+        if (options.MatchesOnly)
+        {
+            return 0;
+        }
+
         var seedsPerSecond = checkedCount / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001);
         Console.WriteLine($"Checked {checkedCount:N0} seed(s) in {stopwatch.Elapsed.TotalSeconds:N1}s ({seedsPerSecond:N0} seeds/sec) - {matchCount} match(es).");
         if (result.MatchCapReached)
@@ -171,6 +195,9 @@ public static class SearchCommand
         public required int Length { get; init; }
         public long? Limit { get; init; }
         public required long MaxResults { get; init; }
+        public required IReadOnlySet<string> ExcludedSeeds { get; init; }
+        public bool MatchesOnly { get; init; }
+        public string? CardPack { get; init; }
     }
 
     // Same hard default the web UI uses (SearchEndpoints.DefaultMatchCap) - a genuine engine-level
@@ -192,6 +219,9 @@ public static class SearchCommand
         var length = 4;
         long? limit = null;
         var maxResults = DefaultMaxResults;
+        var excludedSeeds = new HashSet<string>(StringComparer.Ordinal);
+        var matchesOnly = false;
+        string? cardPack = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -239,6 +269,27 @@ public static class SearchCommand
                     var parsedMaxResults = long.Parse(args[++i]);
                     maxResults = parsedMaxResults <= 0 ? long.MaxValue : parsedMaxResults;
                     break;
+                case "--exclude-seed" when i + 1 < args.Length:
+                    excludedSeeds.Add(args[++i].ToLowerInvariant());
+                    break;
+                case "--exclude-seeds-file" when i + 1 < args.Length:
+                    var excludeFilePath = args[++i];
+                    foreach (var line in File.ReadAllLines(excludeFilePath))
+                    {
+                        var trimmed = line.Trim();
+                        if (trimmed.Length > 0)
+                        {
+                            excludedSeeds.Add(trimmed.ToLowerInvariant());
+                        }
+                    }
+
+                    break;
+                case "--matches-only":
+                    matchesOnly = true;
+                    break;
+                case "--card-pack" when i + 1 < args.Length:
+                    cardPack = args[++i];
+                    break;
                 default:
                     Console.WriteLine($"Unknown or incomplete argument '{args[i]}'");
                     return null;
@@ -259,6 +310,13 @@ public static class SearchCommand
             Console.WriteLine("franchise tier of that prior save (0 for a fresh, non-franchise run), and each");
             Console.WriteLine("--franchise-card names one card already owned from it. See");
             Console.WriteLine("CardDrawSimulatorGroundTruthTests.MatchesRealFranchiseCapture for a real example.");
+            Console.WriteLine("--exclude-seed <seed> (repeatable) / --exclude-seeds-file <path> skip already-found seeds");
+            Console.WriteLine("so a rerun surfaces new matches instead of the same ones. --matches-only prints just the");
+            Console.WriteLine("MATCH seed strings (no header/summary lines), suitable for piping into a future");
+            Console.WriteLine("--exclude-seeds-file.");
+            Console.WriteLine("--card-pack <slug> overrides which pack drives card draws, independent of --setting (e.g.");
+            Console.WriteLine("'turbo' for Turbo's every-day schedule) - see the 'card-packs' list below. Defaults to the");
+            Console.WriteLine("chosen setting's own pack (normal schedule for every currently-extracted setting).");
             return null;
         }
 
@@ -275,6 +333,9 @@ public static class SearchCommand
             Length = length,
             Limit = limit,
             MaxResults = maxResults,
+            ExcludedSeeds = excludedSeeds,
+            MatchesOnly = matchesOnly,
+            CardPack = cardPack,
         };
     }
 }

@@ -1,0 +1,439 @@
+const settingSelect = document.getElementById("setting-select");
+const seedInput = document.getElementById("seed-input");
+const dishSelect = document.getElementById("dish-select");
+const subOptionField = document.getElementById("sub-option-field");
+const subOption1Label = document.getElementById("sub-option-1-label");
+const subOption2Label = document.getElementById("sub-option-2-label");
+const heatSelect = document.getElementById("heat-select");
+const cardPackSelect = document.getElementById("card-pack-select");
+const tierInput = document.getElementById("tier-input");
+const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
+const addFranchiseCardButton = document.getElementById("add-franchise-card");
+const form = document.getElementById("explorer-form");
+const statusEl = document.getElementById("status");
+const explorerResultEl = document.getElementById("explorer-result");
+const treeViewEl = document.getElementById("tree-view");
+const dayPanelEl = document.getElementById("day-panel");
+
+// VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
+
+let unlocksForSetting = [];
+let datalistCounter = 0;
+
+// The explored tree: each node is one committed decision (a card accepted, or an explicit skip) at
+// a given day. rootNode is a virtual "before day 1" node. Going back to an earlier node and picking
+// a different option creates a SIBLING node rather than overwriting - both branches stay reachable
+// via the tree view, per design. Nothing beyond nodes the user has actually visited is ever
+// computed - no precomputed full tree.
+let rootNode = null;
+let currentNode = null;
+
+function makeRootNode() {
+  return { id: "root", day: 0, cardId: null, label: null, sourcePackName: null, parent: null, children: new Map() };
+}
+
+function setStatus(message, isError) {
+  statusEl.textContent = message;
+  statusEl.classList.toggle("error", Boolean(isError));
+}
+
+// --- Setup form (setting/dish/sub-option/heat/franchise carryover) - same shape as search.js's
+// equivalent fields, kept separate here rather than sharing a module for this pass (see
+// project plan's "promote to shared.js" note - flagged as a reasonable follow-up, not done here to
+// keep this change scoped to what's needed for the Explorer page itself). ---
+
+function createCardInput(className) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = className;
+  input.autocomplete = "off";
+  input.placeholder = "Card name";
+  const datalistId = `explorer-card-datalist-${datalistCounter++}`;
+  input.setAttribute("list", datalistId);
+
+  const datalist = document.createElement("datalist");
+  datalist.id = datalistId;
+  for (const unlock of unlocksForSetting) {
+    const option = document.createElement("option");
+    option.value = unlock.name;
+    datalist.appendChild(option);
+  }
+
+  return { input, datalist };
+}
+
+function getFranchiseCardNames() {
+  return [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")]
+    .map((row) => row.querySelector(".franchise-card").value)
+    .filter(Boolean);
+}
+
+function addFranchiseCardRow() {
+  const row = document.createElement("div");
+  row.className = "dynamic-row";
+
+  const { input, datalist } = createCardInput("franchise-card");
+  input.addEventListener("change", resetExploration);
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "link-button";
+  removeButton.textContent = "Remove";
+  removeButton.addEventListener("click", () => {
+    row.remove();
+    resetExploration();
+  });
+
+  row.appendChild(input);
+  row.appendChild(datalist);
+  row.appendChild(removeButton);
+  franchiseCardRowsEl.appendChild(row);
+}
+
+addFranchiseCardButton.addEventListener("click", addFranchiseCardRow);
+
+function updateSubOptionUi() {
+  const dish = unlocksForSetting.find((u) => u.name === dishSelect.value);
+  if (dish && dish.hasSubOptions) {
+    subOption1Label.textContent = dish.optionCard1Name ?? "Option 1";
+    subOption2Label.textContent = dish.optionCard2Name ?? "Option 2";
+    subOptionField.hidden = false;
+    const firstRadio = subOptionField.querySelector('input[value="1"]');
+    if (firstRadio) firstRadio.checked = true;
+  } else {
+    subOptionField.hidden = true;
+  }
+}
+
+async function loadUnlocksForSetting(setting) {
+  const response = await fetch(`/api/search/unlocks?setting=${encodeURIComponent(setting)}`);
+  const unlocks = await response.json();
+  unlocksForSetting = unlocks;
+
+  dishSelect.innerHTML = "";
+  for (const unlock of unlocks.filter((u) => u.isStartingDish)) {
+    const option = document.createElement("option");
+    option.value = unlock.name;
+    option.textContent = unlock.name;
+    dishSelect.appendChild(option);
+  }
+
+  // Rebuild franchise-row datalists against the new setting's card list.
+  for (const row of franchiseCardRowsEl.querySelectorAll(".dynamic-row")) {
+    const input = row.querySelector(".franchise-card");
+    const datalist = document.getElementById(input.getAttribute("list"));
+    datalist.innerHTML = "";
+    for (const unlock of unlocksForSetting) {
+      const option = document.createElement("option");
+      option.value = unlock.name;
+      datalist.appendChild(option);
+    }
+  }
+
+  updateSubOptionUi();
+  resetExploration();
+}
+
+// Not setting-scoped - a card schedule is a selectable pack independent of restaurant setting (see
+// GameDataRepository.ListCardSchedules's doc comment), loaded once like loadHeatLevels.
+async function loadCardPacks() {
+  const response = await fetch("/api/search/card-packs");
+  const packs = await response.json();
+
+  cardPackSelect.innerHTML = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "Normal (use the restaurant setting's own schedule)";
+  cardPackSelect.appendChild(defaultOption);
+
+  for (const pack of packs) {
+    if (pack.slug === "normal") {
+      continue;
+    }
+    const option = document.createElement("option");
+    option.value = pack.slug;
+    option.textContent = pack.displayName;
+    cardPackSelect.appendChild(option);
+  }
+}
+
+async function loadHeatLevels() {
+  const response = await fetch("/api/search/heat-levels");
+  const levels = await response.json();
+
+  heatSelect.innerHTML = "";
+  let noneInserted = false;
+  const insertNone = () => {
+    const option = document.createElement("option");
+    option.value = "0";
+    option.textContent = "0 — None";
+    heatSelect.appendChild(option);
+    noneInserted = true;
+  };
+
+  for (const level of levels) {
+    if (!noneInserted && level.level >= 0) {
+      insertNone();
+    }
+    const option = document.createElement("option");
+    option.value = String(level.level);
+    const kind = level.level > 0 ? "Heat" : "Chill";
+    option.textContent = `${kind} ${Math.abs(level.level)} — ${level.name}`;
+    heatSelect.appendChild(option);
+  }
+  if (!noneInserted) {
+    insertNone();
+  }
+  heatSelect.value = "0";
+}
+
+dishSelect.addEventListener("change", () => {
+  updateSubOptionUi();
+  resetExploration();
+});
+heatSelect.addEventListener("change", resetExploration);
+cardPackSelect.addEventListener("change", resetExploration);
+tierInput.addEventListener("input", resetExploration);
+settingSelect.addEventListener("change", () => {
+  loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));
+});
+seedInput.addEventListener("input", resetExploration);
+
+// --- Exploration state/tree ---
+
+// Any setup-field change invalidates whatever's been explored so far (a stale path replayed under
+// a different setup could desync from what the server would actually say) - resetting just hides
+// the result panel again until the user re-submits the form.
+function resetExploration() {
+  rootNode = null;
+  currentNode = null;
+  explorerResultEl.hidden = true;
+  treeViewEl.innerHTML = "";
+  dayPanelEl.innerHTML = "";
+}
+
+function pathToNode(node) {
+  const entries = [];
+  for (let n = node; n && n.parent; n = n.parent) {
+    if (n.cardId !== null) {
+      entries.push({ day: n.day, cardId: n.cardId });
+    }
+  }
+  entries.reverse();
+  return entries;
+}
+
+function currentSetupPayload() {
+  const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
+  return {
+    setting: settingSelect.value,
+    seed: seedInput.value,
+    dishName: dishSelect.value,
+    subOptionChoice: subOptionField.hidden ? null : Number(checkedSubOption?.value ?? 1),
+    heat: Number(heatSelect.value),
+    tier: Number(tierInput.value),
+    franchiseCardNames: getFranchiseCardNames(),
+    cardPack: cardPackSelect.value || null,
+  };
+}
+
+async function fetchExplorerDay(node, day) {
+  try {
+    const response = await fetch("/api/explorer/day", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...currentSetupPayload(), path: pathToNode(node), day }),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setStatus(body.error ?? "Failed to load that day's offer.", true);
+      return null;
+    }
+    return body;
+  } catch {
+    setStatus("Failed to reach the server.", true);
+    return null;
+  }
+}
+
+function nodeLabel(node) {
+  if (node.cardId === null) {
+    return `Day ${node.day}: skipped`;
+  }
+  return `Day ${node.day}: ${node.label}`;
+}
+
+function renderTree() {
+  treeViewEl.innerHTML = "";
+  if (!rootNode || rootNode.children.size === 0) {
+    treeViewEl.textContent = "Nothing explored yet.";
+    return;
+  }
+
+  const rootList = document.createElement("ul");
+  rootList.className = "tree-list";
+  for (const child of rootNode.children.values()) {
+    rootList.appendChild(renderTreeNode(child));
+  }
+  treeViewEl.appendChild(rootList);
+}
+
+function renderTreeNode(node) {
+  const li = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "link-button tree-node-button";
+  button.textContent = nodeLabel(node);
+  if (node === currentNode) {
+    button.classList.add("active");
+  }
+  button.addEventListener("click", () => viewNode(node));
+  li.appendChild(button);
+
+  if (node.children.size > 0) {
+    const childList = document.createElement("ul");
+    childList.className = "tree-list";
+    for (const child of node.children.values()) {
+      childList.appendChild(renderTreeNode(child));
+    }
+    li.appendChild(childList);
+  }
+
+  return li;
+}
+
+async function viewNode(node) {
+  currentNode = node;
+  renderTree();
+  await renderFrontier(node);
+}
+
+async function renderFrontier(node) {
+  const nextDay = node.day + 1;
+  if (nextDay > 15) {
+    dayPanelEl.innerHTML = "";
+    const p = document.createElement("p");
+    p.textContent = "Reached day 15 - this is as far as the Explorer goes.";
+    dayPanelEl.appendChild(p);
+    return;
+  }
+
+  dayPanelEl.innerHTML = "";
+  const loading = document.createElement("p");
+  loading.textContent = `Loading day ${nextDay}...`;
+  dayPanelEl.appendChild(loading);
+
+  const response = await fetchExplorerDay(node, nextDay);
+  if (!response || currentNode !== node) {
+    return; // stale (user navigated elsewhere while this was in flight) or failed
+  }
+
+  dayPanelEl.innerHTML = "";
+
+  const heading = document.createElement("h2");
+  heading.textContent = `Day ${nextDay}`;
+  dayPanelEl.appendChild(heading);
+
+  if (response.sourcePackName) {
+    const tag = document.createElement("p");
+    tag.className = "pack-tag";
+    tag.textContent = response.sourcePackName;
+    dayPanelEl.appendChild(tag);
+  }
+
+  if (response.options.length === 0) {
+    const p = document.createElement("p");
+    p.textContent = "Nothing offered this day.";
+    dayPanelEl.appendChild(p);
+  }
+
+  const optionsEl = document.createElement("div");
+  optionsEl.className = "day-options";
+  for (const option of response.options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "day-option-button";
+    button.textContent = option.name;
+    if (node.children.has(option.id)) {
+      button.classList.add("already-explored");
+    }
+    button.addEventListener("click", () => choose(node, nextDay, option, response.sourcePackName));
+    optionsEl.appendChild(button);
+  }
+  dayPanelEl.appendChild(optionsEl);
+
+  // Always offer a way to advance, even when nothing was offered this day - otherwise a null/null
+  // day (a real, common outcome - see the base schedule's every-3-days cadence) would leave the
+  // user with no way to reach day N+1 at all.
+  const skipButton = document.createElement("button");
+  skipButton.type = "button";
+  skipButton.className = "link-button";
+  const alreadyExplored = node.children.has("skip");
+  skipButton.textContent = response.options.length === 0
+    ? (alreadyExplored ? "Continue to next day (already explored)" : "Continue to next day")
+    : (alreadyExplored ? "Skip (already explored)" : "Skip this offer");
+  skipButton.addEventListener("click", () => choose(node, nextDay, null, null));
+  dayPanelEl.appendChild(skipButton);
+}
+
+async function choose(parentNode, day, option, sourcePackName) {
+  const key = option ? option.id : "skip";
+  let child = parentNode.children.get(key);
+  if (!child) {
+    child = {
+      id: `${parentNode.id}/${key}`,
+      day,
+      cardId: option ? option.id : null,
+      label: option ? option.name : null,
+      sourcePackName,
+      parent: parentNode,
+      children: new Map(),
+    };
+    parentNode.children.set(key, child);
+  }
+
+  await viewNode(child);
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setStatus("", false);
+
+  const seedError = validateSeed(seedInput.value);
+  if (seedError) {
+    setStatus(seedError, true);
+    return;
+  }
+
+  if (!dishSelect.value) {
+    setStatus("Choose a starting dish.", true);
+    return;
+  }
+
+  rootNode = makeRootNode();
+  currentNode = rootNode;
+  explorerResultEl.hidden = false;
+  await viewNode(rootNode);
+});
+
+// Hotlinking: /explorer/<setting>/<seed> prefills just those two fields (matching /preview's
+// pattern) - dish/heat/tier/franchise cards and the explored tree always start blank, since a
+// mid-exploration path isn't meaningfully URL-shaped.
+function paramsFromPath() {
+  const segments = window.location.pathname.split("/").filter(Boolean);
+  return { setting: segments[1] ?? null, seed: segments[2] ?? null };
+}
+
+async function loadInit() {
+  const settings = await fetchSettings();
+  const { setting: settingFromUrl, seed: seedFromUrl } = paramsFromPath();
+  populateSettingSelect(settingSelect, settings, settingFromUrl);
+  if (seedFromUrl && !validateSeed(seedFromUrl)) {
+    seedInput.value = seedFromUrl;
+  }
+  await loadUnlocksForSetting(settingSelect.value);
+  await loadHeatLevels();
+  await loadCardPacks();
+}
+
+loadInit().catch(() => setStatus("Failed to load restaurant settings.", true));

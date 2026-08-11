@@ -15,11 +15,19 @@ public static class SearchEndpoints
     // is just this same mechanism with a cap of 1.
     private const long DefaultMatchCap = 500;
 
+    // AssetReference IDs for the two hand-curated packs whose eligibility rules
+    // (Requires/BlockedBy/tier/unlockability) drive the franchise-candidates endpoint below - see
+    // data/settings/cards/packs.json.
+    private const int FranchiseCardsPackId = 1355831133;
+    private const int ThemeCardsPackId = 786043106;
+
     public static void MapSearchEndpoints(this WebApplication app)
     {
         app.MapGet("/api/search/unlocks", GetUnlocks);
         app.MapGet("/api/search/heat-levels", GetHeatLevels);
+        app.MapGet("/api/search/card-packs", GetCardPacks);
         app.MapPost("/api/search/possible-cards", GetPossibleCards);
+        app.MapPost("/api/search/franchise-candidates", GetFranchiseCandidates);
         app.MapPost("/api/search", StartSearch);
         app.MapGet("/api/search/{jobId}", GetStatus);
         app.MapPost("/api/search/{jobId}/cancel", CancelSearch);
@@ -39,9 +47,83 @@ public static class SearchEndpoints
             u.HasSubOptions,
             u.OptionCard1Id is int o1 ? repo.GetUnlock(o1).Name : null,
             u.OptionCard2Id is int o2 ? repo.GetUnlock(o2).Name : null,
-            u.IsBaseDish && u.IsUnlockable)).ToList();
+            u.IsBaseDish && u.IsUnlockable,
+            u.UnlockGroup,
+            u.CardType,
+            u.MinimumFranchiseTier,
+            u.IsSpecificFranchiseTier,
+            u.RequiresIds,
+            u.BlockedByIds)).ToList();
 
         return Results.Ok(dtos);
+    }
+
+    /// <summary>
+    /// Eligible Franchise (group 5) / Theme (group 3) cards for one franchise-carryover row - filters
+    /// by the starting dish's initial owned set, Requires/BlockedBy against every OTHER already-
+    /// selected card in the form, and the Theme/franchise-tier caps (<see cref="SelectionCapValidator"/>).
+    /// Unresolvable/blank names in <see cref="FranchiseCandidatesRequest.OtherSelectedCardNames"/> are
+    /// skipped rather than erroring - this endpoint is called on every keystroke elsewhere in the form
+    /// and a momentarily-stale other-row value shouldn't break this row's own candidate list.
+    /// </summary>
+    private static IResult GetFranchiseCandidates(FranchiseCandidatesRequest request, GameDataRepository repo)
+    {
+        if (!repo.ListSettings().Any(s => s.Slug == request.Setting))
+        {
+            return Results.BadRequest(new { error = $"Unknown setting '{request.Setting}'." });
+        }
+
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
+        {
+            return Results.BadRequest(new { error = dishError });
+        }
+
+        var setting = repo.GetSetting(request.Setting);
+        ResolvedRunSetup setup;
+        try
+        {
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, setting.StartingUnlockId);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+
+        var ownedIds = new HashSet<int>(setup.InitiallyOwnedIds);
+        var tiersUsed = new HashSet<int>();
+        var themeUsed = false;
+        foreach (var name in request.OtherSelectedCardNames ?? [])
+        {
+            if (string.IsNullOrEmpty(name) || !TryResolveUnlock(repo, name, "card", out var other, out _))
+            {
+                continue;
+            }
+
+            ownedIds.Add(other.Id);
+            switch ((Engine.Data.UnlockGroup)other.UnlockGroup)
+            {
+                case Engine.Data.UnlockGroup.Theme:
+                    themeUsed = true;
+                    break;
+                case Engine.Data.UnlockGroup.Franchise:
+                    tiersUsed.Add(other.MinimumFranchiseTier);
+                    break;
+            }
+        }
+
+        var franchiseFilter = repo.GetPack(FranchiseCardsPackId).Filter ?? throw new InvalidOperationException("Franchise Cards Pack has no Filter");
+        var themeFilter = repo.GetPack(ThemeCardsPackId).Filter ?? throw new InvalidOperationException("Theme Cards Pack has no Filter");
+
+        var names = repo.AllUnlocksOrderedById
+            .Where(c => (Engine.Data.UnlockGroup)c.UnlockGroup is Engine.Data.UnlockGroup.Franchise or Engine.Data.UnlockGroup.Theme)
+            .Where(c => (Engine.Data.UnlockGroup)c.UnlockGroup != Engine.Data.UnlockGroup.Theme || !themeUsed)
+            .Where(c => (Engine.Data.UnlockGroup)c.UnlockGroup != Engine.Data.UnlockGroup.Franchise || !tiersUsed.Contains(c.MinimumFranchiseTier))
+            .Where(c => UnlockPackEvaluator.IsEligible(repo, c, ownedIds, request.Tier, (Engine.Data.UnlockGroup)c.UnlockGroup == Engine.Data.UnlockGroup.Theme ? themeFilter : franchiseFilter))
+            .Select(c => c.Name)
+            .OrderBy(n => n)
+            .ToList();
+
+        return Results.Ok(new FranchiseCandidatesResponse(names));
     }
 
     // Not setting-scoped - heat/chill cards are the same regardless of restaurant setting (see
@@ -56,6 +138,11 @@ public static class SearchEndpoints
 
         return Results.Ok(levels);
     }
+
+    // Not setting-scoped - a card schedule is a selectable pack independent of restaurant setting
+    // (see GameDataRepository.ListCardSchedules's doc comment).
+    private static IResult GetCardPacks(GameDataRepository repo) =>
+        Results.Ok(repo.ListCardSchedules().Select(s => new CardScheduleDto(s.Slug, s.DisplayName)).ToList());
 
     private static IResult GetPossibleCards(PossibleCardsRequest request, GameDataRepository repo)
     {
@@ -107,7 +194,11 @@ public static class SearchEndpoints
             ownedIds.Add(card.Id);
         }
 
-        var settingPackId = repo.ResolveUnlockPackId(request.Setting);
+        if (!TryResolvePackId(repo, request.Setting, request.CardPack, out var settingPackId, out var packError))
+        {
+            return Results.BadRequest(new { error = packError });
+        }
+
         List<int> activePackIds = [settingPackId, .. setup.BonusPackIds];
 
         HashSet<int> possibleIds;
@@ -173,6 +264,12 @@ public static class SearchEndpoints
             franchiseCarryoverIds.Add(card.Id);
         }
 
+        var capError = SelectionCapValidator.Validate(repo, targetIds.Values.Concat(franchiseCarryoverIds));
+        if (capError is not null)
+        {
+            return Results.BadRequest(new { error = capError });
+        }
+
         if (request.Length is < 1 or > Seed.MaxLength)
         {
             return Results.BadRequest(new { error = $"length must be between 1 and {Seed.MaxLength}." });
@@ -195,13 +292,20 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = ex.Message });
         }
 
-        var settingPackId = repo.ResolveUnlockPackId(request.Setting);
+        if (!TryResolvePackId(repo, request.Setting, request.CardPack, out var settingPackId, out var packError))
+        {
+            return Results.BadRequest(new { error = packError });
+        }
+
         var spaceSize = BigInteger.Pow(alphabet.Length, request.Length);
         var totalToCheck = request.Limit is long l
             ? Math.Min(l, (long)BigInteger.Min(spaceSize, long.MaxValue))
             : (long)BigInteger.Min(spaceSize, long.MaxValue);
 
-        var searchRequest = new SeedSearchRequest(settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck);
+        var excludedSeeds = request.ExcludedSeeds is { Count: > 0 }
+            ? new HashSet<string>(request.ExcludedSeeds.Select(s => s.ToLowerInvariant()), StringComparer.Ordinal)
+            : null;
+        var searchRequest = new SeedSearchRequest(settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds);
         var matchCap = request.StopAfterFirstMatch == true ? 1L : DefaultMatchCap;
         var job = jobs.StartSearch(searchRequest, matchCap);
 
@@ -232,6 +336,23 @@ public static class SearchEndpoints
 
     private static IResult CancelSearch(string jobId, SearchJobManager jobs) =>
         jobs.TryCancel(jobId) ? Results.Ok() : Results.NotFound(new { error = $"Unknown search job '{jobId}'." });
+
+    /// <summary>Resolves the pack governing card draws: an explicit cardPack schedule slug if given, otherwise the setting's own pack (existing default behavior).</summary>
+    private static bool TryResolvePackId(GameDataRepository repo, string setting, string? cardPack, out int packId, out string? error)
+    {
+        try
+        {
+            packId = repo.ResolveCardSchedulePackId(cardPack) ?? repo.ResolveUnlockPackId(setting);
+            error = null;
+            return true;
+        }
+        catch (KeyNotFoundException ex)
+        {
+            packId = 0;
+            error = ex.Message;
+            return false;
+        }
+    }
 
     private static bool TryResolveUnlock(GameDataRepository repo, string name, string label, out UnlockData unlock, out string? error)
     {

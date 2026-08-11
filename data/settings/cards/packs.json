@@ -17,6 +17,44 @@
       802797822
     ]
   },
+  "1774091848": {
+    "name": "June Pack",
+    "type": "composite",
+    "subPackIds": [
+      1355831133,
+      138545119,
+      786043106
+    ]
+  },
+  "-839658581": {
+    "name": "Halloween Pack",
+    "type": "composite",
+    "subPackIds": [
+      1355831133,
+      -2066335466,
+      786043106,
+      1659224512
+    ]
+  },
+  "698670060": {
+    "name": "Autumn Pack",
+    "type": "composite",
+    "subPackIds": [
+      1355831133,
+      -320463696,
+      786043106,
+      1659224512
+    ]
+  },
+  "-1893039732": {
+    "name": "January Pack",
+    "type": "composite",
+    "subPackIds": [
+      1355831133,
+      1091353668,
+      786043106
+    ]
+  },
   "1355831133": {
     "name": "Franchise Cards Pack",
     "type": "modular",
@@ -192,6 +230,134 @@
       "ignoreDuplicateFilter": false,
       "ignoreRequirements": false,
       "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": true
+    }
+  },
+  "138545119": {
+    "name": "June Cards",
+    "type": "modular",
+    "selector": {
+      "kind": "groupChoice",
+      "group1": 1,
+      "group2": 0
+    },
+    "condition": {
+      "kind": "regular",
+      "dayInterval": 3,
+      "dayOffset": 0,
+      "dayMin": 1,
+      "dayMax": -1,
+      "tierRequired": -1
+    },
+    "sorterPriority": {
+      "probability": 0.5,
+      "prioritiseRequirements": true,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "-2066335466": {
+    "name": "Halloween Cards",
+    "type": "modular",
+    "selector": {
+      "kind": "groupChoice",
+      "group1": 6,
+      "group2": 6
+    },
+    "condition": {
+      "kind": "regular",
+      "dayInterval": 7,
+      "dayOffset": 0,
+      "dayMin": 0,
+      "dayMax": -1,
+      "tierRequired": -1
+    },
+    "sorterPriority": {
+      "probability": 0.5,
+      "prioritiseRequirements": false,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "-320463696": {
+    "name": "Autumn Dish Cards",
+    "type": "modular",
+    "selector": {
+      "kind": "groupChoice",
+      "group1": 1,
+      "group2": 1
+    },
+    "condition": {
+      "kind": "regular",
+      "dayInterval": 3,
+      "dayOffset": 0,
+      "dayMin": 1,
+      "dayMax": -1,
+      "tierRequired": -1
+    },
+    "sorterPriority": {
+      "probability": 0.5,
+      "prioritiseRequirements": false,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": true,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "1091353668": {
+    "name": "January Cards",
+    "type": "modular",
+    "selector": {
+      "kind": "groupChoice",
+      "group1": 1,
+      "group2": 1
+    },
+    "condition": {
+      "kind": "regular",
+      "dayInterval": 3,
+      "dayOffset": 0,
+      "dayMin": 1,
+      "dayMax": -1,
+      "tierRequired": -1
+    },
+    "sorterPriority": {
+      "probability": 0.5,
+      "prioritiseRequirements": false,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": true,
       "ignoreBlocksOtherFood": false,
       "ignoreFilterByHasMain": false
     }

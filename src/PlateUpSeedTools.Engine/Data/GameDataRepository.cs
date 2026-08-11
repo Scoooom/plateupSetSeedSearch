@@ -16,6 +16,7 @@ public sealed class GameDataRepository
     private readonly Dictionary<int, UnlockData> _unlocksById;
     private readonly HeatLevelsData _heatLevels;
     private readonly Dictionary<int, UnlockPackData> _packsById;
+    private readonly Dictionary<string, CardScheduleData> _cardSchedulesBySlug;
 
     public GameDataRepository(string dataRoot)
     {
@@ -35,6 +36,9 @@ public sealed class GameDataRepository
         _heatLevels = JsonSerializer.Deserialize<HeatLevelsData>(File.ReadAllText(Path.Combine(cardsDir, "heat-levels.json")), JsonOptions)!;
         var packsRaw = JsonSerializer.Deserialize<Dictionary<string, UnlockPackData>>(File.ReadAllText(Path.Combine(cardsDir, "packs.json")), JsonOptions) ?? [];
         _packsById = packsRaw.ToDictionary(kv => int.Parse(kv.Key), kv => kv.Value);
+
+        var schedules = JsonSerializer.Deserialize<List<CardScheduleData>>(File.ReadAllText(Path.Combine(cardsDir, "card-schedules.json")), JsonOptions) ?? [];
+        _cardSchedulesBySlug = schedules.ToDictionary(s => s.Slug);
     }
 
     /// <summary>
@@ -96,4 +100,22 @@ public sealed class GameDataRepository
 
     /// <summary>A setting's card-draw pack, falling back to DefaultUnlockPackId if the setting doesn't override it - see game-domain-knowledge.md's "Card draw RNG" point 1.</summary>
     public int ResolveUnlockPackId(string settingSlug) => GetSetting(settingSlug).UnlockPackId ?? DefaultUnlockPackId;
+
+    /// <summary>
+    /// Every selectable "card schedule" (data/settings/cards/card-schedules.json) - a card-draw pack
+    /// choice independent of restaurant setting/layout. Exists because several settings folded into
+    /// the "normal" synthetic setting during session 6's layout-only consolidation (before the
+    /// card-draw feature existed) turned out to have their own distinct UnlockPack (Turbo's "every
+    /// day" schedule, Coffeeshop/Halloween/Autumn/January's own packs) that the merge silently made
+    /// unreachable - see game-domain-knowledge.md's card-pack-coverage section. Search/Explorer let
+    /// the user pick a card schedule separately from the restaurant setting they're previewing/
+    /// searching, rather than reintroducing near-duplicate settings into the setting picker.
+    /// </summary>
+    public IReadOnlyList<CardScheduleData> ListCardSchedules() => _cardSchedulesBySlug.Values.ToList();
+
+    /// <summary>Resolves a card-schedule slug to its pack ID, or null if unset/blank (meaning: use the setting's own ResolveUnlockPackId as before).</summary>
+    public int? ResolveCardSchedulePackId(string? scheduleSlug) =>
+        string.IsNullOrEmpty(scheduleSlug) ? null
+        : _cardSchedulesBySlug.TryGetValue(scheduleSlug, out var schedule) ? schedule.PackId
+        : throw new KeyNotFoundException($"Unknown card schedule '{scheduleSlug}'");
 }

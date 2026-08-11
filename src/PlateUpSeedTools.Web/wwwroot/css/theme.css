@@ -223,7 +223,8 @@ main {
 }
 
 .field select,
-.field input {
+.field input,
+.field textarea {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--panel-border);
@@ -231,6 +232,11 @@ main {
   padding: 0.5rem 0.6rem;
   font-size: 1rem;
   min-width: 180px;
+}
+
+.field textarea {
+  font-family: inherit;
+  resize: vertical;
 }
 
 
@@ -374,9 +380,14 @@ button[type="submit"]:hover {
   flex: none;
 }
 
-.dynamic-row select {
+.dynamic-row select,
+.dynamic-row input[list] {
   flex: 1;
   min-width: 0;
+}
+
+.dynamic-row input[list]:invalid {
+  border-color: var(--error, #d33);
 }
 
 .advanced-fields {
@@ -503,6 +514,101 @@ button[type="submit"]:hover {
   width: 100%;
 }
 
+.explorer-result {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.explorer-tree-panel {
+  flex: 0 0 260px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.explorer-tree-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.tree-toggle-hint {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.tree-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding-left: 0.9rem;
+  border-left: 1px solid var(--panel-border);
+}
+
+.tree-list .tree-list {
+  margin-top: 0.2rem;
+}
+
+.tree-node-button {
+  font-size: 0.85rem;
+  padding: 0.15rem 0;
+}
+
+.tree-node-button.active {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.day-panel {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+}
+
+.day-panel h2 {
+  margin: 0 0 0.3rem;
+}
+
+.pack-tag {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.8rem;
+}
+
+.day-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.day-option-button {
+  background: var(--accent);
+  color: var(--panel);
+  border: none;
+  border-radius: 8px;
+  padding: 0.9rem 1.2rem;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex: 1 1 200px;
+}
+
+.day-option-button:hover {
+  background: var(--accent-strong);
+}
+
+.day-option-button.already-explored {
+  outline: 2px solid var(--accent-strong);
+}
+
 @media (max-width: 640px) {
   .nav-toggle {
     display: flex;
@@ -562,5 +668,26 @@ button[type="submit"]:hover {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
+  }
+
+  /* Explorer: tree collapses above the day panel instead of sitting beside it - the day panel
+     (current offer) stays the primary, full-width view. Not styled for beauty on mobile, just
+     kept usable per the project's "don't neglect, don't polish" mobile guidance. */
+  .explorer-result {
+    flex-direction: column;
+  }
+
+  .explorer-tree-panel {
+    flex: none;
+    width: 100%;
+    max-height: 40vh;
+  }
+
+  .day-panel {
+    width: 100%;
+  }
+
+  .day-options {
+    flex-direction: column;
   }
 }
