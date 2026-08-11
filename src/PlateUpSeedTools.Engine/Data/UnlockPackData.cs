@@ -1,0 +1,97 @@
+namespace PlateUpSeedTools.Engine.Data;
+
+/// <summary>
+/// JSON shape for one entry in data/settings/cards/packs.json - a hand-curated (not generically
+/// parsed) subset of the real UnlockPack graph, see CardExtractor.WritePacksFile's doc comment and
+/// game-domain-knowledge.md's "Odin partial-field-read technique" note for why. Type is either
+/// "composite" (KitchenData.CompositeUnlockPack, only SubPackIds set) or "modular"
+/// (KitchenData.ModularUnlockPack, Selector/Condition/SorterPriority/Filter set).
+/// </summary>
+public sealed class UnlockPackData
+{
+    public required string Name { get; init; }
+
+    public required string Type { get; init; }
+
+    public List<int>? SubPackIds { get; init; }
+
+    public SelectorData? Selector { get; init; }
+
+    public ConditionData? Condition { get; init; }
+
+    public SorterPriorityData? SorterPriority { get; init; }
+
+    public FilterData? Filter { get; init; }
+}
+
+/// <summary>Port of UnlockSelectorGroupChoice/AnyFromGroup/MenuPhase config - Kind picks which.</summary>
+public sealed class SelectorData
+{
+    /// <summary>"groupChoice" | "anyFromGroup" | "menuPhase".</summary>
+    public required string Kind { get; init; }
+
+    public int? Group1 { get; init; }
+
+    public int? Group2 { get; init; }
+
+    public List<int>? Groups { get; init; }
+
+    public int? Phase1 { get; init; }
+
+    public int? Phase2 { get; init; }
+}
+
+/// <summary>Port of UnlockConditionRegular/Guarantee/Once config - Kind picks which.</summary>
+public sealed class ConditionData
+{
+    /// <summary>"regular" | "guarantee" | "once".</summary>
+    public required string Kind { get; init; }
+
+    public int? DayInterval { get; init; }
+
+    public int? DayOffset { get; init; }
+
+    public int? DayMin { get; init; }
+
+    public int? DayMax { get; init; }
+
+    public int? TierRequired { get; init; }
+
+    public int? MinDay { get; init; }
+
+    public int? MinTier { get; init; }
+
+    public int? GuaranteedGroup { get; init; }
+
+    public int? Day { get; init; }
+}
+
+/// <summary>Port of UnlockSorterPriority's per-pack config.</summary>
+public sealed class SorterPriorityData
+{
+    public required double Probability { get; init; }
+
+    public required bool PrioritiseRequirements { get; init; }
+
+    public required List<int> Groups { get; init; }
+
+    public required List<int> DishTypes { get; init; }
+}
+
+/// <summary>Port of FilterBasic's Ignore*/Allow* flags.</summary>
+public sealed class FilterData
+{
+    public required bool IgnoreUnlockability { get; init; }
+
+    public required bool IgnoreFranchiseTier { get; init; }
+
+    public required bool IgnoreDuplicateFilter { get; init; }
+
+    public required bool IgnoreRequirements { get; init; }
+
+    public required bool AllowBaseDishes { get; init; }
+
+    public required bool IgnoreBlocksOtherFood { get; init; }
+
+    public required bool IgnoreFilterByHasMain { get; init; }
+}

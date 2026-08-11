@@ -2,5 +2,8 @@
   "slug": "banquet-hall",
   "displayName": "Banquet Hall",
   "id": 206822591,
-  "forceLayoutId": -921257357
+  "forceLayoutId": -921257357,
+  "unlockPackId": -2020288853,
+  "startingUnlockId": 1989028383,
+  "fixedDishId": null
 }

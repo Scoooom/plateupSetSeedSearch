@@ -2,5 +2,8 @@
   "slug": "witch-hut",
   "displayName": "Witch Hut",
   "id": 424841351,
-  "forceLayoutId": 394042671
+  "forceLayoutId": 394042671,
+  "unlockPackId": null,
+  "startingUnlockId": -192521877,
+  "fixedDishId": null
 }

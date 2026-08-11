@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Seed Search — PlateUp Seed Tools</title>
+  <link rel="stylesheet" href="/css/theme.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header-inner">
+      <a class="brand" href="/">PlateUp <span class="accent">Seed</span> Tools</a>
+      <button class="nav-toggle" id="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">
+        <span class="sr-only">Menu</span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+      </button>
+      <nav class="main-nav" id="main-nav">
+        <a href="/">Home</a>
+        <a href="/preview">Seed Previewer</a>
+        <a href="/search" class="active">Seed Search</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="page-intro">
+      <h1>Seed Search</h1>
+      <p class="subtitle">
+        Find seeds where a chosen starting dish + heat level offers specific cards on specific
+        days. Runs entirely on the server, as a cancellable background job you can watch
+        progress on - not in your browser, so it won't struggle on a low-powered device.
+      </p>
+    </div>
+
+    <form id="search-form" class="controls search-controls">
+      <label class="field">
+        <span>Restaurant setting</span>
+        <select id="setting-select" required></select>
+      </label>
+
+      <label class="field">
+        <span>Starting dish</span>
+        <select id="dish-select" required></select>
+      </label>
+
+      <div class="field" id="sub-option-field" hidden>
+        <span>Sub-option</span>
+        <label class="radio-option"><input type="radio" name="sub-option" value="1" /> <span id="sub-option-1-label"></span></label>
+        <label class="radio-option"><input type="radio" name="sub-option" value="2" /> <span id="sub-option-2-label"></span></label>
+      </div>
+
+      <label class="field">
+        <span>Heat level</span>
+        <input id="heat-input" type="number" value="0" step="1" />
+      </label>
+
+      <div class="field-group full-width">
+        <span>Day targets</span>
+        <div id="day-target-rows" class="dynamic-rows"></div>
+        <button type="button" id="add-day-target" class="link-button">+ Add day target</button>
+      </div>
+
+      <details class="advanced-fields full-width">
+        <summary>Advanced options</summary>
+
+        <div class="advanced-fields-body">
+          <label class="field">
+            <span>Franchise tier</span>
+            <input id="tier-input" type="number" value="0" step="1" min="0" />
+          </label>
+
+          <div class="field-group full-width">
+            <span>Franchise carryover cards (already owned from a prior franchise run)</span>
+            <div id="franchise-card-rows" class="dynamic-rows"></div>
+            <button type="button" id="add-franchise-card" class="link-button">+ Add franchise card</button>
+          </div>
+
+          <label class="field">
+            <span>Seed alphabet</span>
+            <input id="alphabet-input" type="text" value="bdghjmqrtvwxy346789" autocomplete="off" />
+          </label>
+
+          <label class="field">
+            <span>Seed length</span>
+            <input id="length-input" type="number" value="4" min="1" max="8" step="1" />
+          </label>
+
+          <label class="field">
+            <span>Limit (max seeds to check)</span>
+            <input id="limit-input" type="number" value="200000" min="1" step="1" />
+          </label>
+        </div>
+      </details>
+
+      <button type="submit" id="search-submit">Start search</button>
+    </form>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <section id="job" class="job-panel" hidden>
+      <div class="job-summary">
+        <span id="job-status-text"></span>
+        <button type="button" id="cancel-search" class="link-button" hidden>Cancel</button>
+      </div>
+      <div class="progress-bar" id="progress-bar" hidden>
+        <div class="progress-bar-fill" id="progress-bar-fill"></div>
+      </div>
+      <p id="job-stats" class="job-stats"></p>
+      <ul id="matches-list" class="matches-list"></ul>
+    </section>
+  </main>
+
+  <script src="/js/nav.js"></script>
+  <script src="/js/shared.js"></script>
+  <script src="/js/search.js"></script>
+</body>
+</html>

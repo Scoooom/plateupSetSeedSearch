@@ -21,6 +21,7 @@ ENTRYPOINT ["dotnet", "PlateUpSeedTools.Web.dll"]
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS cli
 WORKDIR /app
 COPY --from=build /app/cli .
+COPY data/settings ./data/settings
 ENV CacheStore__SqlitePath=/data/cache.db
 VOLUME /data
 ENTRYPOINT ["dotnet", "PlateUpSeedTools.Cli.dll"]

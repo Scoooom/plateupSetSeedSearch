@@ -100,6 +100,25 @@ public sealed class AssetYamlReader
     }
 
     /// <summary>
+    /// Reads a list-of-mappings field (e.g. Dish.ResultingMenuItems) and pulls a named int sub-field
+    /// out of each entry - e.g. ResultingMenuItems[].Phase, to determine which MenuPhase values a
+    /// dish provides (needed for FilterBasic/UnlockSelectorMenuPhase card-draw filtering).
+    /// </summary>
+    public List<int> ScalarListField(string key, string subField)
+    {
+        if (!_root.Children.TryGetValue(new YamlScalarNode(key), out var node) || node is not YamlSequenceNode seq)
+        {
+            return [];
+        }
+
+        return seq.Children
+            .Cast<YamlMappingNode>()
+            .Where(m => m.Children.ContainsKey(new YamlScalarNode(subField)))
+            .Select(m => int.Parse(((YamlScalarNode)m[subField]).Value!))
+            .ToList();
+    }
+
+    /// <summary>
     /// Reads an xNode `ports` map, returning, per port field name, the list of (sourcePortName, sourceNodeGuid)
     /// it's connected to (i.e. this node's inputs on that port).
     /// </summary>

@@ -2,5 +2,8 @@
   "slug": "normal",
   "displayName": "Normal",
   "id": 0,
-  "forceLayoutId": null
+  "forceLayoutId": null,
+  "unlockPackId": null,
+  "startingUnlockId": null,
+  "fixedDishId": null
 }

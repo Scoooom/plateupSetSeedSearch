@@ -52,6 +52,11 @@ File.WriteAllText(indexPath, indexJson);
 
 SettingExtractor.WriteAppliancesFile(outputRoot);
 
+Console.WriteLine("Extracting card-draw data (Unlocks, heat ladder, pack graph)...");
+CardExtractor.ExtractUnlocks(resolver, assetsRoot, outputRoot);
+CardExtractor.ExtractHeatLevels(resolver, assetsRoot, outputRoot);
+CardExtractor.WritePacksFile(resolver, assetsRoot, outputRoot);
+
 Console.WriteLine($"Done. Wrote index with {indexEntries.Count} setting(s) to {indexPath}");
 Console.WriteLine($"Wrote {SettingExtractor.KnownAppliances.Count} known appliance(s) to {Path.Combine(outputRoot, "appliances.json")}");
 return 0;

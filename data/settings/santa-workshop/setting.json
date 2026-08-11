@@ -2,5 +2,8 @@
   "slug": "santa-workshop",
   "displayName": "North Pole",
   "id": -851159532,
-  "forceLayoutId": -791067106
+  "forceLayoutId": -791067106,
+  "unlockPackId": 1370599169,
+  "startingUnlockId": null,
+  "fixedDishId": null
 }

@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PlateUpSeedTools.Infrastructure\PlateUpSeedTools.Infrastructure.csproj" />
+    <ProjectReference Include="..\PlateUpSeedTools.Engine\PlateUpSeedTools.Engine.csproj" />
   </ItemGroup>
 
 </Project>

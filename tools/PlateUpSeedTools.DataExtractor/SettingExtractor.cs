@@ -59,20 +59,27 @@ public static class SettingExtractor
         var displayName = ResolveEnglishDisplayName(resolver, setting) ?? setting.GetName();
         var forceLayoutGuid = setting.Reference("ForceLayout");
 
+        // Card-search fields (session: seed search feature) - previously read only for asset
+        // identification, now actually written to setting.json. See game-domain-knowledge.md's
+        // "Card draw RNG" section point 1 for what each currently-extracted setting resolves to.
+        var unlockPackId = ResolveUnlockPackId(resolver, setting.Reference("UnlockPack"));
+        var startingUnlockId = ResolveUnlockId(resolver, setting.Reference("StartingUnlock"));
+        var fixedDishId = ResolveUnlockId(resolver, setting.Reference("FixedDish"));
+
         if (forceLayoutGuid is not null)
         {
             var outDir = Path.Combine(outputRoot, slug);
             Directory.CreateDirectory(outDir);
             var profileId = ExtractProfileAndGraph(resolver, forceLayoutGuid, outDir);
             var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
-            var settingData = new { slug, displayName, id = settingId, forceLayoutId = (int?)profileId };
+            var settingData = new { slug, displayName, id = settingId, forceLayoutId = (int?)profileId, unlockPackId, startingUnlockId, fixedDishId };
             File.WriteAllText(Path.Combine(outDir, "setting.json"), JsonSerializer.Serialize(settingData, jsonOptions));
             return (slug, displayName, settingId);
         }
 
         // No forced layout: at request time, the web layer picks one of the shared/standard layout
         // profiles at random-by-seed (LayoutSeed.LayoutIdFromSeed) - see ExtractStandardLayouts.
-        return WriteSynthetic(outputRoot, slug, displayName, settingId);
+        return WriteSynthetic(outputRoot, slug, displayName, settingId, unlockPackId, startingUnlockId, fixedDishId);
     }
 
     /// <summary>
@@ -82,14 +89,37 @@ public static class SettingExtractor
     /// "Normal" setting that replaces several real settings which all resolved to this exact same
     /// shared-pool behaviour (and therefore produced byte-identical layouts) - see project-history.md.
     /// </summary>
-    public static (string Slug, string DisplayName, int Id) WriteSynthetic(string outputRoot, string slug, string displayName, int id)
+    public static (string Slug, string DisplayName, int Id) WriteSynthetic(
+        string outputRoot, string slug, string displayName, int id,
+        int? unlockPackId = null, int? startingUnlockId = null, int? fixedDishId = null)
     {
         var outDir = Path.Combine(outputRoot, slug);
         Directory.CreateDirectory(outDir);
         var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
-        var settingData = new { slug, displayName, id, forceLayoutId = (int?)null };
+        var settingData = new { slug, displayName, id, forceLayoutId = (int?)null, unlockPackId, startingUnlockId, fixedDishId };
         File.WriteAllText(Path.Combine(outDir, "setting.json"), JsonSerializer.Serialize(settingData, jsonOptions));
         return (slug, displayName, id);
+    }
+
+    /// <summary>Resolves RestaurantSetting.UnlockPack to its numeric UnlockPack ID, or null if unset (falls back to AssetReference.DefaultUnlockPack at request time - see game-domain-knowledge.md).</summary>
+    private static int? ResolveUnlockPackId(GuidResolver resolver, string? guid) => ResolveUnlockId(resolver, guid);
+
+    /// <summary>Resolves a Dish/UnlockCard/UnlockPack reference guid to its numeric ID field, or null if unset/unresolvable.</summary>
+    private static int? ResolveUnlockId(GuidResolver resolver, string? guid)
+    {
+        if (guid is null || !resolver.TryResolve(guid, out var path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return AssetYamlReader.Load(path, guid).Int("ID");
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

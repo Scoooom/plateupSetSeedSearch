@@ -1,0 +1,10 @@
+timeout 3600 docker run --rm -v "$(pwd)":/src -w /src -e DataRoot=/src/data/settings mcr.microsoft.com/dotnet/sdk:10.0 \
+  dotnet run --project src/PlateUpSeedTools.Cli --property:NoWarn=NU1903 -- search \
+  --setting banquet-hall --dish Pies \
+  --day 3="Medium Groups" \
+  --day 5="Exclusive" \
+  --day 6="All You Can Eat" \
+  --day 9="Double Helpings" \
+  --day 12="Large Groups" \
+  --day 15="Second Helpings" \
+  --alphabet abcdefghijklmnopqrstuvwxyz123456789 --length 5 --limit 20000000 2>&1 

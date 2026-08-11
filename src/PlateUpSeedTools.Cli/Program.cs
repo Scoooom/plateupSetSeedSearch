@@ -1,4 +1,11 @@
+using PlateUpSeedTools.Cli;
 using PlateUpSeedTools.Infrastructure.Cache;
+
+if (args is ["search", .. var searchArgs])
+{
+    var dataRoot = Environment.GetEnvironmentVariable("DataRoot") ?? Path.Combine(AppContext.BaseDirectory, "data", "settings");
+    return SearchCommand.Run(searchArgs, dataRoot);
+}
 
 var sqlitePath = Environment.GetEnvironmentVariable("CacheStore__SqlitePath") ?? "cache.db";
 var admin = new CacheAdmin(new CacheOptions { SqlitePath = sqlitePath });
@@ -6,6 +13,8 @@ var admin = new CacheAdmin(new CacheOptions { SqlitePath = sqlitePath });
 if (args is not ["cache", var verb])
 {
     Console.WriteLine("Usage: cache <clear|stats>");
+    Console.WriteLine("       search --setting <slug> --dish <name> [--sub-option 1|2] [--heat <n>] [--tier <n>]");
+    Console.WriteLine("              [--franchise-card <name> ...] --day <n>=<card name> [...]");
     return 1;
 }
 

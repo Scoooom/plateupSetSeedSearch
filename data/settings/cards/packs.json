@@ -1,0 +1,199 @@
+{
+  "-2020288853": {
+    "name": "Default Composite Pack",
+    "type": "composite",
+    "subPackIds": [
+      1355831133,
+      1659224512,
+      786043106
+    ]
+  },
+  "-619515969": {
+    "name": "March Pack",
+    "type": "composite",
+    "subPackIds": [
+      1355831133,
+      786043106,
+      802797822
+    ]
+  },
+  "1355831133": {
+    "name": "Franchise Cards Pack",
+    "type": "modular",
+    "selector": {
+      "kind": "groupChoice",
+      "group1": 5,
+      "group2": 5
+    },
+    "condition": {
+      "kind": "once",
+      "day": 15
+    },
+    "sorterPriority": {
+      "probability": 0.5,
+      "prioritiseRequirements": true,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "1659224512": {
+    "name": "Normal Cards Pack",
+    "type": "modular",
+    "selector": {
+      "kind": "groupChoice",
+      "group1": 1,
+      "group2": 0
+    },
+    "condition": {
+      "kind": "regular",
+      "dayInterval": 3,
+      "dayOffset": 0,
+      "dayMin": 1,
+      "dayMax": -1,
+      "tierRequired": -1
+    },
+    "sorterPriority": {
+      "probability": 0.5,
+      "prioritiseRequirements": true,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "786043106": {
+    "name": "Theme Cards Pack",
+    "type": "modular",
+    "selector": {
+      "kind": "groupChoice",
+      "group1": 3,
+      "group2": 3
+    },
+    "condition": {
+      "kind": "guarantee",
+      "minDay": 5,
+      "minTier": -1,
+      "guaranteedGroup": 3
+    },
+    "sorterPriority": {
+      "probability": 0.5,
+      "prioritiseRequirements": true,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "802797822": {
+    "name": "March Cards",
+    "type": "modular",
+    "selector": {
+      "kind": "groupChoice",
+      "group1": 1,
+      "group2": 0
+    },
+    "condition": {
+      "kind": "regular",
+      "dayInterval": 1,
+      "dayOffset": 0,
+      "dayMin": 1,
+      "dayMax": -1,
+      "tierRequired": -1
+    },
+    "sorterPriority": {
+      "probability": 0.10000000149011612,
+      "prioritiseRequirements": true,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "-1759859435": {
+    "name": "Heat - Food Card After Day 2 Pack",
+    "type": "modular",
+    "selector": {
+      "kind": "anyFromGroup",
+      "groups": [
+        1
+      ]
+    },
+    "condition": {
+      "kind": "once",
+      "day": 2
+    },
+    "sorterPriority": {
+      "probability": 0.8999999761581421,
+      "prioritiseRequirements": true,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "31750544": {
+    "name": "Heat - Starter Or Dessert Pack",
+    "type": "modular",
+    "selector": {
+      "kind": "menuPhase",
+      "phase1": 0,
+      "phase2": 2
+    },
+    "condition": {
+      "kind": "once",
+      "day": 1
+    },
+    "sorterPriority": {
+      "probability": 0.8999999761581421,
+      "prioritiseRequirements": true,
+      "groups": [],
+      "dishTypes": []
+    },
+    "filter": {
+      "ignoreUnlockability": false,
+      "ignoreFranchiseTier": false,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": false,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  }
+}
