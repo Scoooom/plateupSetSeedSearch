@@ -302,81 +302,12 @@ function renderTreeNode(node) {
   return li;
 }
 
-async function viewNode(node) {
-  currentNode = node;
-  renderTree();
-  await renderFrontier(node);
-}
+// Bumped every time the user initiates a new navigation (viewNode) - lets an in-flight auto-skip
+// loop (see renderFrontier) notice it's been superseded and stop, instead of a stale fetch
+// clobbering whatever the user navigated to in the meantime.
+let explorationGeneration = 0;
 
-async function renderFrontier(node) {
-  const nextDay = node.day + 1;
-  if (nextDay > 15) {
-    dayPanelEl.innerHTML = "";
-    const p = document.createElement("p");
-    p.textContent = "Reached day 15 - this is as far as the Explorer goes.";
-    dayPanelEl.appendChild(p);
-    return;
-  }
-
-  dayPanelEl.innerHTML = "";
-  const loading = document.createElement("p");
-  loading.textContent = `Loading day ${nextDay}...`;
-  dayPanelEl.appendChild(loading);
-
-  const response = await fetchExplorerDay(node, nextDay);
-  if (!response || currentNode !== node) {
-    return; // stale (user navigated elsewhere while this was in flight) or failed
-  }
-
-  dayPanelEl.innerHTML = "";
-
-  const heading = document.createElement("h2");
-  heading.textContent = `Day ${nextDay}`;
-  dayPanelEl.appendChild(heading);
-
-  if (response.sourcePackName) {
-    const tag = document.createElement("p");
-    tag.className = "pack-tag";
-    tag.textContent = response.sourcePackName;
-    dayPanelEl.appendChild(tag);
-  }
-
-  if (response.options.length === 0) {
-    const p = document.createElement("p");
-    p.textContent = "Nothing offered this day.";
-    dayPanelEl.appendChild(p);
-  }
-
-  const optionsEl = document.createElement("div");
-  optionsEl.className = "day-options";
-  for (const option of response.options) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "day-option-button";
-    button.textContent = option.name;
-    if (node.children.has(option.id)) {
-      button.classList.add("already-explored");
-    }
-    button.addEventListener("click", () => choose(node, nextDay, option, response.sourcePackName));
-    optionsEl.appendChild(button);
-  }
-  dayPanelEl.appendChild(optionsEl);
-
-  // Always offer a way to advance, even when nothing was offered this day - otherwise a null/null
-  // day (a real, common outcome - see the base schedule's every-3-days cadence) would leave the
-  // user with no way to reach day N+1 at all.
-  const skipButton = document.createElement("button");
-  skipButton.type = "button";
-  skipButton.className = "link-button";
-  const alreadyExplored = node.children.has("skip");
-  skipButton.textContent = response.options.length === 0
-    ? (alreadyExplored ? "Continue to next day (already explored)" : "Continue to next day")
-    : (alreadyExplored ? "Skip (already explored)" : "Skip this offer");
-  skipButton.addEventListener("click", () => choose(node, nextDay, null, null));
-  dayPanelEl.appendChild(skipButton);
-}
-
-async function choose(parentNode, day, option, sourcePackName) {
+function getOrCreateChild(parentNode, day, option, sourcePackName) {
   const key = option ? option.id : "skip";
   let child = parentNode.children.get(key);
   if (!child) {
@@ -391,7 +322,101 @@ async function choose(parentNode, day, option, sourcePackName) {
     };
     parentNode.children.set(key, child);
   }
+  return child;
+}
 
+async function viewNode(node) {
+  const myGeneration = ++explorationGeneration;
+  currentNode = node;
+  renderTree();
+  await renderFrontier(node, myGeneration);
+}
+
+// Advances from `node` day-by-day, silently auto-skipping any day that offers nothing (per user
+// feedback: an empty day is just noise, not a real decision point) until it finds a day with real
+// offers, or runs out of days. Each auto-skipped day still becomes a real tree node (so back-
+// navigation/branching stays correct) - it's just not shown as an interactive step.
+async function renderFrontier(node, myGeneration) {
+  let current = node;
+
+  while (true) {
+    const nextDay = current.day + 1;
+    if (nextDay > 15) {
+      if (myGeneration !== explorationGeneration) {
+        return;
+      }
+      currentNode = current;
+      renderTree();
+      dayPanelEl.innerHTML = "";
+      const p = document.createElement("p");
+      p.textContent = "Reached day 15 - this is as far as the Explorer goes.";
+      dayPanelEl.appendChild(p);
+      return;
+    }
+
+    if (myGeneration === explorationGeneration) {
+      dayPanelEl.innerHTML = "";
+      const loading = document.createElement("p");
+      loading.textContent = `Loading day ${nextDay}...`;
+      dayPanelEl.appendChild(loading);
+    }
+
+    const response = await fetchExplorerDay(current, nextDay);
+    if (myGeneration !== explorationGeneration || !response) {
+      return; // stale (user navigated elsewhere while this was in flight) or failed
+    }
+
+    if (response.options.length === 0) {
+      current = getOrCreateChild(current, nextDay, null, null);
+      continue; // don't render this day at all - just move on to the next one
+    }
+
+    currentNode = current;
+    renderTree();
+    renderDayPanel(current, nextDay, response);
+    return;
+  }
+}
+
+function renderDayPanel(node, day, response) {
+  dayPanelEl.innerHTML = "";
+
+  const heading = document.createElement("h2");
+  heading.textContent = `Day ${day}`;
+  dayPanelEl.appendChild(heading);
+
+  if (response.sourcePackName) {
+    const tag = document.createElement("p");
+    tag.className = "pack-tag";
+    tag.textContent = response.sourcePackName;
+    dayPanelEl.appendChild(tag);
+  }
+
+  const optionsEl = document.createElement("div");
+  optionsEl.className = "day-options";
+  for (const option of response.options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "day-option-button";
+    button.textContent = option.name;
+    if (node.children.has(option.id)) {
+      button.classList.add("already-explored");
+    }
+    button.addEventListener("click", () => choose(node, day, option, response.sourcePackName));
+    optionsEl.appendChild(button);
+  }
+  dayPanelEl.appendChild(optionsEl);
+
+  const skipButton = document.createElement("button");
+  skipButton.type = "button";
+  skipButton.className = "link-button";
+  skipButton.textContent = node.children.has("skip") ? "Skip (already explored)" : "Skip this offer";
+  skipButton.addEventListener("click", () => choose(node, day, null, null));
+  dayPanelEl.appendChild(skipButton);
+}
+
+async function choose(parentNode, day, option, sourcePackName) {
+  const child = getOrCreateChild(parentNode, day, option, sourcePackName);
   await viewNode(child);
 }
 

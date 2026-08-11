@@ -357,7 +357,12 @@ async function refreshDayTargetRow(row) {
     return; // a newer request for this row superseded this one - drop the stale result
   }
 
-  cardInput.disabled = cardNames.length === 0;
+  // Never disable purely because this day has zero (or no-longer-matching) candidates - a disabled
+  // field is invisible to native form validation (setCustomValidity/reportValidity are no-ops on
+  // it), which was silently swallowing the "this card isn't valid for this day" error entirely, and
+  // looked to the user like the field had been cleared. Keep it enabled and editable; validateCardInput
+  // below marks it :invalid (see theme.css) instead, which stays visible and actually blocks submit.
+  cardInput.disabled = false;
   setDatalistOptions(datalist, cardNames);
   validateCardInput(cardInput);
 }
@@ -628,6 +633,28 @@ function parseExcludedSeeds() {
     .filter(Boolean);
 }
 
+// Native constraint validation runs BEFORE the "submit" event even fires, and blocks it entirely
+// when a field is invalid - the submit handler below never runs in that case, which is exactly why
+// an invalid card field used to "refuse to run with no visible error": the browser's own validation
+// bubble is easy to miss and there was no other feedback. "invalid" events fire per-field (capture
+// phase, since they don't bubble) whenever that blocked attempt happens, regardless of whether the
+// submit handler itself ever runs - use that as the actually-reliable place to surface a status
+// message rather than the submit handler's (post-native-validation) unreachable code path.
+form.addEventListener(
+  "invalid",
+  (event) => {
+    event.preventDefault(); // suppress the native bubble - our status message is the visible error now
+    const invalidCount = [...form.querySelectorAll(":invalid")].length;
+    setStatus(
+      invalidCount === 1
+        ? "One field is invalid - check the highlighted field."
+        : `${invalidCount} fields are invalid - check the highlighted fields.`,
+      true
+    );
+  },
+  true
+);
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   stopPolling();
@@ -637,14 +664,25 @@ form.addEventListener("submit", async (event) => {
   const franchiseInputs = getAllFranchiseRows().map((row) => row.querySelector(".franchise-card"));
 
   // Re-validate every card field right before submit (not just on blur) - blocks submit with the
-  // browser's native validation UI if any typed card name isn't currently valid for its row.
+  // browser's native validation UI if any typed card name isn't currently valid for its row. Also
+  // set an explicit status message, not just the native bubble - a native validation bubble only
+  // ever points at ONE field and is easy to miss/dismiss, which was leaving submit silently
+  // refusing to do anything with no visible explanation.
   let allValid = true;
+  let invalidCount = 0;
   for (const input of [...dayTargetInputs, ...franchiseInputs]) {
     if (!validateCardInput(input)) {
       allValid = false;
+      invalidCount++;
     }
   }
   if (!allValid) {
+    setStatus(
+      invalidCount === 1
+        ? "One card field is invalid for its day - check the highlighted field."
+        : `${invalidCount} card fields are invalid for their day - check the highlighted fields.`,
+      true
+    );
     form.reportValidity();
     return;
   }
