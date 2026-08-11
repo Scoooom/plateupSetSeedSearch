@@ -56,9 +56,9 @@ public static partial class ExplorerEndpoints
             return Results.BadRequest(new { error = "Seed must be 1-8 alphanumeric characters." });
         }
 
-        if (request.Day < 1 || request.Day > 15)
+        if (request.Day < 0 || request.Day > 15)
         {
-            return Results.BadRequest(new { error = "day must be between 1 and 15." });
+            return Results.BadRequest(new { error = "day must be between 0 and 15." });
         }
 
         if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
@@ -79,7 +79,7 @@ public static partial class ExplorerEndpoints
 
         // Path entries only cover days the player actually accepted a card - a day they skipped
         // (declined the offer) has no entry, which is a legitimate gap, not an error: SimulateDay
-        // still runs through every day 1..request.Day regardless, treating any day missing from the
+        // still runs through every day 0..request.Day regardless, treating any day missing from the
         // path as a decline. Duplicate/out-of-range entries are the only real error cases here.
         var orderedPath = request.Path.OrderBy(p => p.Day).ToList();
         if (orderedPath.Select(p => p.Day).Distinct().Count() != orderedPath.Count)
@@ -117,8 +117,10 @@ public static partial class ExplorerEndpoints
         var sim = new CardDrawSimulator(repo, seed, settingPackId, setup, request.Tier);
 
         var pathById = orderedPath.ToDictionary(p => p.Day, p => p.CardId);
-        CardDayResult? result = null;
-        for (var day = 1; day <= request.Day; day++)
+        CardDayResult result = null!; // always assigned - day floor is 0, loop always runs at least once
+        // Day 0 is the prep day before the first real night - see SeedSearcher's Walk for why this
+        // floor is 0 rather than 1 now (santa-workshop's Christmas Special Card fires there).
+        for (var day = 0; day <= request.Day; day++)
         {
             var targetId = pathById.TryGetValue(day, out var id) ? id : (int?)null;
             var thisDay = day;
@@ -145,11 +147,8 @@ public static partial class ExplorerEndpoints
             }
         }
 
-        if (result is null)
-        {
-            return Results.BadRequest(new { error = "day must be at least 1." });
-        }
-
+        // result is guaranteed non-null here: the day floor is 0 (see the loop above) and
+        // request.Day < 0 is already rejected earlier, so the loop always runs at least once.
         var options = new List<ExplorerCardOptionDto>();
         if (result.Unlock1Id is int u1)
         {

@@ -55,10 +55,6 @@ public static class UnlockPackEvaluator
     /// non-empty wins" order <see cref="GetCompositeOptions"/> uses for the real RNG path) and every
     /// active top-level pack, since the goal is "everything reachable," not "what the actual seed
     /// would show."
-    ///
-    /// KNOWN GAP (see docs/project-history.md's "Known gaps" section, flagged urgent): santa-workshop's
-    /// Christmas Pack has an undecoded sub-pack (Christmas Special Card) - this throws if the pack
-    /// graph reaches it, same limitation CardDrawSimulator already has for that one setting.
     /// </summary>
     public static HashSet<int> GetPossibleCardIds(GameDataRepository repo, IReadOnlyList<int> activePackIds, HashSet<int> currentCards, int day, int tier)
     {
@@ -101,16 +97,28 @@ public static class UnlockPackEvaluator
         }
 
         var filter = pack.Filter ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Filter");
-        var candidates = repo.AllUnlocksOrderedById
+        var selector = pack.Selector ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Selector");
+        var candidates = CandidateSource(repo, selector)
             .Where(c => !ShouldBlockCard(repo, c, currentCards, request, filter))
             .ToList();
 
-        var selector = pack.Selector ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Selector");
         foreach (var id in GetReachableIds(selector, candidates))
         {
             result.Add(id);
         }
     }
+
+    /// <summary>
+    /// Every currently-decoded pack except "forcedCard" ones draws from every Unlock (filtered by
+    /// group membership inside the selector itself) - the real game's Sets/IUnlockSet abstraction
+    /// isn't modeled generically for those, see this class's doc comment. "forcedCard" is the one
+    /// case that genuinely needs an explicit candidate source: Sets is a KitchenData.UnlockSetFixed
+    /// literal list of specific card IDs, not filterable by group at all.
+    /// </summary>
+    private static IEnumerable<UnlockData> CandidateSource(GameDataRepository repo, SelectorData selector) =>
+        selector.Kind == "forcedCard"
+            ? (selector.FixedCardIds ?? throw new InvalidOperationException("forcedCard selector has no FixedCardIds")).Select(repo.GetUnlock)
+            : repo.AllUnlocksOrderedById;
 
     // --- UnlockSelector*.GetOptions, membership-only variants (no RNG index pick) ---
 
@@ -119,6 +127,7 @@ public static class UnlockPackEvaluator
         "groupChoice" => ReachableGroupChoice(selector, candidates),
         "anyFromGroup" => candidates.Where(c => selector.Groups!.Contains(c.UnlockGroup)).Select(c => c.Id),
         "menuPhase" => candidates.Where(c => c.Kind == "Dish" && (c.ProvidesPhase(selector.Phase1!.Value) || c.ProvidesPhase(selector.Phase2!.Value))).Select(c => c.Id),
+        "forcedCard" => candidates.Select(c => c.Id),
         _ => throw new NotSupportedException($"Unknown selector kind '{selector.Kind}'"),
     };
 
@@ -157,20 +166,27 @@ public static class UnlockPackEvaluator
     private static UnlockOptions GetModularOptions(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, UnityRandom rng, int skipChoices)
     {
         var filter = pack.Filter ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Filter");
-        var candidates = repo.AllUnlocksOrderedById
+        var selector = pack.Selector ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Selector");
+        var candidates = CandidateSource(repo, selector)
             .Where(c => !ShouldBlockCard(repo, c, currentCards, request, filter))
             .ToList();
 
-        // Sorters: always [Shuffle, Priority] for every currently-decoded pack - unconditional, runs
-        // even if the pack's condition below turns out false (see game-domain-knowledge.md's
-        // "shuffle-then-discard on a non-match night" fidelity note).
-        candidates = candidates.OrderBy(_ => rng.Value).ToList();
-        var sorterPriority = pack.SorterPriority ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no SorterPriority");
-        var isPriority = rng.Value < sorterPriority.Probability;
-        candidates = candidates.OrderByDescending(c => isPriority && IsPriority(c, sorterPriority) ? 1 : 0).ToList();
+        // Sorters: [Shuffle, Priority] for every currently-decoded pack EXCEPT "Christmas Special
+        // Card" (byte-verified: its Sorters list is genuinely empty, unlike every other pack) - a
+        // null SorterPriority means "this pack has no sorters," so skip both RNG draws entirely
+        // rather than unconditionally consuming them. Getting this right matters beyond this one
+        // pack's own night: composite sub-packs share one continuing RNG stream (see this class's
+        // doc comment), so phantom draws here would desync every later sub-pack tried the same night.
+        if (pack.SorterPriority is { } sorterPriority)
+        {
+            // Runs even if the pack's condition below turns out false (see game-domain-knowledge.md's
+            // "shuffle-then-discard on a non-match night" fidelity note) - but only when sorters exist.
+            candidates = candidates.OrderBy(_ => rng.Value).ToList();
+            var isPriority = rng.Value < sorterPriority.Probability;
+            candidates = candidates.OrderByDescending(c => isPriority && IsPriority(c, sorterPriority) ? 1 : 0).ToList();
+        }
 
         var condition = pack.Condition ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Condition");
-        var selector = pack.Selector ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Selector");
         if (!ShouldProvide(repo, condition, currentCards, request))
         {
             return default;
@@ -321,6 +337,7 @@ public static class UnlockPackEvaluator
         "groupChoice" => SelectGroupChoice(selector, candidates, skipChoices),
         "anyFromGroup" => SelectAnyFromGroup(selector, candidates, skipChoices),
         "menuPhase" => SelectMenuPhase(selector, candidates, skipChoices),
+        "forcedCard" => new UnlockOptions(GetOffsetChoice(candidates, skipChoices)?.Id, null),
         _ => throw new NotSupportedException($"Unknown selector kind '{selector.Kind}'"),
     };
 

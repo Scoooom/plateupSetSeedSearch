@@ -208,20 +208,7 @@ public static class SearchEndpoints
         }
 
         List<int> activePackIds = [settingPackId, .. setup.BonusPackIds];
-
-        HashSet<int> possibleIds;
-        try
-        {
-            possibleIds = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, ownedIds, request.Day, request.Tier);
-        }
-        catch (KeyNotFoundException)
-        {
-            // santa-workshop's Christmas Pack has an undecoded sub-pack - see
-            // UnlockPackEvaluator.GetPossibleCardIds's doc comment and docs/project-history.md's
-            // "Known gaps" section. Fail soft here (empty list) rather than 500ing the page.
-            possibleIds = [];
-        }
-
+        var possibleIds = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, ownedIds, request.Day, request.Tier);
         var names = possibleIds.Select(id => repo.GetUnlock(id).Name).OrderBy(n => n).ToList();
         return Results.Ok(new PossibleCardsResponse(names));
     }

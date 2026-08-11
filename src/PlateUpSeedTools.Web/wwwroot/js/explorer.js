@@ -30,8 +30,11 @@ let datalistCounter = 0;
 let rootNode = null;
 let currentNode = null;
 
+// day: -1 so the first fetched frontier (day + 1) is day 0, the prep day before the first real
+// night - only relevant for packs with a Day=0 UnlockConditionOnce (santa-workshop's Christmas
+// Special Card) but harmless otherwise, same as the day-0 floor added engine/API-side.
 function makeRootNode() {
-  return { id: "root", day: 0, cardId: null, label: null, sourcePackName: null, parent: null, children: new Map() };
+  return { id: "root", day: -1, cardId: null, label: null, sourcePackName: null, parent: null, children: new Map() };
 }
 
 function setStatus(message, isError) {
@@ -471,25 +474,32 @@ deleteBranchButton.addEventListener("click", deleteCurrentBranch);
 
 // Lazy by design: no /api/explorer/preload write happens until this is clicked - exploring a tree
 // and never sharing it never touches the cache DB.
+// Idempotent per node: the hash is memoized on the tree node itself (node.shareHash) the first
+// time it's shared, so re-clicking Copy Link while still on the same node (no re-navigation)
+// reuses it instead of minting a new cache row every click.
 copyLinkButton.addEventListener("click", async () => {
   if (!currentNode || !currentNode.parent) return;
 
-  const preload = { ...currentSetupPayload(), path: pathToNode(currentNode) };
-  delete preload.setting; // setting/seed travel as URL path segments, not part of the stored preload
-  delete preload.seed;
-
   try {
-    const response = await fetch("/api/explorer/preload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(preload),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      setStatus(body.error ?? "Failed to create a shareable link.", true);
-      return;
+    if (!currentNode.shareHash) {
+      const preload = { ...currentSetupPayload(), path: pathToNode(currentNode) };
+      delete preload.setting; // setting/seed travel as URL path segments, not part of the stored preload
+      delete preload.seed;
+
+      const response = await fetch("/api/explorer/preload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(preload),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setStatus(body.error ?? "Failed to create a shareable link.", true);
+        return;
+      }
+      currentNode.shareHash = body.hash;
     }
-    const url = `${location.origin}/explorer/${encodeURIComponent(settingSelect.value)}/${encodeURIComponent(seedInput.value)}/${body.hash}`;
+
+    const url = `${location.origin}/explorer/${encodeURIComponent(settingSelect.value)}/${encodeURIComponent(seedInput.value)}/${currentNode.shareHash}`;
     await navigator.clipboard.writeText(url);
     setStatus(`Shareable link copied (expires in ~24h): ${url}`, false);
   } catch {

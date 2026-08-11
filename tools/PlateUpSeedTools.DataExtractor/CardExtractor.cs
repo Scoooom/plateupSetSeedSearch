@@ -278,19 +278,22 @@ public static class CardExtractor
 
     /// <summary>
     /// Writes data/cards/packs.json - the UnlockPack graph (Default Composite Pack, March/June/
-    /// Halloween/Autumn/January Packs, and their sub-packs, plus the two known heat-bonus packs).
-    /// Composite packs' Packs list is plain YAML (extracted generically below); ModularUnlockPack
-    /// internals (Filter/Sorters/ConditionalOptions) live inside an Odin-serialized blob with no
-    /// object references to walk, so this is a hand-curated table decoded via the Odin partial-
-    /// field-read technique documented in game-domain-knowledge.md, not a generic parse - extend this
-    /// table (not a generic decoder) if a new setting needs a pack not listed here.
+    /// Halloween/Autumn/January/Christmas Packs, and their sub-packs, plus the two known heat-bonus
+    /// packs). Composite packs' Packs list is plain YAML (extracted generically below);
+    /// ModularUnlockPack internals (Filter/Sorters/ConditionalOptions) live inside an Odin-serialized
+    /// blob with no object references to walk, so this is a hand-curated table decoded via the Odin
+    /// partial-field-read technique documented in game-domain-knowledge.md, not a generic parse -
+    /// extend this table (not a generic decoder) if a new setting needs a pack not listed here.
     ///
-    /// NOT included: `santa-workshop`'s Christmas Pack (its extra Christmas Special Card sub-pack
-    /// isn't decoded) and February Pack's `February Special Card` sub-pack - the latter uses
-    /// `UnlockSelectorForcedCard` + a `UnlockSetFixed` specific-card reference list (an Odin
-    /// array/reference structure, not the scalar fields the partial-read technique handles), a
-    /// selector kind this engine doesn't model at all yet. Don't wire up card-search support for
-    /// either setting/schedule until decoded.
+    /// `santa-workshop`'s Christmas Pack (including its `Christmas Special Card` sub-pack, a
+    /// `UnlockSelectorForcedCard`+`UnlockSetFixed` forced-single-card selector - see
+    /// UnlockPackEvaluator.CandidateSource) is now decoded and wired up.
+    ///
+    /// NOT included: February Pack's `February Special Card` sub-pack - it uses the same
+    /// `UnlockSelectorForcedCard`/`UnlockSetFixed` shape Christmas Special Card does, but its
+    /// specific `Sets`/fixed-card-list bytes haven't been decoded yet (a different asset, needs its
+    /// own byte-level read even though the selector kind is now modeled). Don't wire up February
+    /// card-search support until that's done.
     /// </summary>
     public static void WritePacksFile(GuidResolver resolver, string assetsRoot, string outputRoot)
     {
@@ -323,6 +326,17 @@ public static class CardExtractor
         var januaryPackId = FindId("January Pack.asset");
         var januaryCardsId = FindId("January Cards.asset");
 
+        // santa-workshop's Christmas Pack, decoded (previously URGENT/blocking - see
+        // project-history.md and game-domain-knowledge.md's "Christmas Special Card" notes for the
+        // full byte-level decode writeup, including validating the field-read technique against
+        // three already-known Day values first). Christmas Special Card is a "forcedCard" selector
+        // (a new selector kind, see UnlockPackEvaluator.CandidateSource) whose Sets is a
+        // UnlockSetFixed pointing at exactly one card, "Christmas - Conveyors" - resolved the same
+        // way pack IDs are (Unlock assets have a plain top-level ID field too).
+        var christmasPackId = FindId("Christmas Pack.asset");
+        var christmasSpecialCardId = FindId("Christmas Special Card.asset");
+        var christmasConveyorsId = FindId("Christmas - Conveyors.asset");
+
         // Default UnlockSorterPriority config shared by the standard schedule packs (Franchise/Normal/
         // Theme): PriorityProbability=0.5, PrioritiseRequirements=true, empty Groups/DishTypes -
         // decoded via the Odin partial-read technique, PrioritiseRequirements/Groups/DishTypes assumed
@@ -354,6 +368,7 @@ public static class CardExtractor
             [halloweenPackId.ToString()] = new { name = "Halloween Pack", type = "composite", subPackIds = new[] { franchiseId, halloweenCardsId, themeId, normalId } },
             [autumnPackId.ToString()] = new { name = "Autumn Pack", type = "composite", subPackIds = new[] { franchiseId, autumnDishCardsId, themeId, normalId } },
             [januaryPackId.ToString()] = new { name = "January Pack", type = "composite", subPackIds = new[] { franchiseId, januaryCardsId, themeId } },
+            [christmasPackId.ToString()] = new { name = "Christmas Pack", type = "composite", subPackIds = new[] { christmasSpecialCardId, franchiseId, normalId, themeId } },
             [franchiseId.ToString()] = new
             {
                 name = "Franchise Cards Pack", type = "modular",
@@ -439,6 +454,30 @@ public static class CardExtractor
                 sorterPriority = StandardPriority(0.5, prioritiseRequirements: false),
                 filter = DefaultFilter(allowBaseDishes: true),
             },
+            [christmasSpecialCardId.ToString()] = new
+            {
+                name = "Christmas Special Card", type = "modular",
+                selector = new { kind = "forcedCard", fixedCardIds = new[] { christmasConveyorsId } },
+                // Day 0 = the prep day before day 1, not "never fires" - confirmed against the
+                // player-reported real behavior (Christmas - Conveyors is granted the moment a
+                // santa-workshop run starts). See SeedSearcher/ExplorerEndpoints for the matching
+                // day-range floor change (0 instead of 1) that makes this actually reachable.
+                condition = new { kind = "once", day = 0 },
+                // sorterPriority intentionally omitted (null) - byte-verified this pack's Sorters
+                // list is genuinely empty, unlike every other pack here (all have [Shuffle,
+                // Priority]). See UnlockPackEvaluator.GetModularOptions: a null SorterPriority skips
+                // both RNG draws entirely rather than assuming the shared default applies.
+                filter = new
+                {
+                    ignoreUnlockability = true,
+                    ignoreFranchiseTier = true,
+                    ignoreDuplicateFilter = false,
+                    ignoreRequirements = true,
+                    allowBaseDishes = false,
+                    ignoreBlocksOtherFood = false,
+                    ignoreFilterByHasMain = false,
+                },
+            },
         };
 
         var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
@@ -454,14 +493,22 @@ public static class CardExtractor
         // are deliberately omitted - confirmed byte-identical to Default Composite Pack (Bakery) or
         // UnlockPack unset entirely (City/Alpine/Country), so "normal" already covers them.
         // `February` is deliberately omitted too - see WritePacksFile's doc comment.
+        // displayName values below are the setting's real in-game English name (resolved via the
+        // same per-locale localization-asset lookup SettingExtractor.ResolveEnglishDisplayName
+        // uses, not the internal dev/asset filename) - verified against every locale for each one,
+        // not just assumed from the slug. "january"/"coffeeshop" are internal dev names ONLY;
+        // real in-game names are "Lake"/"Coffee Shop" respectively (user-reported: the January
+        // schedule was showing as "Lake" in a real playthrough, prompting this re-check of every
+        // entry here rather than just the one reported). "turbo"/"halloween"/"autumn" genuinely do
+        // match their real in-game names (also verified), so those stay as-is.
         var schedules = new object[]
         {
             new { slug = "normal", displayName = "Normal", packId = defaultCompositeId },
             new { slug = "turbo", displayName = "Turbo (card every day)", packId = marchPackId },
-            new { slug = "coffeeshop", displayName = "Coffeeshop", packId = junePackId },
+            new { slug = "coffeeshop", displayName = "Coffee Shop", packId = junePackId },
             new { slug = "halloween", displayName = "Halloween", packId = halloweenPackId },
             new { slug = "autumn", displayName = "Autumn", packId = autumnPackId },
-            new { slug = "january", displayName = "January", packId = januaryPackId },
+            new { slug = "january", displayName = "Lake", packId = januaryPackId },
         };
         File.WriteAllText(Path.Combine(outputRoot, "cards", "card-schedules.json"), JsonSerializer.Serialize(schedules, jsonOptions));
         Console.WriteLine($"  Wrote {schedules.Length} card schedule(s) to cards/card-schedules.json");

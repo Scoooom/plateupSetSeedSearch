@@ -55,6 +55,16 @@
       786043106
     ]
   },
+  "1370599169": {
+    "name": "Christmas Pack",
+    "type": "composite",
+    "subPackIds": [
+      83496670,
+      1355831133,
+      1659224512,
+      786043106
+    ]
+  },
   "1355831133": {
     "name": "Franchise Cards Pack",
     "type": "modular",
@@ -358,6 +368,29 @@
       "ignoreDuplicateFilter": false,
       "ignoreRequirements": false,
       "allowBaseDishes": true,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "83496670": {
+    "name": "Christmas Special Card",
+    "type": "modular",
+    "selector": {
+      "kind": "forcedCard",
+      "fixedCardIds": [
+        -361249036
+      ]
+    },
+    "condition": {
+      "kind": "once",
+      "day": 0
+    },
+    "filter": {
+      "ignoreUnlockability": true,
+      "ignoreFranchiseTier": true,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": true,
+      "allowBaseDishes": false,
       "ignoreBlocksOtherFood": false,
       "ignoreFilterByHasMain": false
     }

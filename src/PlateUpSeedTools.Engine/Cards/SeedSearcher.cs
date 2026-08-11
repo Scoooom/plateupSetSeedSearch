@@ -148,7 +148,7 @@ public static class SeedSearcher
         var nodesVisited = 0;
         Backtrack(
             repo, seed, settingPackId, setup, dayTargets, maxDay, tier,
-            day: 1, ownedIds: new HashSet<int>(setup.InitiallyOwnedIds),
+            day: 0, ownedIds: new HashSet<int>(setup.InitiallyOwnedIds),
             current, results, maxPaths, ref nodesVisited);
         return results;
     }
@@ -231,7 +231,10 @@ public static class SeedSearcher
         var freshSetup = new ResolvedRunSetup(new HashSet<int>(setup.InitiallyOwnedIds), setup.BonusPackIds);
         var sim = new CardDrawSimulator(repo, seed, settingPackId, freshSetup, tier);
 
-        for (var day = 1; day <= maxDay; day++)
+        // Day 0 is the prep day before the first real night - only relevant for packs with a
+        // Day=0 UnlockConditionOnce (currently just santa-workshop's Christmas Special Card), but
+        // harmless to always include: no other decoded condition can ever match day 0.
+        for (var day = 0; day <= maxDay; day++)
         {
             var targetId = dayTargets.TryGetValue(day, out var t) ? t : (int?)null;
             var result = sim.SimulateDay(day, offered =>

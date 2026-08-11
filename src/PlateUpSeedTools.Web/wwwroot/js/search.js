@@ -45,6 +45,10 @@ let currentJobId = null;
 let currentSearchSetting = null;
 let currentSearchPayload = null;
 let currentMatches = [];
+// Cached per currentJobId - repeated Copy Link clicks for the same job's results must reuse the
+// same hash/DB row rather than minting a new one every click (a real bug: clicking rapidly used to
+// duplicate a cache row per click). Reset to null anywhere currentJobId itself changes.
+let currentShareHash = null;
 let datalistCounter = 0;
 
 // Per-row refresh state (debounce timer + a generation counter to drop stale out-of-order
@@ -148,7 +152,7 @@ function addDayTargetRow() {
 
   const dayInput = document.createElement("input");
   dayInput.type = "number";
-  dayInput.min = "1";
+  dayInput.min = "0"; // 0 = the prep day before day 1 (santa-workshop's Christmas Special Card)
   dayInput.step = "1";
   dayInput.placeholder = "Day";
   dayInput.className = "day-target-day";
@@ -353,7 +357,7 @@ async function refreshDayTargetRow(row) {
   cardInput.disabled = false;
 
   const day = getRowDay(row);
-  if (day === null || day < 1) {
+  if (day === null || day < 0) {
     setDatalistOptions(datalist, []);
     validateCardInput(cardInput);
     return;
@@ -580,6 +584,7 @@ async function loadCachedResult(hash) {
     currentSearchSetting = cached.request.setting;
     currentSearchPayload = cached.request;
     currentJobId = null; // no live job behind this view - Cancel/Copy Link stay hidden
+    currentShareHash = null;
 
     renderJobStatus({
       status: "Completed",
@@ -719,21 +724,26 @@ copyMatchesButton?.addEventListener("click", async () => {
 });
 
 // Lazy by design: nothing is written to the cache DB until this is clicked - a completed search
-// that nobody shares never touches /api/search/{jobId}/share at all.
+// that nobody shares never touches /api/search/{jobId}/share at all. Also idempotent per job:
+// currentShareHash memoizes the first click's result so repeated clicks (or an accidental
+// double-click) just re-copy the same link instead of minting a fresh cache row every time.
 copyLinkButton?.addEventListener("click", async () => {
   if (!currentJobId || !currentSearchPayload) return;
   try {
-    const response = await fetch(`/api/search/${encodeURIComponent(currentJobId)}/share`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(currentSearchPayload),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      setStatus(body.error ?? "Failed to create a shareable link.", true);
-      return;
+    if (!currentShareHash) {
+      const response = await fetch(`/api/search/${encodeURIComponent(currentJobId)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(currentSearchPayload),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setStatus(body.error ?? "Failed to create a shareable link.", true);
+        return;
+      }
+      currentShareHash = body.hash;
     }
-    const url = `${location.origin}/search/cached#${body.hash}`;
+    const url = `${location.origin}/search/cached#${currentShareHash}`;
     await navigator.clipboard.writeText(url);
     setStatus(`Shareable link copied (expires in ~24h): ${url}`, false);
   } catch {
@@ -859,6 +869,7 @@ form.addEventListener("submit", async (event) => {
     currentSearchSetting = payload.setting;
     currentSearchPayload = payload;
     currentJobId = body.jobId;
+    currentShareHash = null;
     jobEl.hidden = false;
     matchesList.innerHTML = "";
     pollHandle = setInterval(() => pollJob(currentJobId), 1000);
@@ -995,7 +1006,10 @@ function renderPathDays(seed, path) {
 }
 
 // Lazy by design: no /api/explorer/preload write happens until this button is actually clicked -
-// switching between Path 1/2/3 tabs alone never touches the cache DB.
+// switching between Path 1/2/3 tabs alone never touches the cache DB. Also idempotent per path:
+// the hash is memoized on the path object itself (path._explorerHash) once created, so clicking
+// the button again for the same path (e.g. after opening the first tab) reuses it instead of
+// minting a new cache row every click.
 function wireExplorerLink(seed, path) {
   if (!currentSearchPayload || path.days.length === 0) {
     previewDialogExplorerLink.hidden = true;
@@ -1004,35 +1018,39 @@ function wireExplorerLink(seed, path) {
 
   previewDialogExplorerLink.hidden = false;
   previewDialogExplorerLink.onclick = async () => {
-    const steps = path.days
-      .map(({ day, cardName }) => {
-        const unlock = unlocksForSetting.find((u) => u.name === cardName);
-        return unlock ? { day, cardId: unlock.id } : null;
-      })
-      .filter(Boolean);
-
-    const preload = {
-      dishName: currentSearchPayload.dishName,
-      subOptionChoice: currentSearchPayload.subOptionChoice,
-      heat: currentSearchPayload.heat,
-      tier: currentSearchPayload.tier,
-      franchiseCardNames: currentSearchPayload.franchiseCardNames,
-      cardPack: currentSearchPayload.cardPack,
-      path: steps,
-    };
-
     try {
-      const response = await fetch("/api/explorer/preload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(preload),
-      });
-      const body = await response.json();
-      if (!response.ok) {
-        setStatus(body.error ?? "Failed to open this path in the Seed Explorer.", true);
-        return;
+      if (!path._explorerHash) {
+        const steps = path.days
+          .map(({ day, cardName }) => {
+            const unlock = unlocksForSetting.find((u) => u.name === cardName);
+            return unlock ? { day, cardId: unlock.id } : null;
+          })
+          .filter(Boolean);
+
+        const preload = {
+          dishName: currentSearchPayload.dishName,
+          subOptionChoice: currentSearchPayload.subOptionChoice,
+          heat: currentSearchPayload.heat,
+          tier: currentSearchPayload.tier,
+          franchiseCardNames: currentSearchPayload.franchiseCardNames,
+          cardPack: currentSearchPayload.cardPack,
+          path: steps,
+        };
+
+        const response = await fetch("/api/explorer/preload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(preload),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          setStatus(body.error ?? "Failed to open this path in the Seed Explorer.", true);
+          return;
+        }
+        path._explorerHash = body.hash;
       }
-      const url = `/explorer/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}/${body.hash}`;
+
+      const url = `/explorer/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}/${path._explorerHash}`;
       window.open(url, "_blank", "noopener");
     } catch {
       setStatus("Failed to reach the server.", true);

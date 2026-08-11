@@ -24,10 +24,10 @@ public sealed class UnlockPackData
     public FilterData? Filter { get; init; }
 }
 
-/// <summary>Port of UnlockSelectorGroupChoice/AnyFromGroup/MenuPhase config - Kind picks which.</summary>
+/// <summary>Port of UnlockSelectorGroupChoice/AnyFromGroup/MenuPhase/ForcedCard config - Kind picks which.</summary>
 public sealed class SelectorData
 {
-    /// <summary>"groupChoice" | "anyFromGroup" | "menuPhase".</summary>
+    /// <summary>"groupChoice" | "anyFromGroup" | "menuPhase" | "forcedCard".</summary>
     public required string Kind { get; init; }
 
     public int? Group1 { get; init; }
@@ -39,6 +39,15 @@ public sealed class SelectorData
     public int? Phase1 { get; init; }
 
     public int? Phase2 { get; init; }
+
+    /// <summary>
+    /// "forcedCard" only - the pack's Sets (KitchenData.UnlockSetFixed.Unlocks), a literal list of
+    /// specific card IDs rather than a UnlockGroup-based candidate pool. Every other selector kind
+    /// draws candidates from every Unlock (filtered by group membership at select time); this is the
+    /// one case the port actually needs an explicit candidate SOURCE for - see
+    /// UnlockPackEvaluator's doc comment on why Sets/IUnlockSet isn't modeled generically otherwise.
+    /// </summary>
+    public List<int>? FixedCardIds { get; init; }
 }
 
 /// <summary>Port of UnlockConditionRegular/Guarantee/Once config - Kind picks which.</summary>
