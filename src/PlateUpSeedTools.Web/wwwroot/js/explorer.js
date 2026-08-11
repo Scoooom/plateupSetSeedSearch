@@ -14,6 +14,7 @@ const statusEl = document.getElementById("status");
 const explorerResultEl = document.getElementById("explorer-result");
 const treeViewEl = document.getElementById("tree-view");
 const dayPanelEl = document.getElementById("day-panel");
+const deleteBranchButton = document.getElementById("delete-branch");
 
 // VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
 
@@ -261,6 +262,8 @@ function nodeLabel(node) {
 }
 
 function renderTree() {
+  deleteBranchButton.disabled = !currentNode || !currentNode.parent;
+
   treeViewEl.innerHTML = "";
   if (!rootNode) {
     treeViewEl.textContent = "Nothing explored yet.";
@@ -303,7 +306,13 @@ function renderTreeNode(node) {
   if (node === currentNode) {
     button.classList.add("active");
   }
-  button.addEventListener("click", () => viewNode(node));
+  // Clicking a node re-shows THAT node's own day's offer (which card was picked among what was
+  // offered), not what comes after it - walk forward from its PARENT (guaranteed to land back on
+  // node.day, deterministically, same as when node was first created) rather than from node itself.
+  // Highlight node itself as active, regardless of which node the walk internally passes through
+  // (skip nodes) or ends on - previously this reused the walk's own internal pointer for both
+  // purposes, which is what caused clicking a row to visibly land on/highlight a different one.
+  button.addEventListener("click", () => viewNode(node.parent, node));
   li.appendChild(button);
 
   const childList = document.createElement("ul");
@@ -339,19 +348,24 @@ function getOrCreateChild(parentNode, day, option, sourcePackName) {
   return child;
 }
 
-async function viewNode(node) {
+// walkStart: the node whose next-day frontier should be fetched/shown (auto-skipping empty days).
+// highlightNode: the node to mark "active" in the tree - the row the user actually clicked (or the
+// newly-chosen node after a pick), NOT whatever internal node the auto-skip walk happens to stop at.
+async function viewNode(walkStart, highlightNode) {
   const myGeneration = ++explorationGeneration;
-  currentNode = node;
+  currentNode = highlightNode;
   renderTree();
-  await renderFrontier(node, myGeneration);
+  await renderFrontier(walkStart, myGeneration);
 }
 
-// Advances from `node` day-by-day, silently auto-skipping any day that offers nothing (per user
-// feedback: an empty day is just noise, not a real decision point) until it finds a day with real
-// offers, or runs out of days. Each auto-skipped day still becomes a real tree node (so back-
-// navigation/branching stays correct) - it's just not shown as an interactive step.
-async function renderFrontier(node, myGeneration) {
-  let current = node;
+// Advances from `walkStart` day-by-day, silently auto-skipping any day that offers nothing (per
+// user feedback: an empty day is just noise, not a real decision point) until it finds a day with
+// real offers, or runs out of days. Each auto-skipped day still becomes a real tree node (so back-
+// navigation/branching stays correct) - it's just not shown as an interactive step. Does NOT touch
+// `currentNode`/tree highlighting - that's fixed once by the caller (viewNode) and must stay put
+// regardless of which internal node this walk passes through or stops on.
+async function renderFrontier(walkStart, myGeneration) {
+  let current = walkStart;
 
   while (true) {
     const nextDay = current.day + 1;
@@ -359,8 +373,6 @@ async function renderFrontier(node, myGeneration) {
       if (myGeneration !== explorationGeneration) {
         return;
       }
-      currentNode = current;
-      renderTree();
       dayPanelEl.innerHTML = "";
       const p = document.createElement("p");
       p.textContent = "Reached day 15 - this is as far as the Explorer goes.";
@@ -385,8 +397,6 @@ async function renderFrontier(node, myGeneration) {
       continue; // don't render this day at all - just move on to the next one
     }
 
-    currentNode = current;
-    renderTree();
     renderDayPanel(current, nextDay, response);
     return;
   }
@@ -431,8 +441,31 @@ function renderDayPanel(node, day, response) {
 
 async function choose(parentNode, day, option, sourcePackName) {
   const child = getOrCreateChild(parentNode, day, option, sourcePackName);
-  await viewNode(child);
+  await viewNode(child, child);
 }
+
+// Prunes the currently-selected tree node (and everything under it) entirely - "mostly just for
+// clearing the sidebar" per the user's own framing, not a gameplay action. Since offers are
+// deterministic (same seed -> same result), this doesn't hide anything permanently: navigating back
+// to the same point naturally re-derives the identical offer via the normal walk/fetch, it's just no
+// longer cluttering the tree until re-explored.
+function deleteCurrentBranch() {
+  if (!currentNode || !currentNode.parent) {
+    return; // nothing selected yet, or already at the synthetic root - nothing to delete
+  }
+
+  const parent = currentNode.parent;
+  for (const [key, child] of parent.children) {
+    if (child === currentNode) {
+      parent.children.delete(key);
+      break;
+    }
+  }
+
+  viewNode(parent, parent);
+}
+
+deleteBranchButton.addEventListener("click", deleteCurrentBranch);
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -450,9 +483,8 @@ form.addEventListener("submit", async (event) => {
   }
 
   rootNode = makeRootNode();
-  currentNode = rootNode;
   explorerResultEl.hidden = false;
-  await viewNode(rootNode);
+  await viewNode(rootNode, null);
 });
 
 // Hotlinking: /explorer/<setting>/<seed> prefills just those two fields (matching /preview's

@@ -542,6 +542,17 @@ button[type="submit"]:hover {
   font-size: 0.8rem;
 }
 
+#delete-branch {
+  display: block;
+  margin: 0.5rem 0 0.3rem;
+  font-size: 0.8rem;
+}
+
+#delete-branch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .tree-list {
   list-style: none;
   margin: 0.4rem 0 0;
