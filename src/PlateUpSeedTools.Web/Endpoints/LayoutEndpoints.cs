@@ -153,13 +153,13 @@ public static partial class LayoutEndpoints
         var constructionSeed = LayoutSeed.ConstructionSeed(seedObj);
         var constructed = CreateLayoutHelper.ConstructLayout(graph, profile, constructionSeed);
 
-        var response = ToResponse(seedObj.Value, setting, settingData.DisplayName, layoutProfileId, constructed, repo);
+        var response = ToResponse(seedObj.Value, setting, settingData.DisplayName, layoutProfileId, constructed, repo, profile.TableApplianceId);
         await cache.SetAsync(cacheKey, response);
         return (response, null);
     }
 
     private static LayoutResponse ToResponse(
-        string seed, string settingSlug, string settingName, int layoutProfileId, ConstructedLayout layout, GameDataRepository repo)
+        string seed, string settingSlug, string settingName, int layoutProfileId, ConstructedLayout layout, GameDataRepository repo, int tableApplianceId)
     {
         var bounds = layout.Blueprint.GetBounds();
         var tiles = layout.Blueprint.Tiles
@@ -183,7 +183,8 @@ public static partial class LayoutEndpoints
             bounds.MaxY - bounds.MinY + 1,
             tiles,
             appliances,
-            features);
+            features,
+            tableApplianceId);
     }
 
     private sealed record LayoutRequest(string Setting, string Seed);

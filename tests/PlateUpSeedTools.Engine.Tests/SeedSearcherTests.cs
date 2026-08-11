@@ -47,10 +47,11 @@ public class SeedSearcherTests
         var finalCheckedCount = 0L;
         var progressCalls = 0;
 
-        SeedSearcher.Search(
+        var result = SeedSearcher.Search(
             repo,
             request,
             maxDegreeOfParallelism: -1,
+            matchCap: long.MaxValue,
             onMatch: seed =>
             {
                 lock (matchLock)
@@ -70,6 +71,74 @@ public class SeedSearcherTests
         // Search always reports a final tally even for a space too small to hit the periodic
         // progress interval, so onProgress must have fired at least once.
         Assert.True(progressCalls >= 1);
+        Assert.False(result.MatchCapReached);
+    }
+
+    // Uses an empty DayTargets dictionary - Matches() trivially returns true for every seed when
+    // there are no day targets (the day loop just never runs), which makes the match count exactly
+    // controllable without depending on real card-draw outcomes. maxDegreeOfParallelism: 1 (rather
+    // than the CLI/web's usual unbounded/capped values) makes the cap deterministic - no in-flight
+    // parallel iterations can complete just after the cap is hit, so the counts below are exact,
+    // not just "close to."
+    [Fact]
+    public void StopsEarlyOnceMatchCapIsReached()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "bdgh";
+        const int length = 4;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length); // 256
+        const long matchCap = 10;
+
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck);
+
+        var matchCount = 0;
+        var finalCheckedCount = 0L;
+
+        var result = SeedSearcher.Search(
+            repo,
+            request,
+            maxDegreeOfParallelism: 1,
+            matchCap: matchCap,
+            onMatch: _ => matchCount++,
+            onProgress: count => finalCheckedCount = count,
+            cancellationToken: CancellationToken.None);
+
+        Assert.True(result.MatchCapReached);
+        Assert.Equal(matchCap, matchCount);
+        Assert.True(finalCheckedCount < totalToCheck);
+    }
+
+    [Fact]
+    public void DoesNotReportMatchCapReachedWhenTheCapIsNeverHit()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "bdgh";
+        const int length = 4;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length); // 256
+
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck);
+
+        var matchCount = 0;
+        var finalCheckedCount = 0L;
+
+        var result = SeedSearcher.Search(
+            repo,
+            request,
+            maxDegreeOfParallelism: 1,
+            matchCap: 1000, // above totalToCheck, so every trivially-matching seed fits under it
+            onMatch: _ => matchCount++,
+            onProgress: count => finalCheckedCount = count,
+            cancellationToken: CancellationToken.None);
+
+        Assert.False(result.MatchCapReached);
+        Assert.Equal(totalToCheck, matchCount);
+        Assert.Equal(totalToCheck, finalCheckedCount);
     }
 
     private static HashSet<string> ComputeMatchesSequentially(

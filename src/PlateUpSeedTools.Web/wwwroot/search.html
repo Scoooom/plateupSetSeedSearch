@@ -62,6 +62,11 @@
         <button type="button" id="add-day-target" class="link-button">+ Add day target</button>
       </div>
 
+      <label class="field checkbox-field full-width">
+        <input type="checkbox" id="stop-after-first-match" />
+        <span>Stop after first match</span>
+      </label>
+
       <details class="advanced-fields full-width">
         <summary>Advanced options</summary>
 
@@ -110,6 +115,16 @@
       <p id="job-stats" class="job-stats"></p>
       <ul id="matches-list" class="matches-list"></ul>
     </section>
+
+    <dialog id="preview-dialog">
+      <div class="preview-dialog-header">
+        <span id="preview-dialog-title"></span>
+        <button type="button" id="preview-dialog-close" class="link-button">Close</button>
+      </div>
+      <p id="preview-dialog-status" class="status"></p>
+      <img id="preview-dialog-image" class="layout-image" alt="" />
+      <p id="preview-dialog-stats" class="job-stats"></p>
+    </dialog>
   </main>
 
   <script src="/js/nav.js"></script>

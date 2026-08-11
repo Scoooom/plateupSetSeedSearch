@@ -12,6 +12,7 @@ const dayTargetRowsEl = document.getElementById("day-target-rows");
 const addDayTargetButton = document.getElementById("add-day-target");
 const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
 const addFranchiseCardButton = document.getElementById("add-franchise-card");
+const stopAfterFirstMatchInput = document.getElementById("stop-after-first-match");
 const form = document.getElementById("search-form");
 const statusEl = document.getElementById("status");
 const jobEl = document.getElementById("job");
@@ -21,12 +22,20 @@ const progressBar = document.getElementById("progress-bar");
 const progressBarFill = document.getElementById("progress-bar-fill");
 const jobStats = document.getElementById("job-stats");
 const matchesList = document.getElementById("matches-list");
+const previewDialog = document.getElementById("preview-dialog");
+const previewDialogTitle = document.getElementById("preview-dialog-title");
+const previewDialogClose = document.getElementById("preview-dialog-close");
+const previewDialogStatus = document.getElementById("preview-dialog-status");
+const previewDialogImage = document.getElementById("preview-dialog-image");
+const previewDialogStats = document.getElementById("preview-dialog-stats");
 
 // VALID_SEED/fetchSettings/populateSettingSelect come from shared.js.
 
 let unlocksForSetting = [];
 let pollHandle = null;
 let currentJobId = null;
+let currentSearchSetting = null;
+let dayTargetRefreshTimer = null;
 
 function setStatus(message, isError) {
   statusEl.textContent = message;
@@ -56,14 +65,24 @@ function addDayTargetRow() {
   dayInput.className = "day-target-day";
   dayInput.required = true;
 
-  const cardSelect = createCardSelect();
+  // Starts empty and disabled - only populated (via /api/search/possible-cards) once this row has
+  // a valid day, and only with cards actually reachable that day given the dish/heat/earlier picks.
+  // See refreshAllDayTargetCandidates.
+  const cardSelect = document.createElement("select");
   cardSelect.className = "day-target-card";
+  cardSelect.disabled = true;
 
   const removeButton = document.createElement("button");
   removeButton.type = "button";
   removeButton.className = "link-button";
   removeButton.textContent = "Remove";
-  removeButton.addEventListener("click", () => row.remove());
+  removeButton.addEventListener("click", () => {
+    row.remove();
+    scheduleDayTargetRefresh();
+  });
+
+  dayInput.addEventListener("input", scheduleDayTargetRefresh);
+  cardSelect.addEventListener("change", scheduleDayTargetRefresh);
 
   row.appendChild(dayInput);
   row.appendChild(cardSelect);
@@ -89,12 +108,21 @@ function addFranchiseCardRow() {
   franchiseCardRowsEl.appendChild(row);
 }
 
-addDayTargetButton.addEventListener("click", addDayTargetRow);
-addFranchiseCardButton.addEventListener("click", addFranchiseCardRow);
+addDayTargetButton.addEventListener("click", () => {
+  addDayTargetRow();
+  setDayTargetsEnabled(Boolean(dishSelect.value));
+});
+addFranchiseCardButton.addEventListener("click", () => {
+  addFranchiseCardRow();
+  scheduleDayTargetRefresh(); // a newly-owned franchise card can affect later days' possible cards
+});
 
-function refreshCardSelectOptions() {
-  const selects = document.querySelectorAll(".day-target-card, .franchise-card");
-  for (const select of selects) {
+// Franchise-carryover cards aren't day-sequenced (they represent cards already owned from a prior
+// run, not a night-by-night pick) - that select keeps using the full unfiltered per-setting list.
+// Day-target card selects are populated separately by refreshAllDayTargetCandidates, since their
+// options depend on which day the row is for and what's been picked for earlier days.
+function refreshFranchiseCardSelectOptions() {
+  for (const select of document.querySelectorAll(".franchise-card")) {
     const previousValue = select.value;
     select.innerHTML = "";
     for (const unlock of unlocksForSetting) {
@@ -107,6 +135,99 @@ function refreshCardSelectOptions() {
       select.value = previousValue;
     }
   }
+}
+
+// Disables/enables the entire day-targets section (per user request: it should be unusable until
+// a starting dish is chosen, since "what's possible on day N" is meaningless without one). Card
+// selects specifically are then re-narrowed by refreshAllDayTargetCandidates, which disables any
+// that don't yet have a valid day even when the section overall is enabled.
+function setDayTargetsEnabled(enabled) {
+  addDayTargetButton.disabled = !enabled;
+  for (const el of dayTargetRowsEl.querySelectorAll("input, select, button")) {
+    el.disabled = !enabled;
+  }
+}
+
+function scheduleDayTargetRefresh() {
+  clearTimeout(dayTargetRefreshTimer);
+  dayTargetRefreshTimer = setTimeout(refreshAllDayTargetCandidates, 300);
+}
+
+async function fetchPossibleCardNames(day, priorTargets, franchiseCardNames) {
+  const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
+  try {
+    const response = await fetch("/api/search/possible-cards", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        setting: settingSelect.value,
+        dishName: dishSelect.value,
+        subOptionChoice: subOptionField.hidden ? null : Number(checkedSubOption?.value ?? 1),
+        heat: Number(heatSelect.value),
+        tier: Number(tierInput.value),
+        franchiseCardNames,
+        priorTargets,
+        day,
+      }),
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const body = await response.json();
+    return body.cardNames;
+  } catch {
+    return [];
+  }
+}
+
+// Recomputes every day-target row's candidate list from scratch based on the current dish/heat/
+// tier/franchise-cards and every *other* row's day+card. Recomputing all rows on any single change
+// (rather than tracking a precise per-row dependency graph) is simplest and cheap given day-target
+// lists are always small - picking a card for an earlier day can affect later rows (e.g. Medium
+// Groups -> Large Groups becomes reachable), so any row could in principle depend on any other.
+async function refreshAllDayTargetCandidates() {
+  if (!dishSelect.value) {
+    return;
+  }
+
+  const rows = [...dayTargetRowsEl.querySelectorAll(".dynamic-row")].map((row) => ({
+    dayInput: row.querySelector(".day-target-day"),
+    cardSelect: row.querySelector(".day-target-card"),
+  }));
+
+  const franchiseCardNames = [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")].map(
+    (row) => row.querySelector(".franchise-card").value
+  );
+
+  await Promise.all(
+    rows.map(async ({ dayInput, cardSelect }) => {
+      const day = Number(dayInput.value);
+      if (!dayInput.value || !Number.isInteger(day) || day < 1) {
+        cardSelect.disabled = true;
+        cardSelect.innerHTML = "";
+        return;
+      }
+
+      const priorTargets = rows
+        .filter((other) => other.dayInput !== dayInput)
+        .map((other) => ({ day: Number(other.dayInput.value), cardName: other.cardSelect.value }))
+        .filter((t) => Number.isInteger(t.day) && t.day < day && t.cardName);
+
+      const cardNames = await fetchPossibleCardNames(day, priorTargets, franchiseCardNames);
+      const previousValue = cardSelect.value;
+      cardSelect.innerHTML = "";
+      for (const name of cardNames) {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        cardSelect.appendChild(option);
+      }
+      cardSelect.disabled = cardNames.length === 0;
+      if (cardNames.includes(previousValue)) {
+        cardSelect.value = previousValue;
+      }
+    })
+  );
 }
 
 function updateSubOptionUi() {
@@ -135,8 +256,18 @@ async function loadUnlocksForSetting(setting) {
     dishSelect.appendChild(option);
   }
 
+  onDishChanged();
+}
+
+// Single entry point for anything that can change which cards are reachable/relevant: dish, heat,
+// tier, or franchise-carryover-card selection. Updates the sub-option UI, the day-targets
+// section's enabled state (per user request: unusable before a dish is chosen), the franchise-card
+// dropdown's option list, and re-runs the day-target possibility query.
+function onDishChanged() {
   updateSubOptionUi();
-  refreshCardSelectOptions();
+  setDayTargetsEnabled(Boolean(dishSelect.value));
+  refreshFranchiseCardSelectOptions();
+  refreshAllDayTargetCandidates();
 }
 
 // Not setting-dependent (heat/chill cards are the same across every restaurant setting), so this
@@ -173,7 +304,9 @@ async function loadHeatLevels() {
   heatSelect.value = "0";
 }
 
-dishSelect.addEventListener("change", updateSubOptionUi);
+dishSelect.addEventListener("change", onDishChanged);
+heatSelect.addEventListener("change", () => refreshAllDayTargetCandidates());
+tierInput.addEventListener("input", scheduleDayTargetRefresh);
 settingSelect.addEventListener("change", () => {
   loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));
 });
@@ -184,6 +317,7 @@ async function loadInit() {
   await loadUnlocksForSetting(settingSelect.value);
   await loadHeatLevels();
   addDayTargetRow();
+  onDishChanged();
 }
 
 function stopPolling() {
@@ -218,7 +352,12 @@ function renderJobStatus(job) {
     }
     cancelButton.hidden = true;
 
-    if (job.status === "Completed") {
+    if (job.status === "Completed" && job.matchCapReached) {
+      jobStatusText.textContent =
+        `Stopped after finding ${job.matches.length} match(es) - every search on this site stops at ` +
+        "500 results (or 1, with \"Stop after first match\"). Don't like these? Adjust the seed " +
+        "length/alphabet in Advanced options to search a different space.";
+    } else if (job.status === "Completed") {
       jobStatusText.textContent = `Done - checked ${job.checkedCount.toLocaleString()} seed(s), found ${job.matches.length} match(es).`;
     } else if (job.status === "Cancelled") {
       jobStatusText.textContent = `Cancelled after checking ${job.checkedCount.toLocaleString()} seed(s) - ${job.matches.length} match(es) found so far.`;
@@ -239,6 +378,14 @@ function renderJobStatus(job) {
   for (const seed of job.matches.slice(0, MAX_RENDERED_MATCHES)) {
     const li = document.createElement("li");
     li.textContent = seed;
+    li.tabIndex = 0;
+    li.addEventListener("click", () => openPreviewDialog(seed));
+    li.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openPreviewDialog(seed);
+      }
+    });
     matchesList.appendChild(li);
   }
   if (job.matches.length > MAX_RENDERED_MATCHES) {
@@ -310,6 +457,7 @@ form.addEventListener("submit", async (event) => {
     alphabet: alphabetInput.value,
     length: Number(lengthInput.value),
     limit: limitInput.value ? Number(limitInput.value) : null,
+    stopAfterFirstMatch: stopAfterFirstMatchInput.checked,
   };
 
   try {
@@ -324,6 +472,10 @@ form.addEventListener("submit", async (event) => {
       return;
     }
 
+    // Captured now (not read live from settingSelect.value on click) so that clicking a match
+    // still previews the right setting even if the user changes the dropdown while this job's
+    // results are still on screen.
+    currentSearchSetting = payload.setting;
     currentJobId = body.jobId;
     jobEl.hidden = false;
     matchesList.innerHTML = "";
@@ -333,5 +485,58 @@ form.addEventListener("submit", async (event) => {
     setStatus("Failed to reach the server.", true);
   }
 });
+
+// Click-to-preview dialog: reuses the existing layout-preview endpoints (/api/layout/.../
+// /preview/....png) already built for the Seed Previewer page - no new backend beyond exposing
+// tableApplianceId on LayoutResponse. The image is only ever fetched here, on an explicit open -
+// never prefetched for the whole match list, which matters with up to 500 badges on screen.
+async function openPreviewDialog(seed) {
+  if (!currentSearchSetting) {
+    return;
+  }
+
+  previewDialogTitle.textContent = `Seed "${seed}"`;
+  previewDialogStatus.textContent = "Loading...";
+  previewDialogStatus.classList.remove("error");
+  previewDialogImage.removeAttribute("src");
+  previewDialogStats.textContent = "";
+  previewDialog.showModal();
+
+  try {
+    const response = await fetch(`/api/layout/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}`);
+    const layout = await response.json();
+    if (!response.ok) {
+      previewDialogStatus.textContent = layout.error ?? "Failed to load preview.";
+      previewDialogStatus.classList.add("error");
+      return;
+    }
+
+    previewDialogStatus.textContent = "";
+    previewDialogImage.alt = `${layout.settingName} — seed "${layout.seed}"`;
+    previewDialogImage.src = `/preview/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}.png`;
+    const tableCount = layout.appliances.filter((a) => a.applianceId === layout.tableApplianceId).length;
+    previewDialogStats.textContent = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)`;
+  } catch {
+    previewDialogStatus.textContent = "Failed to reach the server.";
+    previewDialogStatus.classList.add("error");
+  }
+}
+
+function closePreviewDialog() {
+  previewDialog.close();
+  // Clears the image so a stale/large decoded image isn't held onto between opens, and so
+  // reopening the same seed re-fetches rather than silently reusing browser image-decode state.
+  previewDialogImage.removeAttribute("src");
+}
+
+previewDialogClose.addEventListener("click", closePreviewDialog);
+previewDialog.addEventListener("click", (event) => {
+  // A click that lands on the <dialog> element itself (not any of its content) is a backdrop
+  // click - dialog's own box always fills the content area, so this only fires outside it.
+  if (event.target === previewDialog) {
+    closePreviewDialog();
+  }
+});
+previewDialog.addEventListener("close", () => previewDialogImage.removeAttribute("src"));
 
 loadInit().catch(() => setStatus("Failed to load restaurant settings.", true));

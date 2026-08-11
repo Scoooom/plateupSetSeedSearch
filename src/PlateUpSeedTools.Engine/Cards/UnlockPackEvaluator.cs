@@ -33,6 +33,102 @@ public static class UnlockPackEvaluator
         };
     }
 
+    /// <summary>
+    /// Deterministic "what could possibly be offered on day N" query, for the search UI's day-target
+    /// dropdown filtering - NOT gameplay simulation. RNG only ever decides shuffle order and which
+    /// single card gets picked from an already-determined nonempty slot (see <see cref="GetOptions"/>
+    /// and its <see cref="ShouldBlockCard"/>/<see cref="ShouldProvide"/> helpers, reused unchanged
+    /// here) - candidate *eligibility*, whether a pack fires at all that day, and which
+    /// UnlockGroup/MenuPhase slot(s) a firing pack draws from are all deterministic given
+    /// (currentCards, day, tier). This unions across EVERY sub-pack of a composite (not the "first
+    /// non-empty wins" order <see cref="GetCompositeOptions"/> uses for the real RNG path) and every
+    /// active top-level pack, since the goal is "everything reachable," not "what the actual seed
+    /// would show."
+    ///
+    /// KNOWN GAP (see docs/project-history.md's "Known gaps" section, flagged urgent): santa-workshop's
+    /// Christmas Pack has an undecoded sub-pack (Christmas Special Card) - this throws if the pack
+    /// graph reaches it, same limitation CardDrawSimulator already has for that one setting.
+    /// </summary>
+    public static HashSet<int> GetPossibleCardIds(GameDataRepository repo, IReadOnlyList<int> activePackIds, HashSet<int> currentCards, int day, int tier)
+    {
+        var request = new UnlockRequest(day, tier);
+        var result = new HashSet<int>();
+        foreach (var packId in activePackIds)
+        {
+            CollectPossibleCardIds(repo, packId, currentCards, request, result);
+        }
+
+        return result;
+    }
+
+    private static void CollectPossibleCardIds(GameDataRepository repo, int packId, HashSet<int> currentCards, UnlockRequest request, HashSet<int> result)
+    {
+        var pack = repo.GetPack(packId);
+        switch (pack.Type)
+        {
+            case "composite":
+                foreach (var subPackId in pack.SubPackIds ?? [])
+                {
+                    CollectPossibleCardIds(repo, subPackId, currentCards, request, result);
+                }
+
+                break;
+            case "modular":
+                CollectPossibleModularCardIds(repo, pack, currentCards, request, result);
+                break;
+            default:
+                throw new NotSupportedException($"Unknown pack type '{pack.Type}' for pack {packId}");
+        }
+    }
+
+    private static void CollectPossibleModularCardIds(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, HashSet<int> result)
+    {
+        var condition = pack.Condition ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Condition");
+        if (!ShouldProvide(repo, condition, currentCards, request))
+        {
+            return;
+        }
+
+        var filter = pack.Filter ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Filter");
+        var candidates = repo.AllUnlocksOrderedById
+            .Where(c => !ShouldBlockCard(repo, c, currentCards, request, filter))
+            .ToList();
+
+        var selector = pack.Selector ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Selector");
+        foreach (var id in GetReachableIds(selector, candidates))
+        {
+            result.Add(id);
+        }
+    }
+
+    // --- UnlockSelector*.GetOptions, membership-only variants (no RNG index pick) ---
+
+    private static IEnumerable<int> GetReachableIds(SelectorData selector, List<UnlockData> candidates) => selector.Kind switch
+    {
+        "groupChoice" => ReachableGroupChoice(selector, candidates),
+        "anyFromGroup" => candidates.Where(c => selector.Groups!.Contains(c.UnlockGroup)).Select(c => c.Id),
+        "menuPhase" => candidates.Where(c => c.Kind == "Dish" && (c.ProvidesPhase(selector.Phase1!.Value) || c.ProvidesPhase(selector.Phase2!.Value))).Select(c => c.Id),
+        _ => throw new NotSupportedException($"Unknown selector kind '{selector.Kind}'"),
+    };
+
+    private static IEnumerable<int> ReachableGroupChoice(SelectorData s, List<UnlockData> candidates)
+    {
+        // Mirrors SelectGroupChoice's group1/group2 fallback-swap: if one configured group has zero
+        // eligible candidates, the real selector substitutes the other group into both slots.
+        var group1 = s.Group1!.Value;
+        var group2 = s.Group2!.Value;
+        if (candidates.All(c => c.UnlockGroup != s.Group1!.Value))
+        {
+            group1 = s.Group2!.Value;
+        }
+        else if (candidates.All(c => c.UnlockGroup != s.Group2!.Value))
+        {
+            group2 = s.Group1!.Value;
+        }
+
+        return candidates.Where(c => c.UnlockGroup == group1 || c.UnlockGroup == group2).Select(c => c.Id);
+    }
+
     private static UnlockOptions GetCompositeOptions(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, UnityRandom rng, int skipChoices)
     {
         foreach (var subPackId in pack.SubPackIds ?? [])

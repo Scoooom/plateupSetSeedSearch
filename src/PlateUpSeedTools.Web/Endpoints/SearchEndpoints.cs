@@ -9,10 +9,17 @@ namespace PlateUpSeedTools.Web.Endpoints;
 
 public static class SearchEndpoints
 {
+    // Hard server-side cap: every web search stops after this many matches, no user override (the
+    // CLI has a --max-results override, the web UI intentionally doesn't - see SearchCommand.cs and
+    // the project plan's "Match cap + stop after first match" section). "Stop after first match"
+    // is just this same mechanism with a cap of 1.
+    private const long DefaultMatchCap = 500;
+
     public static void MapSearchEndpoints(this WebApplication app)
     {
         app.MapGet("/api/search/unlocks", GetUnlocks);
         app.MapGet("/api/search/heat-levels", GetHeatLevels);
+        app.MapPost("/api/search/possible-cards", GetPossibleCards);
         app.MapPost("/api/search", StartSearch);
         app.MapGet("/api/search/{jobId}", GetStatus);
         app.MapPost("/api/search/{jobId}/cancel", CancelSearch);
@@ -48,6 +55,76 @@ public static class SearchEndpoints
             .ToList();
 
         return Results.Ok(levels);
+    }
+
+    private static IResult GetPossibleCards(PossibleCardsRequest request, GameDataRepository repo)
+    {
+        if (!repo.ListSettings().Any(s => s.Slug == request.Setting))
+        {
+            return Results.BadRequest(new { error = $"Unknown setting '{request.Setting}'." });
+        }
+
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
+        {
+            return Results.BadRequest(new { error = dishError });
+        }
+
+        var franchiseCarryoverIds = new List<int>();
+        foreach (var cardName in request.FranchiseCardNames ?? [])
+        {
+            if (!TryResolveUnlock(repo, cardName, "franchise card", out var card, out var cardError))
+            {
+                return Results.BadRequest(new { error = cardError });
+            }
+
+            franchiseCarryoverIds.Add(card.Id);
+        }
+
+        var setting = repo.GetSetting(request.Setting);
+        ResolvedRunSetup setup;
+        try
+        {
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, setting.StartingUnlockId, franchiseCarryoverIds);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+
+        var ownedIds = new HashSet<int>(setup.InitiallyOwnedIds);
+        foreach (var prior in request.PriorTargets)
+        {
+            if (prior.Day >= request.Day || string.IsNullOrEmpty(prior.CardName))
+            {
+                continue;
+            }
+
+            if (!TryResolveUnlock(repo, prior.CardName, "card", out var card, out var cardError))
+            {
+                return Results.BadRequest(new { error = cardError });
+            }
+
+            ownedIds.Add(card.Id);
+        }
+
+        var settingPackId = repo.ResolveUnlockPackId(request.Setting);
+        List<int> activePackIds = [settingPackId, .. setup.BonusPackIds];
+
+        HashSet<int> possibleIds;
+        try
+        {
+            possibleIds = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, ownedIds, request.Day, request.Tier);
+        }
+        catch (KeyNotFoundException)
+        {
+            // santa-workshop's Christmas Pack has an undecoded sub-pack - see
+            // UnlockPackEvaluator.GetPossibleCardIds's doc comment and docs/project-history.md's
+            // "Known gaps" section. Fail soft here (empty list) rather than 500ing the page.
+            possibleIds = [];
+        }
+
+        var names = possibleIds.Select(id => repo.GetUnlock(id).Name).OrderBy(n => n).ToList();
+        return Results.Ok(new PossibleCardsResponse(names));
     }
 
     private static IResult StartSearch(SearchStartRequest request, GameDataRepository repo, SearchJobManager jobs)
@@ -125,7 +202,8 @@ public static class SearchEndpoints
             : (long)BigInteger.Min(spaceSize, long.MaxValue);
 
         var searchRequest = new SeedSearchRequest(settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck);
-        var job = jobs.StartSearch(searchRequest);
+        var matchCap = request.StopAfterFirstMatch == true ? 1L : DefaultMatchCap;
+        var job = jobs.StartSearch(searchRequest, matchCap);
 
         return Results.Accepted($"/api/search/{job.Id}", new SearchStartResponse(job.Id, totalToCheck, spaceSize.ToString()));
     }
@@ -148,7 +226,8 @@ public static class SearchEndpoints
             seedsPerSecond,
             elapsed.TotalSeconds,
             job.Matches.ToList(),
-            job.Error));
+            job.Error,
+            job.MatchCapReached));
     }
 
     private static IResult CancelSearch(string jobId, SearchJobManager jobs) =>

@@ -13,6 +13,9 @@ public sealed record SeedSearchRequest(
     int Length,
     long TotalToCheck);
 
+/// <summary>Result of a <see cref="SeedSearcher.Search"/> call - <see cref="MatchCapReached"/> distinguishes "stopped early because matchCap was hit" from a genuine full-space completion, since both otherwise look like the loop just finishing.</summary>
+public readonly record struct SeedSearchResult(bool MatchCapReached);
+
 /// <summary>
 /// Brute-forces the seed space defined by <see cref="SeedSearchRequest.Alphabet"/>/<see
 /// cref="SeedSearchRequest.Length"/>, reporting matches (a seed where every target day's card was
@@ -29,20 +32,38 @@ public static class SeedSearcher
     // second at the ~2,900 seeds/sec the CLI measured.
     private const long ProgressReportInterval = 2_000;
 
-    public static void Search(
+    /// <param name="matchCap">
+    /// Stop once this many matches have been found (both the web UI's hard 500 cap and its
+    /// "stop after first match" option, which is just matchCap=1, and the CLI's --max-results
+    /// override all funnel through here - see SearchCommand.cs/SearchJobManager.cs). Required, not
+    /// optional, so every caller has to make a deliberate choice - pass long.MaxValue for
+    /// effectively unbounded. Best-effort: a few in-flight parallel iterations may complete just
+    /// after the cap is hit, so slightly more than matchCap onMatch calls are possible; callers
+    /// that need a hard display limit (e.g. the web UI's match-list rendering) should still cap
+    /// independently rather than relying on this being exact.
+    /// </param>
+    public static SeedSearchResult Search(
         GameDataRepository repo,
         SeedSearchRequest request,
         int maxDegreeOfParallelism,
+        long matchCap,
         Action<string> onMatch,
         Action<long> onProgress,
         CancellationToken cancellationToken)
     {
         var maxDay = request.DayTargets.Count == 0 ? 0 : request.DayTargets.Keys.Max();
         long checkedCount = 0;
+        long matchCount = 0;
+        var matchCapReached = false;
 
+        // A linked CTS lets the cap trigger its own internal cancellation without disturbing the
+        // caller's own token - Parallel.For can't distinguish "stop because the cap was hit" from
+        // "stop because the caller cancelled" any other way, since both surface as the same
+        // OperationCanceledException.
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var parallelOptions = new ParallelOptions
         {
-            CancellationToken = cancellationToken,
+            CancellationToken = linkedCts.Token,
             MaxDegreeOfParallelism = maxDegreeOfParallelism,
         };
 
@@ -54,6 +75,11 @@ public static class SeedSearcher
                 if (Matches(repo, new Seed(seedString), request.SettingPackId, request.Setup, request.DayTargets, maxDay, request.Tier))
                 {
                     onMatch(seedString);
+                    if (Interlocked.Increment(ref matchCount) >= matchCap)
+                    {
+                        matchCapReached = true;
+                        linkedCts.Cancel();
+                    }
                 }
 
                 var count = Interlocked.Increment(ref checkedCount);
@@ -63,12 +89,19 @@ public static class SeedSearcher
                 }
             });
         }
+        catch (OperationCanceledException) when (matchCapReached && !cancellationToken.IsCancellationRequested)
+        {
+            // Our own cap-triggered cancellation, not the caller's - swallow it and report via the
+            // return value instead of surfacing it as a cancellation to the caller.
+        }
         finally
         {
             // Always report the final tally, even on cancellation, so callers don't need to
             // separately track "how far did we actually get" themselves.
             onProgress(Interlocked.Read(ref checkedCount));
         }
+
+        return new SeedSearchResult(matchCapReached);
     }
 
     private static bool Matches(

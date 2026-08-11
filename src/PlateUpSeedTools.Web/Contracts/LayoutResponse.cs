@@ -9,7 +9,8 @@ public sealed record LayoutResponse(
     int Height,
     IReadOnlyList<TileDto> Tiles,
     IReadOnlyList<ApplianceDto> Appliances,
-    IReadOnlyList<FeatureDto> Features);
+    IReadOnlyList<FeatureDto> Features,
+    int TableApplianceId);
 
 public readonly record struct TileDto(int X, int Y, string RoomType, int RoomId);
 

@@ -25,6 +25,7 @@ public sealed class SearchJob
     public required DateTimeOffset StartedAt { get; init; }
     public DateTimeOffset? FinishedAt { get; set; }
     public string? Error { get; set; }
+    public volatile bool MatchCapReached;
     public required CancellationTokenSource Cts { get; init; }
 }
 
@@ -66,7 +67,7 @@ public sealed class SearchJobManager
         _slots = new SemaphoreSlim(MaxConcurrentSearchJobs, MaxConcurrentSearchJobs);
     }
 
-    public SearchJob StartSearch(SeedSearchRequest request)
+    public SearchJob StartSearch(SeedSearchRequest request, long matchCap)
     {
         EvictOldJobs();
 
@@ -86,7 +87,7 @@ public sealed class SearchJobManager
         // HTTP response for the entire search instead of returning the job immediately. Confirmed
         // by hand: without Task.Run here, POST /api/search itself hangs until a large search
         // finishes rather than returning right away.
-        _ = Task.Run(() => RunAsync(job, request));
+        _ = Task.Run(() => RunAsync(job, request, matchCap));
         return job;
     }
 
@@ -103,7 +104,7 @@ public sealed class SearchJobManager
         return true;
     }
 
-    private async Task RunAsync(SearchJob job, SeedSearchRequest request)
+    private async Task RunAsync(SearchJob job, SeedSearchRequest request, long matchCap)
     {
         try
         {
@@ -122,14 +123,16 @@ public sealed class SearchJobManager
         try
         {
             job.Status = SearchJobStatus.Running;
-            SeedSearcher.Search(
+            var result = SeedSearcher.Search(
                 _repo,
                 request,
                 _maxDegreeOfParallelismPerJob,
+                matchCap,
                 onMatch: job.Matches.Enqueue,
                 onProgress: job.SetCheckedCount,
                 cancellationToken: job.Cts.Token);
 
+            job.MatchCapReached = result.MatchCapReached;
             job.Status = SearchJobStatus.Completed;
         }
         catch (OperationCanceledException)

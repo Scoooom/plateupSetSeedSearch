@@ -454,6 +454,53 @@ button[type="submit"]:hover {
   padding: 0.3rem 0.6rem;
   font-family: "Courier New", monospace;
   font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.matches-list li:hover,
+.matches-list li:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  outline: none;
+}
+
+.checkbox-field {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.5rem !important;
+}
+
+.checkbox-field input[type="checkbox"] {
+  width: auto;
+  min-width: 0;
+}
+
+/* Click-to-preview popup (search.html/search.js) - first <dialog> in this codebase. */
+#preview-dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 1rem;
+  max-width: 420px;
+  width: calc(100% - 2rem);
+}
+
+#preview-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.preview-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  font-weight: 700;
+}
+
+#preview-dialog-image {
+  width: 100%;
 }
 
 @media (max-width: 640px) {

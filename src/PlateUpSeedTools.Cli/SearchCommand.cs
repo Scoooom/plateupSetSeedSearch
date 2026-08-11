@@ -107,10 +107,11 @@ public static class SearchCommand
         var matchLock = new object();
         var checkedCount = 0L;
 
-        SeedSearcher.Search(
+        var result = SeedSearcher.Search(
             repo,
             request,
             maxDegreeOfParallelism: -1, // CLI keeps today's unbounded, single-user-machine behavior.
+            matchCap: options.MaxResults,
             onMatch: seedString =>
             {
                 lock (matchLock)
@@ -125,6 +126,11 @@ public static class SearchCommand
         stopwatch.Stop();
         var seedsPerSecond = checkedCount / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001);
         Console.WriteLine($"Checked {checkedCount:N0} seed(s) in {stopwatch.Elapsed.TotalSeconds:N1}s ({seedsPerSecond:N0} seeds/sec) - {matchCount} match(es).");
+        if (result.MatchCapReached)
+        {
+            Console.WriteLine($"Stopped after reaching the {options.MaxResults:N0}-match cap - pass --max-results <n> to raise it (0 or negative = unlimited).");
+        }
+
         return 0;
     }
 
@@ -164,7 +170,14 @@ public static class SearchCommand
         public required string Alphabet { get; init; }
         public required int Length { get; init; }
         public long? Limit { get; init; }
+        public required long MaxResults { get; init; }
     }
+
+    // Same hard default the web UI uses (SearchEndpoints.DefaultMatchCap) - a genuine engine-level
+    // rule per the project plan, not a web-only limit. Unlike the web UI, the CLI can raise or
+    // disable it via --max-results, since it's a power-user/scripting tool where "find everything"
+    // is often the actual point.
+    private const long DefaultMaxResults = 500;
 
     private static Options? ParseOptions(string[] args)
     {
@@ -178,6 +191,7 @@ public static class SearchCommand
         var alphabet = Seed.FriendlyCharacters;
         var length = 4;
         long? limit = null;
+        var maxResults = DefaultMaxResults;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -221,6 +235,10 @@ public static class SearchCommand
                 case "--limit" when i + 1 < args.Length:
                     limit = long.Parse(args[++i]);
                     break;
+                case "--max-results" when i + 1 < args.Length:
+                    var parsedMaxResults = long.Parse(args[++i]);
+                    maxResults = parsedMaxResults <= 0 ? long.MaxValue : parsedMaxResults;
+                    break;
                 default:
                     Console.WriteLine($"Unknown or incomplete argument '{args[i]}'");
                     return null;
@@ -232,8 +250,10 @@ public static class SearchCommand
             Console.WriteLine("Usage: search --setting <slug> --dish <name> [--sub-option 1|2] [--heat <n>]");
             Console.WriteLine("              [--tier <n>] [--franchise-card <name> ...]");
             Console.WriteLine("              --day <n>=<card name> [--day <n>=<card name> ...]");
-            Console.WriteLine("              [--alphabet <chars>] [--length <n>] [--limit <n>]");
+            Console.WriteLine("              [--alphabet <chars>] [--length <n>] [--limit <n>] [--max-results <n>]");
             Console.WriteLine();
+            Console.WriteLine($"--max-results caps how many matches are found before stopping early (default {DefaultMaxResults},");
+            Console.WriteLine("same as the web UI's hard cap) - pass 0 or a negative number to search without a cap.");
             Console.WriteLine("--tier/--franchise-card model continuing an existing franchise save into this run");
             Console.WriteLine("(BeginRestaurant.cs copies the prior run's cards onto the new one) - --tier is the");
             Console.WriteLine("franchise tier of that prior save (0 for a fresh, non-franchise run), and each");
@@ -254,6 +274,7 @@ public static class SearchCommand
             Alphabet = alphabet,
             Length = length,
             Limit = limit,
+            MaxResults = maxResults,
         };
     }
 }
