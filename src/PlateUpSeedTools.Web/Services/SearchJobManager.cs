@@ -27,6 +27,13 @@ public sealed class SearchJob
     public string? Error { get; set; }
     public volatile bool MatchCapReached;
     public required CancellationTokenSource Cts { get; init; }
+
+    // Updated on every client status poll (SearchEndpoints.GetStatus) - this doubles as the
+    // "browser is still watching this job" heartbeat SearchJobHeartbeatMonitor relies on to reap
+    // jobs whose tab went away (closed/crashed/lost network) without ever telling the server.
+    private long _lastHeartbeatTicks;
+    public DateTimeOffset LastHeartbeatUtc => new(Interlocked.Read(ref _lastHeartbeatTicks), TimeSpan.Zero);
+    public void Touch() => Interlocked.Exchange(ref _lastHeartbeatTicks, DateTimeOffset.UtcNow.Ticks);
 }
 
 /// <summary>
@@ -78,6 +85,10 @@ public sealed class SearchJobManager
             StartedAt = DateTimeOffset.UtcNow,
             Cts = new CancellationTokenSource(),
         };
+        // Baseline the heartbeat at creation, not just on first poll - otherwise a sweep tick that
+        // lands before the browser's first GET /api/search/{jobId} would see a "stale" heartbeat
+        // (default DateTimeOffset) and immediately cancel a job nobody has abandoned yet.
+        job.Touch();
         _jobs[job.Id] = job;
 
         // Task.Run is required here, not just calling RunAsync directly: when a semaphore slot is
@@ -102,6 +113,27 @@ public sealed class SearchJobManager
 
         job.Cts.Cancel();
         return true;
+    }
+
+    /// <summary>
+    /// Called periodically by <see cref="SearchJobHeartbeatMonitor"/>. Cancels any still-running/
+    /// queued job whose owning browser tab has stopped polling <c>GET /api/search/{jobId}</c> (tab
+    /// closed, crashed, or lost network - see SearchJob.Touch's doc comment) for longer than
+    /// <paramref name="heartbeatTimeout"/>, then runs the existing finished-job eviction so it's no
+    /// longer dependent on someone else starting a new search to ever run.
+    /// </summary>
+    public void SweepAbandonedJobs(TimeSpan heartbeatTimeout)
+    {
+        var cutoff = DateTimeOffset.UtcNow - heartbeatTimeout;
+        foreach (var job in _jobs.Values)
+        {
+            if (job.Status is SearchJobStatus.Queued or SearchJobStatus.Running && job.LastHeartbeatUtc < cutoff)
+            {
+                job.Cts.Cancel();
+            }
+        }
+
+        EvictOldJobs();
     }
 
     private async Task RunAsync(SearchJob job, SeedSearchRequest request, long matchCap)

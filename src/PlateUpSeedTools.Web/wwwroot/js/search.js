@@ -31,6 +31,7 @@ const previewDialogClose = document.getElementById("preview-dialog-close");
 const previewDialogStatus = document.getElementById("preview-dialog-status");
 const previewDialogImage = document.getElementById("preview-dialog-image");
 const previewDialogStats = document.getElementById("preview-dialog-stats");
+const previewDialogPath = document.getElementById("preview-dialog-path");
 
 // VALID_SEED/fetchSettings/populateSettingSelect come from shared.js.
 
@@ -38,6 +39,7 @@ let unlocksForSetting = [];
 let pollHandle = null;
 let currentJobId = null;
 let currentSearchSetting = null;
+let currentSearchPayload = null;
 let currentMatches = [];
 let datalistCounter = 0;
 
@@ -661,6 +663,16 @@ form.addEventListener(
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+
+  // pollHandle is only non-null while the previous job is still Queued/Running (renderJobStatus's
+  // caller stops polling as soon as a terminal status is seen) - if it's still set here, the
+  // previous job would otherwise keep running server-side until the heartbeat-timeout sweep
+  // reaps it, even though this tab never stopped watching. Cancel it explicitly instead of
+  // leaving that to the timeout, since this is a real, deterministic "the user is done with it"
+  // signal (not a DOM-lifecycle heuristic).
+  if (pollHandle !== null && currentJobId) {
+    fetch(`/api/search/${encodeURIComponent(currentJobId)}/cancel`, { method: "POST" }).catch(() => {});
+  }
   stopPolling();
   setStatus("", false);
 
@@ -732,10 +744,11 @@ form.addEventListener("submit", async (event) => {
       return;
     }
 
-    // Captured now (not read live from settingSelect.value on click) so that clicking a match
-    // still previews the right setting even if the user changes the dropdown while this job's
-    // results are still on screen.
+    // Captured now (not read live from settingSelect.value/the form on click) so that clicking a
+    // match still previews the right setting/setup even if the user edits the form while this
+    // job's results are still on screen.
     currentSearchSetting = payload.setting;
+    currentSearchPayload = payload;
     currentJobId = body.jobId;
     jobEl.hidden = false;
     matchesList.innerHTML = "";
@@ -760,6 +773,7 @@ async function openPreviewDialog(seed) {
   previewDialogStatus.classList.remove("error");
   previewDialogImage.removeAttribute("src");
   previewDialogStats.textContent = "";
+  previewDialogPath.innerHTML = "";
   previewDialog.showModal();
 
   try {
@@ -779,6 +793,41 @@ async function openPreviewDialog(seed) {
   } catch {
     previewDialogStatus.textContent = "Failed to reach the server.";
     previewDialogStatus.classList.add("error");
+    return;
+  }
+
+  await loadPreviewDialogPath(seed);
+}
+
+// Shows the full card pick for every drawing day up to the last target, not just the days the
+// user explicitly targeted - schedules like "turbo" draw a card every day, so without this a
+// sparse-target search (e.g. day 1 and day 10 only) left days 2-9 with no way to know what to
+// pick. See SeedSearcher.ResolveCardPath's doc comment for the exact filler policy used.
+async function loadPreviewDialogPath(seed) {
+  if (!currentSearchPayload) {
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/search/path", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...currentSearchPayload, seed }),
+    });
+    if (!response.ok) {
+      return;
+    }
+
+    const { days } = await response.json();
+    previewDialogPath.innerHTML = "";
+    for (const { day, cardName } of days) {
+      const li = document.createElement("li");
+      li.textContent = `Day ${day}: ${cardName}`;
+      previewDialogPath.appendChild(li);
+    }
+  } catch {
+    // Best-effort - the layout preview above is the primary content of this dialog, so a failed
+    // path fetch just leaves the list empty rather than surfacing a second error state.
   }
 }
 

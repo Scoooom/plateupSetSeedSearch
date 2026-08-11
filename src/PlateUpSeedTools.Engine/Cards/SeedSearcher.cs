@@ -110,6 +110,43 @@ public static class SeedSearcher
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
         IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier)
     {
+        foreach (var (_, targetId, actual) in Walk(repo, seed, settingPackId, setup, dayTargets, maxDay, tier))
+        {
+            if (targetId is int t && actual.Unlock1Id != t && actual.Unlock2Id != t)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Replays the same day-by-day simulation <see cref="Matches"/> used to confirm a match, but
+    /// returns what was actually picked each day instead of discarding it - lets a caller show the
+    /// user a concrete card to pick for every day, including "filler" days that had no explicit
+    /// target (which matters for schedules like "turbo" that draw every day, not just every 3rd) -
+    /// see SearchEndpoints' POST /api/search/path. Uses the exact same filler policy (prefer the
+    /// day's target if offered, otherwise Unlock1Id) as Matches so the reconstructed path is
+    /// guaranteed consistent with why this seed matched in the first place.
+    /// </summary>
+    public static IReadOnlyList<(int Day, int? CardId)> ResolveCardPath(
+        GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
+        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier)
+    {
+        var path = new List<(int Day, int? CardId)>();
+        foreach (var (day, _, actual) in Walk(repo, seed, settingPackId, setup, dayTargets, maxDay, tier))
+        {
+            path.Add((day, actual.SelectedId));
+        }
+
+        return path;
+    }
+
+    private static IEnumerable<(int Day, int? TargetId, CardDayResult Actual)> Walk(
+        GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
+        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier)
+    {
         // ResolvedRunSetup.InitiallyOwnedIds gets mutated per-day by the simulator, so each candidate
         // seed needs its own copy - dish/heat/franchise-carryover resolution itself doesn't depend on
         // the seed.
@@ -122,13 +159,8 @@ public static class SeedSearcher
             var result = sim.SimulateDay(day, offered =>
                 targetId is int tid && (offered.Unlock1Id == tid || offered.Unlock2Id == tid) ? tid : offered.Unlock1Id);
 
-            if (targetId is int expected && result.Unlock1Id != expected && result.Unlock2Id != expected)
-            {
-                return false;
-            }
+            yield return (day, targetId, result);
         }
-
-        return true;
     }
 
     private static string IndexToSeedString(long index, string alphabet, int length)

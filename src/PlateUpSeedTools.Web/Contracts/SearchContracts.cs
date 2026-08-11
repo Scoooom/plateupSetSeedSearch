@@ -86,3 +86,25 @@ public sealed record FranchiseCandidatesRequest(
     List<string>? OtherSelectedCardNames);
 
 public sealed record FranchiseCandidatesResponse(IReadOnlyList<string> CardNames);
+
+/// <summary>
+/// "Which card to actually pick each day to reproduce this match" - powers the search results'
+/// click-to-preview dialog. Same setup shape as SearchStartRequest (minus the space-search-only
+/// fields alphabet/length/limit/stopAfterFirstMatch/excludedSeeds) plus the specific matched Seed.
+/// Stateless like PossibleCardsRequest/FranchiseCandidatesRequest - the job's original request
+/// isn't retained server-side, so the client resends the setup it already has on hand.
+/// </summary>
+public sealed record SearchPathRequest(
+    string Setting,
+    string DishName,
+    int? SubOptionChoice,
+    int Heat,
+    int Tier,
+    List<string>? FranchiseCardNames,
+    List<DayTargetDto> DayTargets,
+    string Seed,
+    string? CardPack = null);
+
+public sealed record CardPathEntryDto(int Day, string CardName);
+
+public sealed record SearchPathResponse(IReadOnlyList<CardPathEntryDto> Days);

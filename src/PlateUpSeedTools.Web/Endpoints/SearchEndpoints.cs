@@ -31,6 +31,7 @@ public static class SearchEndpoints
         app.MapPost("/api/search", StartSearch);
         app.MapGet("/api/search/{jobId}", GetStatus);
         app.MapPost("/api/search/{jobId}/cancel", CancelSearch);
+        app.MapPost("/api/search/path", GetSearchPath);
     }
 
     private static IResult GetUnlocks(string setting, GameDataRepository repo)
@@ -319,6 +320,9 @@ public static class SearchEndpoints
             return Results.NotFound(new { error = $"Unknown search job '{jobId}'." });
         }
 
+        // This poll IS the heartbeat SearchJobHeartbeatMonitor watches for - see SearchJob.Touch.
+        job.Touch();
+
         var elapsed = (job.FinishedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var seedsPerSecond = job.CheckedCount / Math.Max(elapsed.TotalSeconds, 0.001);
 
@@ -332,6 +336,74 @@ public static class SearchEndpoints
             job.Matches.ToList(),
             job.Error,
             job.MatchCapReached));
+    }
+
+    /// <summary>
+    /// "Which card to pick each day to reproduce this seed's match" for the search results'
+    /// click-to-preview dialog - see SeedSearcher.ResolveCardPath's doc comment for why this walks
+    /// EVERY day up to the last target (not just target days): schedules like "turbo" draw a card
+    /// every day, not just every 3rd, so days without an explicit target still need a concrete pick
+    /// or the user has no way to know what to choose there.
+    /// </summary>
+    private static IResult GetSearchPath(SearchPathRequest request, GameDataRepository repo)
+    {
+        if (!repo.ListSettings().Any(s => s.Slug == request.Setting))
+        {
+            return Results.BadRequest(new { error = $"Unknown setting '{request.Setting}'." });
+        }
+
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
+        {
+            return Results.BadRequest(new { error = dishError });
+        }
+
+        var targetIds = new Dictionary<int, int>();
+        foreach (var target in request.DayTargets)
+        {
+            if (!TryResolveUnlock(repo, target.CardName, "card", out var card, out var cardError))
+            {
+                return Results.BadRequest(new { error = cardError });
+            }
+
+            targetIds[target.Day] = card.Id;
+        }
+
+        var franchiseCarryoverIds = new List<int>();
+        foreach (var cardName in request.FranchiseCardNames ?? [])
+        {
+            if (!TryResolveUnlock(repo, cardName, "franchise card", out var card, out var cardError))
+            {
+                return Results.BadRequest(new { error = cardError });
+            }
+
+            franchiseCarryoverIds.Add(card.Id);
+        }
+
+        var setting = repo.GetSetting(request.Setting);
+        ResolvedRunSetup setup;
+        try
+        {
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, setting.StartingUnlockId, franchiseCarryoverIds);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+
+        if (!TryResolvePackId(repo, request.Setting, request.CardPack, out var settingPackId, out var packError))
+        {
+            return Results.BadRequest(new { error = packError });
+        }
+
+        var maxDay = targetIds.Count == 0 ? 0 : targetIds.Keys.Max();
+        var path = SeedSearcher.ResolveCardPath(repo, new Seed(request.Seed), settingPackId, setup, targetIds, maxDay, request.Tier);
+
+        var days = path
+            .Where(entry => entry.CardId is not null)
+            .Select(entry => new CardPathEntryDto(entry.Day, repo.GetUnlock(entry.CardId!.Value).Name))
+            .ToList();
+
+        return Results.Ok(new SearchPathResponse(days));
     }
 
     private static IResult CancelSearch(string jobId, SearchJobManager jobs) =>

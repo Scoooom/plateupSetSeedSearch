@@ -12,6 +12,7 @@ builder.Services.AddSingleton<ICacheStore<LayoutResponse>, SqliteCacheStore<Layo
 var dataRoot = builder.Configuration["DataRoot"] ?? Path.Combine(AppContext.BaseDirectory, "data", "settings");
 builder.Services.AddSingleton(new GameDataRepository(dataRoot));
 builder.Services.AddSingleton<SearchJobManager>();
+builder.Services.AddHostedService<SearchJobHeartbeatMonitor>();
 
 var app = builder.Build();
 

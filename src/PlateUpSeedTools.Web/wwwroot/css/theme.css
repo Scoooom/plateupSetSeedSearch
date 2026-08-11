@@ -475,6 +475,17 @@ button[type="submit"]:hover {
   outline: none;
 }
 
+.card-path-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.card-path-list li {
+  padding: 0.1rem 0;
+}
+
 .checkbox-field {
   flex-direction: row !important;
   align-items: center;
