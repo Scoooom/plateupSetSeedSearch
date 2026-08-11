@@ -36,3 +36,21 @@ public sealed record ExplorerDayResponse(
     IReadOnlyList<ExplorerCardOptionDto> Options,
     string? SourcePackName,
     int? SelectedId);
+
+/// <summary>
+/// A shareable "arrive here already set up and walked to this point" snapshot for the Explorer -
+/// setup fields plus a committed path, stored under a random hash rather than encoded in the URL
+/// (same "Copy Link" pattern as CachedSearchResult; see the "hash, not an encoded blob" rationale
+/// on that type). Used both when Search's path-preview dialog links into the Explorer, and by the
+/// Explorer's own "Copy Link" button sharing whatever's currently been explored.
+/// </summary>
+public sealed record ExplorerPreload(
+    string DishName,
+    int? SubOptionChoice,
+    int Heat,
+    int Tier,
+    List<string>? FranchiseCardNames,
+    string? CardPack,
+    List<ExplorerPathEntryDto> Path);
+
+public sealed record SaveExplorerPreloadResponse(string Hash);

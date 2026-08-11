@@ -117,3 +117,19 @@ public sealed record CardPathDto(IReadOnlyList<CardPathEntryDto> Days);
 /// SeedSearcher.ResolveCardPaths's doc comment for why "all of them" isn't practical in general.
 /// </summary>
 public sealed record SearchPathResponse(IReadOnlyList<CardPathDto> Paths);
+
+/// <summary>
+/// A shareable snapshot of one completed search - everything needed to reproduce the results page
+/// from just a hash, without a live SearchJob (which is evicted ~30 min after finishing). Stored in
+/// ICacheStore&lt;CachedSearchResult&gt;, expired after CacheStore:MaxAgeHours like every other cache
+/// (see CacheAdmin.DeleteExpiredAsync) - see SearchEndpoints' POST /api/search/{jobId}/share and
+/// GET /api/search/cached/{hash}.
+/// </summary>
+public sealed record CachedSearchResult(
+    SearchStartRequest Request,
+    IReadOnlyList<string> Matches,
+    long TotalToCheck,
+    long CheckedCount,
+    bool MatchCapReached);
+
+public sealed record ShareSearchResultResponse(string Hash);

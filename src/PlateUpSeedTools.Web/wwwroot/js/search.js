@@ -25,14 +25,17 @@ const progressBarFill = document.getElementById("progress-bar-fill");
 const jobStats = document.getElementById("job-stats");
 const matchesList = document.getElementById("matches-list");
 const copyMatchesButton = document.getElementById("copy-matches");
+const copyLinkButton = document.getElementById("copy-link");
 const previewDialog = document.getElementById("preview-dialog");
 const previewDialogTitle = document.getElementById("preview-dialog-title");
 const previewDialogClose = document.getElementById("preview-dialog-close");
 const previewDialogStatus = document.getElementById("preview-dialog-status");
+const previewDialogImageLink = document.getElementById("preview-dialog-image-link");
 const previewDialogImage = document.getElementById("preview-dialog-image");
 const previewDialogStats = document.getElementById("preview-dialog-stats");
 const previewDialogPathTabs = document.getElementById("preview-dialog-path-tabs");
 const previewDialogPath = document.getElementById("preview-dialog-path");
+const previewDialogExplorerLink = document.getElementById("preview-dialog-explorer-link");
 
 // VALID_SEED/fetchSettings/populateSettingSelect come from shared.js.
 
@@ -513,6 +516,84 @@ async function loadInit() {
   await loadCardPacks();
   addDayTargetRow();
   onDishChanged();
+
+  const hash = location.hash.slice(1);
+  if (hash) {
+    await loadCachedResult(hash);
+  }
+}
+
+// Prefills the whole form from a previously-run search's request payload (same shape as
+// currentSearchPayload) - used both by loadCachedResult below. Reuses the row-building helpers the
+// form already uses (addDayTargetRow/addFranchiseCardRow) rather than hand-rolling row markup here.
+async function prefillFormFromPayload(request) {
+  settingSelect.value = request.setting;
+  await loadUnlocksForSetting(request.setting); // rebuilds dishSelect options, calls onDishChanged()
+
+  dishSelect.value = request.dishName;
+  updateSubOptionUi();
+  if (request.subOptionChoice) {
+    const radio = subOptionField.querySelector(`input[value="${request.subOptionChoice}"]`);
+    if (radio) radio.checked = true;
+  }
+  heatSelect.value = String(request.heat);
+  tierInput.value = String(request.tier);
+  cardPackSelect.value = request.cardPack ?? "";
+  alphabetInput.value = request.alphabet ?? alphabetInput.value;
+  lengthInput.value = String(request.length);
+  limitInput.value = request.limit != null ? String(request.limit) : "";
+  stopAfterFirstMatchInput.checked = Boolean(request.stopAfterFirstMatch);
+  excludeSeedsInput.value = (request.excludedSeeds ?? []).join(", ");
+
+  franchiseCardRowsEl.innerHTML = "";
+  for (const name of request.franchiseCardNames ?? []) {
+    addFranchiseCardRow();
+    const rows = getAllFranchiseRows();
+    rows[rows.length - 1].querySelector(".franchise-card").value = name;
+  }
+
+  dayTargetRowsEl.innerHTML = "";
+  for (const target of request.dayTargets ?? []) {
+    addDayTargetRow();
+    const row = getAllDayTargetRows().at(-1);
+    row.querySelector(".day-target-day").value = String(target.day);
+    row.querySelector(".day-target-card").value = target.cardName;
+  }
+
+  // Re-runs possibility queries for every row now that the setup + rows exist - this is what
+  // actually enables the (initially-disabled) card inputs and populates their datalists with the
+  // real candidates, including the prefilled names above, so validateCardInput accepts them.
+  onDishChanged();
+}
+
+async function loadCachedResult(hash) {
+  try {
+    const response = await fetch(`/api/search/cached/${encodeURIComponent(hash)}`);
+    if (!response.ok) {
+      setStatus("This shared search result has expired or doesn't exist.", true);
+      return;
+    }
+
+    const cached = await response.json();
+    await prefillFormFromPayload(cached.request);
+
+    currentSearchSetting = cached.request.setting;
+    currentSearchPayload = cached.request;
+    currentJobId = null; // no live job behind this view - Cancel/Copy Link stay hidden
+
+    renderJobStatus({
+      status: "Completed",
+      checkedCount: cached.checkedCount,
+      totalToCheck: cached.totalToCheck,
+      seedsPerSecond: 0,
+      elapsedSeconds: 0,
+      matches: cached.matches,
+      error: null,
+      matchCapReached: cached.matchCapReached,
+    });
+  } catch {
+    setStatus("Failed to reach the server.", true);
+  }
 }
 
 function stopPolling() {
@@ -567,6 +648,10 @@ function renderJobStatus(job) {
   }
 
   copyMatchesButton.hidden = job.matches.length === 0;
+  // Only offered for a live, just-run search (currentJobId set) - a page reached via
+  // /search/cached#hash has no live job behind it (see loadCachedResult), so there's nothing new
+  // to share beyond the link the user is already looking at.
+  copyLinkButton.hidden = job.status !== "Completed" || !currentJobId;
 
   // Cap how many match badges get rendered as DOM nodes - some target cards are common enough
   // that a search can turn up thousands of matches, and building/reflowing that many elements on
@@ -630,6 +715,29 @@ copyMatchesButton?.addEventListener("click", async () => {
     setStatus(`Copied ${currentMatches.length} seed(s) to the clipboard.`, false);
   } catch {
     setStatus("Failed to copy - your browser may not allow clipboard access here.", true);
+  }
+});
+
+// Lazy by design: nothing is written to the cache DB until this is clicked - a completed search
+// that nobody shares never touches /api/search/{jobId}/share at all.
+copyLinkButton?.addEventListener("click", async () => {
+  if (!currentJobId || !currentSearchPayload) return;
+  try {
+    const response = await fetch(`/api/search/${encodeURIComponent(currentJobId)}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(currentSearchPayload),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setStatus(body.error ?? "Failed to create a shareable link.", true);
+      return;
+    }
+    const url = `${location.origin}/search/cached#${body.hash}`;
+    await navigator.clipboard.writeText(url);
+    setStatus(`Shareable link copied (expires in ~24h): ${url}`, false);
+  } catch {
+    setStatus("Failed to reach the server.", true);
   }
 });
 
@@ -773,10 +881,12 @@ async function openPreviewDialog(seed) {
   previewDialogStatus.textContent = "Loading...";
   previewDialogStatus.classList.remove("error");
   previewDialogImage.removeAttribute("src");
+  previewDialogImageLink.removeAttribute("href");
   previewDialogStats.textContent = "";
   previewDialogPathTabs.innerHTML = "";
   previewDialogPathTabs.hidden = true;
   previewDialogPath.innerHTML = "";
+  previewDialogExplorerLink.hidden = true;
   previewDialog.showModal();
 
   try {
@@ -788,9 +898,29 @@ async function openPreviewDialog(seed) {
       return;
     }
 
+    const pngUrl = `/preview/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}.png`;
+    const alt = `${layout.settingName} — seed "${layout.seed}"`;
+
+    // Preload off-DOM so the visible <img> only ever receives a fully-decoded image - assigning
+    // src directly (the old approach) let the browser show the element mid-load, which is what
+    // produced a brief broken/empty-icon flash before the PNG finished loading.
+    await new Promise((resolve) => {
+      const preloadImg = new Image();
+      preloadImg.onload = () => {
+        previewDialogImage.src = pngUrl;
+        previewDialogImage.alt = alt;
+        resolve();
+      };
+      preloadImg.onerror = () => {
+        previewDialogStatus.textContent = "Failed to load the preview image.";
+        previewDialogStatus.classList.add("error");
+        resolve();
+      };
+      preloadImg.src = pngUrl;
+    });
+
+    previewDialogImageLink.href = `/preview/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}`;
     previewDialogStatus.textContent = "";
-    previewDialogImage.alt = `${layout.settingName} — seed "${layout.seed}"`;
-    previewDialogImage.src = `/preview/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}.png`;
     const tableCount = layout.appliances.filter((a) => a.applianceId === layout.tableApplianceId).length;
     previewDialogStats.textContent = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)`;
   } catch {
@@ -824,14 +954,14 @@ async function loadPreviewDialogPath(seed) {
     }
 
     const { paths } = await response.json();
-    renderPathTabs(paths);
+    renderPathTabs(seed, paths);
   } catch {
     // Best-effort - the layout preview above is the primary content of this dialog, so a failed
     // path fetch just leaves the list empty rather than surfacing a second error state.
   }
 }
 
-function renderPathTabs(paths) {
+function renderPathTabs(seed, paths) {
   previewDialogPathTabs.innerHTML = "";
   previewDialogPathTabs.hidden = paths.length <= 1;
 
@@ -846,21 +976,68 @@ function renderPathTabs(paths) {
         tab.setAttribute("aria-selected", "false");
       }
       button.setAttribute("aria-selected", "true");
-      renderPathDays(path);
+      renderPathDays(seed, path);
     });
     previewDialogPathTabs.appendChild(button);
   });
 
-  renderPathDays(paths[0] ?? { days: [] });
+  renderPathDays(seed, paths[0] ?? { days: [] });
 }
 
-function renderPathDays(path) {
+function renderPathDays(seed, path) {
   previewDialogPath.innerHTML = "";
   for (const { day, cardName } of path.days) {
     const li = document.createElement("li");
     li.textContent = `Day ${day}: ${cardName}`;
     previewDialogPath.appendChild(li);
   }
+  wireExplorerLink(seed, path);
+}
+
+// Lazy by design: no /api/explorer/preload write happens until this button is actually clicked -
+// switching between Path 1/2/3 tabs alone never touches the cache DB.
+function wireExplorerLink(seed, path) {
+  if (!currentSearchPayload || path.days.length === 0) {
+    previewDialogExplorerLink.hidden = true;
+    return;
+  }
+
+  previewDialogExplorerLink.hidden = false;
+  previewDialogExplorerLink.onclick = async () => {
+    const steps = path.days
+      .map(({ day, cardName }) => {
+        const unlock = unlocksForSetting.find((u) => u.name === cardName);
+        return unlock ? { day, cardId: unlock.id } : null;
+      })
+      .filter(Boolean);
+
+    const preload = {
+      dishName: currentSearchPayload.dishName,
+      subOptionChoice: currentSearchPayload.subOptionChoice,
+      heat: currentSearchPayload.heat,
+      tier: currentSearchPayload.tier,
+      franchiseCardNames: currentSearchPayload.franchiseCardNames,
+      cardPack: currentSearchPayload.cardPack,
+      path: steps,
+    };
+
+    try {
+      const response = await fetch("/api/explorer/preload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(preload),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setStatus(body.error ?? "Failed to open this path in the Seed Explorer.", true);
+        return;
+      }
+      const url = `/explorer/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}/${body.hash}`;
+      window.open(url, "_blank", "noopener");
+    } catch {
+      setStatus("Failed to reach the server.", true);
+    }
+  };
 }
 
 function closePreviewDialog() {
@@ -868,6 +1045,7 @@ function closePreviewDialog() {
   // Clears the image so a stale/large decoded image isn't held onto between opens, and so
   // reopening the same seed re-fetches rather than silently reusing browser image-decode state.
   previewDialogImage.removeAttribute("src");
+  previewDialogImageLink.removeAttribute("href");
 }
 
 previewDialogClose.addEventListener("click", closePreviewDialog);
@@ -878,6 +1056,9 @@ previewDialog.addEventListener("click", (event) => {
     closePreviewDialog();
   }
 });
-previewDialog.addEventListener("close", () => previewDialogImage.removeAttribute("src"));
+previewDialog.addEventListener("close", () => {
+  previewDialogImage.removeAttribute("src");
+  previewDialogImageLink.removeAttribute("href");
+});
 
 loadInit().catch(() => setStatus("Failed to load restaurant settings.", true));

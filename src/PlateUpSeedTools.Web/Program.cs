@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Infrastructure.Cache;
 using PlateUpSeedTools.Web.Contracts;
@@ -8,6 +9,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<CacheOptions>(builder.Configuration.GetSection(CacheOptions.SectionName));
 builder.Services.AddSingleton<ICacheStore<LayoutResponse>, SqliteCacheStore<LayoutResponse>>();
+builder.Services.AddSingleton<ICacheStore<CachedSearchResult>, SqliteCacheStore<CachedSearchResult>>();
+builder.Services.AddSingleton<ICacheStore<ExplorerPreload>, SqliteCacheStore<ExplorerPreload>>();
+builder.Services.AddSingleton(sp => new CacheAdmin(sp.GetRequiredService<IOptions<CacheOptions>>().Value));
+builder.Services.AddHostedService<CacheExpiryMonitor>();
 
 var dataRoot = builder.Configuration["DataRoot"] ?? Path.Combine(AppContext.BaseDirectory, "data", "settings");
 builder.Services.AddSingleton(new GameDataRepository(dataRoot));
@@ -31,14 +36,17 @@ app.MapExplorerEndpoints();
 app.MapFallbackToFile("/preview/{*path}", "preview.html");
 
 // Same pattern for the search page: /search and /search/... serve the static search.html, which
-// reads no path state itself (the form starts empty each visit - unlike /preview, a search isn't
-// meant to be hotlinked to a specific in-progress job).
+// reads no path state itself - the form starts empty each visit UNLESS the URL also carries a
+// #<hash> fragment (/search/cached#hash), which search.js reads and resolves client-side via
+// GET /api/search/cached/{hash}; fragments never reach the server, so this route doesn't need to
+// know about that case at all, it's still just "serve search.html for anything under /search".
 app.MapFallbackToFile("/search/{*path}", "search.html");
 
-// Same pattern for the explorer page: /explorer, /explorer/{setting}, and /explorer/{setting}/{seed}
-// all serve the static explorer.html, which prefills only setting+seed from the path client-side
-// (js/explorer.js) - everything else (dish/heat/tier/franchise cards, the in-progress branch tree)
-// starts blank each visit, same rationale as /search.
+// Same pattern for the explorer page: /explorer, /explorer/{setting}, /explorer/{setting}/{seed},
+// and /explorer/{setting}/{seed}/{hash} all serve the static explorer.html, which prefills
+// setting+seed (and, if a hash is present, the full dish/heat/tier/franchise setup + explored path
+// via GET /api/explorer/preload/{hash}) client-side (js/explorer.js) - everything else starts
+// blank each visit with no hash, same rationale as /search.
 app.MapFallbackToFile("/explorer/{*path}", "explorer.html");
 
 app.Run();

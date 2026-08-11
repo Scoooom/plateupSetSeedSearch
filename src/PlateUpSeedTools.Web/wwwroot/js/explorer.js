@@ -15,6 +15,7 @@ const explorerResultEl = document.getElementById("explorer-result");
 const treeViewEl = document.getElementById("tree-view");
 const dayPanelEl = document.getElementById("day-panel");
 const deleteBranchButton = document.getElementById("delete-branch");
+const copyLinkButton = document.getElementById("copy-link");
 
 // VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
 
@@ -263,6 +264,7 @@ function nodeLabel(node) {
 
 function renderTree() {
   deleteBranchButton.disabled = !currentNode || !currentNode.parent;
+  copyLinkButton.disabled = !currentNode || !currentNode.parent;
 
   treeViewEl.innerHTML = "";
   if (!rootNode) {
@@ -467,6 +469,34 @@ function deleteCurrentBranch() {
 
 deleteBranchButton.addEventListener("click", deleteCurrentBranch);
 
+// Lazy by design: no /api/explorer/preload write happens until this is clicked - exploring a tree
+// and never sharing it never touches the cache DB.
+copyLinkButton.addEventListener("click", async () => {
+  if (!currentNode || !currentNode.parent) return;
+
+  const preload = { ...currentSetupPayload(), path: pathToNode(currentNode) };
+  delete preload.setting; // setting/seed travel as URL path segments, not part of the stored preload
+  delete preload.seed;
+
+  try {
+    const response = await fetch("/api/explorer/preload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(preload),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      setStatus(body.error ?? "Failed to create a shareable link.", true);
+      return;
+    }
+    const url = `${location.origin}/explorer/${encodeURIComponent(settingSelect.value)}/${encodeURIComponent(seedInput.value)}/${body.hash}`;
+    await navigator.clipboard.writeText(url);
+    setStatus(`Shareable link copied (expires in ~24h): ${url}`, false);
+  } catch {
+    setStatus("Failed to reach the server.", true);
+  }
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   setStatus("", false);
@@ -488,16 +518,57 @@ form.addEventListener("submit", async (event) => {
 });
 
 // Hotlinking: /explorer/<setting>/<seed> prefills just those two fields (matching /preview's
-// pattern) - dish/heat/tier/franchise cards and the explored tree always start blank, since a
-// mid-exploration path isn't meaningfully URL-shaped.
+// pattern) - dish/heat/tier/franchise cards and the explored tree normally start blank, since a
+// mid-exploration path isn't meaningfully URL-shaped BY ITSELF. A fourth segment,
+// /explorer/<setting>/<seed>/<hash>, is the exception: a short opaque token (never the path/setup
+// data itself - see ExplorerPreload's doc comment) that resolves via GET /api/explorer/preload/
+// {hash} to a full setup + path, which applyPreload below replays.
 function paramsFromPath() {
   const segments = window.location.pathname.split("/").filter(Boolean);
-  return { setting: segments[1] ?? null, seed: segments[2] ?? null };
+  return { setting: segments[1] ?? null, seed: segments[2] ?? null, hash: segments[3] ?? null };
+}
+
+// Prefills the setup fields from a resolved ExplorerPreload, then replays its path day-by-day
+// against the live server (same fetchExplorerDay/getOrCreateChild primitives choose() uses) rather
+// than synthesizing tree nodes client-side - consistent with this page's "server is the source of
+// truth" design. Stops early (keeping whatever replayed successfully) if a step's card turns out
+// not to be offered, rather than hard-failing the whole page.
+async function applyPreload(preload) {
+  dishSelect.value = preload.dishName;
+  updateSubOptionUi();
+  if (preload.subOptionChoice) {
+    const radio = subOptionField.querySelector(`input[value="${preload.subOptionChoice}"]`);
+    if (radio) radio.checked = true;
+  }
+  heatSelect.value = String(preload.heat);
+  tierInput.value = String(preload.tier);
+  cardPackSelect.value = preload.cardPack ?? "";
+
+  franchiseCardRowsEl.innerHTML = "";
+  for (const name of preload.franchiseCardNames ?? []) {
+    addFranchiseCardRow();
+    const rows = franchiseCardRowsEl.querySelectorAll(".dynamic-row");
+    rows[rows.length - 1].querySelector(".franchise-card").value = name;
+  }
+
+  rootNode = makeRootNode();
+  explorerResultEl.hidden = false;
+
+  let node = rootNode;
+  for (const step of preload.path ?? []) {
+    const response = await fetchExplorerDay(node, step.day);
+    if (!response) break;
+    const option = response.options.find((o) => o.id === step.cardId);
+    if (!option) break;
+    node = getOrCreateChild(node, step.day, option, response.sourcePackName);
+  }
+
+  await viewNode(node, node);
 }
 
 async function loadInit() {
   const settings = await fetchSettings();
-  const { setting: settingFromUrl, seed: seedFromUrl } = paramsFromPath();
+  const { setting: settingFromUrl, seed: seedFromUrl, hash } = paramsFromPath();
   populateSettingSelect(settingSelect, settings, settingFromUrl);
   if (seedFromUrl && !validateSeed(seedFromUrl)) {
     seedInput.value = seedFromUrl;
@@ -505,6 +576,19 @@ async function loadInit() {
   await loadUnlocksForSetting(settingSelect.value);
   await loadHeatLevels();
   await loadCardPacks();
+
+  if (hash) {
+    try {
+      const response = await fetch(`/api/explorer/preload/${encodeURIComponent(hash)}`);
+      if (!response.ok) {
+        setStatus("This shared Explorer link has expired or doesn't exist.", true);
+        return;
+      }
+      await applyPreload(await response.json());
+    } catch {
+      setStatus("Failed to reach the server.", true);
+    }
+  }
 }
 
 loadInit().catch(() => setStatus("Failed to load restaurant settings.", true));

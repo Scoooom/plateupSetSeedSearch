@@ -2,6 +2,7 @@ using System.Numerics;
 using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Seeding;
+using PlateUpSeedTools.Infrastructure.Cache;
 using PlateUpSeedTools.Web.Contracts;
 using PlateUpSeedTools.Web.Services;
 
@@ -36,6 +37,8 @@ public static class SearchEndpoints
         app.MapGet("/api/search/{jobId}", GetStatus);
         app.MapPost("/api/search/{jobId}/cancel", CancelSearch);
         app.MapPost("/api/search/path", GetSearchPath);
+        app.MapPost("/api/search/{jobId}/share", ShareSearchResult);
+        app.MapGet("/api/search/cached/{hash}", GetCachedSearchResult);
     }
 
     private static IResult GetUnlocks(string setting, GameDataRepository repo)
@@ -414,6 +417,42 @@ public static class SearchEndpoints
 
     private static IResult CancelSearch(string jobId, SearchJobManager jobs) =>
         jobs.TryCancel(jobId) ? Results.Ok() : Results.NotFound(new { error = $"Unknown search job '{jobId}'." });
+
+    /// <summary>
+    /// Creates a shareable snapshot of a completed search under a fresh random hash - lazy by
+    /// design, nothing is written to the cache DB until this is explicitly called (the "Copy Link"
+    /// button, not something that fires automatically when a search finishes). The request body is
+    /// the client's own form payload resent as-is (SearchJob doesn't retain it server-side today,
+    /// and adding that just for this one-off action isn't worth it - see SearchContracts.cs's
+    /// CachedSearchResult doc comment).
+    /// </summary>
+    private static async Task<IResult> ShareSearchResult(
+        string jobId, SearchStartRequest request, SearchJobManager jobs, ICacheStore<CachedSearchResult> cache)
+    {
+        if (!jobs.TryGetJob(jobId, out var job))
+        {
+            return Results.NotFound(new { error = $"Unknown search job '{jobId}'." });
+        }
+
+        if (job.Status != SearchJobStatus.Completed)
+        {
+            return Results.BadRequest(new { error = "Only a completed search can be shared." });
+        }
+
+        var hash = ShareHash.Generate();
+        var cached = new CachedSearchResult(request, job.Matches.ToList(), job.TotalToCheck, job.CheckedCount, job.MatchCapReached);
+        await cache.SetAsync(hash, cached);
+
+        return Results.Ok(new ShareSearchResultResponse(hash));
+    }
+
+    private static async Task<IResult> GetCachedSearchResult(string hash, ICacheStore<CachedSearchResult> cache)
+    {
+        var cached = await cache.GetAsync(hash);
+        return cached is null
+            ? Results.NotFound(new { error = "This shared search result has expired or doesn't exist." })
+            : Results.Ok(cached);
+    }
 
     /// <summary>Resolves the pack governing card draws: an explicit cardPack schedule slug if given, otherwise the setting's own pack (existing default behavior).</summary>
     private static bool TryResolvePackId(GameDataRepository repo, string setting, string? cardPack, out int packId, out string? error)

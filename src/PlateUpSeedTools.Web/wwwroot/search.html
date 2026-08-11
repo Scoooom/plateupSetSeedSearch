@@ -64,7 +64,7 @@
       </div>
 
       <label class="field checkbox-field full-width">
-        <input type="checkbox" id="stop-after-first-match" />
+        <input type="checkbox" id="stop-after-first-match" checked />
         <span>Stop after first match</span>
       </label>
 
@@ -125,6 +125,7 @@
       </div>
       <p id="job-stats" class="job-stats"></p>
       <button type="button" id="copy-matches" class="link-button" hidden>Copy all matches</button>
+      <button type="button" id="copy-link" class="link-button" hidden>Copy Link</button>
       <ul id="matches-list" class="matches-list"></ul>
     </section>
 
@@ -134,10 +135,13 @@
         <button type="button" id="preview-dialog-close" class="link-button">Close</button>
       </div>
       <p id="preview-dialog-status" class="status"></p>
-      <img id="preview-dialog-image" class="layout-image" alt="" />
+      <a id="preview-dialog-image-link" target="_blank" rel="noopener">
+        <img id="preview-dialog-image" class="layout-image" alt="" />
+      </a>
       <p id="preview-dialog-stats" class="job-stats"></p>
       <div id="preview-dialog-path-tabs" class="card-path-tabs" role="tablist" hidden></div>
       <ol id="preview-dialog-path" class="card-path-list"></ol>
+      <button type="button" id="preview-dialog-explorer-link" class="link-button" hidden>Open this path in Seed Explorer</button>
     </dialog>
   </main>
 

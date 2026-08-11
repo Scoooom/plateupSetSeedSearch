@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Seeding;
+using PlateUpSeedTools.Infrastructure.Cache;
 using PlateUpSeedTools.Web.Contracts;
 
 namespace PlateUpSeedTools.Web.Endpoints;
@@ -20,6 +21,27 @@ public static partial class ExplorerEndpoints
     public static void MapExplorerEndpoints(this WebApplication app)
     {
         app.MapPost("/api/explorer/day", SimulateDay);
+        app.MapPost("/api/explorer/preload", SavePreload);
+        app.MapGet("/api/explorer/preload/{hash}", GetPreload);
+    }
+
+    /// <summary>
+    /// Lazy by design, same as SearchEndpoints.ShareSearchResult - only writes to the cache DB when
+    /// explicitly called (a "Copy Link"/"Open in Seed Explorer" click), never automatically.
+    /// </summary>
+    private static async Task<IResult> SavePreload(ExplorerPreload preload, ICacheStore<ExplorerPreload> cache)
+    {
+        var hash = ShareHash.Generate();
+        await cache.SetAsync(hash, preload);
+        return Results.Ok(new SaveExplorerPreloadResponse(hash));
+    }
+
+    private static async Task<IResult> GetPreload(string hash, ICacheStore<ExplorerPreload> cache)
+    {
+        var preload = await cache.GetAsync(hash);
+        return preload is null
+            ? Results.NotFound(new { error = "This shared Explorer link has expired or doesn't exist." })
+            : Results.Ok(preload);
     }
 
     private static IResult SimulateDay(ExplorerDayRequest request, GameDataRepository repo)
