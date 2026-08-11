@@ -278,22 +278,20 @@ public static class CardExtractor
 
     /// <summary>
     /// Writes data/cards/packs.json - the UnlockPack graph (Default Composite Pack, March/June/
-    /// Halloween/Autumn/January/Christmas Packs, and their sub-packs, plus the two known heat-bonus
-    /// packs). Composite packs' Packs list is plain YAML (extracted generically below);
+    /// Halloween/Autumn/January/Christmas/February Packs, and their sub-packs, plus the two known
+    /// heat-bonus packs). Composite packs' Packs list is plain YAML (extracted generically below);
     /// ModularUnlockPack internals (Filter/Sorters/ConditionalOptions) live inside an Odin-serialized
     /// blob with no object references to walk, so this is a hand-curated table decoded via the Odin
     /// partial-field-read technique documented in game-domain-knowledge.md, not a generic parse -
     /// extend this table (not a generic decoder) if a new setting needs a pack not listed here.
     ///
-    /// `santa-workshop`'s Christmas Pack (including its `Christmas Special Card` sub-pack, a
-    /// `UnlockSelectorForcedCard`+`UnlockSetFixed` forced-single-card selector - see
-    /// UnlockPackEvaluator.CandidateSource) is now decoded and wired up.
-    ///
-    /// NOT included: February Pack's `February Special Card` sub-pack - it uses the same
-    /// `UnlockSelectorForcedCard`/`UnlockSetFixed` shape Christmas Special Card does, but its
-    /// specific `Sets`/fixed-card-list bytes haven't been decoded yet (a different asset, needs its
-    /// own byte-level read even though the selector kind is now modeled). Don't wire up February
-    /// card-search support until that's done.
+    /// `santa-workshop`'s Christmas Pack and `february`'s February Pack (real in-game name
+    /// "Romantic") are both decoded and wired up - each has a "forced special card" sub-pack
+    /// (`Christmas Special Card`/`February Special Card`, both `UnlockSelectorForcedCard`+
+    /// `UnlockSetFixed` forced-single-card selectors - see UnlockPackEvaluator.CandidateSource).
+    /// The two are byte-identical in shape (empty Sorters, Day=0 condition, same Filter flags) but
+    /// NOT in sub-pack try-order: Christmas Special Card is tried FIRST in its composite, February
+    /// Special Card LAST - confirmed from each asset directly, not assumed symmetric.
     /// </summary>
     public static void WritePacksFile(GuidResolver resolver, string assetsRoot, string outputRoot)
     {
@@ -337,6 +335,15 @@ public static class CardExtractor
         var christmasSpecialCardId = FindId("Christmas Special Card.asset");
         var christmasConveyorsId = FindId("Christmas - Conveyors.asset");
 
+        // February Pack, decoded the same way immediately after (same "forcedCard" selector shape,
+        // byte-identical Filter/empty-Sorters/Day=0 structure to Christmas Special Card - see
+        // February Special Card's own doc comment below for the one real difference: its sub-pack
+        // TRY ORDER in the composite is different, confirmed by reading the asset directly rather
+        // than assumed from Christmas's pattern).
+        var februaryPackId = FindId("February Pack.asset");
+        var februarySpecialCardId = FindId("February Special Card.asset");
+        var couplesId = FindId("Couples.asset");
+
         // Default UnlockSorterPriority config shared by the standard schedule packs (Franchise/Normal/
         // Theme): PriorityProbability=0.5, PrioritiseRequirements=true, empty Groups/DishTypes -
         // decoded via the Odin partial-read technique, PrioritiseRequirements/Groups/DishTypes assumed
@@ -369,6 +376,10 @@ public static class CardExtractor
             [autumnPackId.ToString()] = new { name = "Autumn Pack", type = "composite", subPackIds = new[] { franchiseId, autumnDishCardsId, themeId, normalId } },
             [januaryPackId.ToString()] = new { name = "January Pack", type = "composite", subPackIds = new[] { franchiseId, januaryCardsId, themeId } },
             [christmasPackId.ToString()] = new { name = "Christmas Pack", type = "composite", subPackIds = new[] { christmasSpecialCardId, franchiseId, normalId, themeId } },
+            // Order confirmed from the asset directly (Packs list): Franchise/Normal/Theme come
+            // FIRST here, February Special Card LAST - the opposite try-order from Christmas Pack,
+            // where its special card is first. Don't assume symmetry between the two.
+            [februaryPackId.ToString()] = new { name = "February Pack", type = "composite", subPackIds = new[] { franchiseId, normalId, themeId, februarySpecialCardId } },
             [franchiseId.ToString()] = new
             {
                 name = "Franchise Cards Pack", type = "modular",
@@ -478,6 +489,28 @@ public static class CardExtractor
                     ignoreFilterByHasMain = false,
                 },
             },
+            [februarySpecialCardId.ToString()] = new
+            {
+                name = "February Special Card", type = "modular",
+                // Forces "Couples" (Unlock ID -2106646073, real display name matches the asset
+                // filename here) - byte-identical Selector/Condition/empty-Sorters shape to
+                // Christmas Special Card, decoded the same way (see that entry's comments for the
+                // technique). Day 0 = the prep day before day 1; not independently re-confirmed for
+                // February specifically (the Christmas Day=0 reading WAS player-confirmed), but the
+                // byte structure is identical, so treated as the same mechanic pending contradiction.
+                selector = new { kind = "forcedCard", fixedCardIds = new[] { couplesId } },
+                condition = new { kind = "once", day = 0 },
+                filter = new
+                {
+                    ignoreUnlockability = true,
+                    ignoreFranchiseTier = true,
+                    ignoreDuplicateFilter = false,
+                    ignoreRequirements = true,
+                    allowBaseDishes = false,
+                    ignoreBlocksOtherFood = false,
+                    ignoreFilterByHasMain = false,
+                },
+            },
         };
 
         var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
@@ -492,14 +525,13 @@ public static class CardExtractor
         // reintroducing near-duplicate settings into the picker). `Bakery`/`City`/`Alpine`/`Country`
         // are deliberately omitted - confirmed byte-identical to Default Composite Pack (Bakery) or
         // UnlockPack unset entirely (City/Alpine/Country), so "normal" already covers them.
-        // `February` is deliberately omitted too - see WritePacksFile's doc comment.
         // displayName values below are the setting's real in-game English name (resolved via the
         // same per-locale localization-asset lookup SettingExtractor.ResolveEnglishDisplayName
         // uses, not the internal dev/asset filename) - verified against every locale for each one,
-        // not just assumed from the slug. "january"/"coffeeshop" are internal dev names ONLY;
-        // real in-game names are "Lake"/"Coffee Shop" respectively (user-reported: the January
-        // schedule was showing as "Lake" in a real playthrough, prompting this re-check of every
-        // entry here rather than just the one reported). "turbo"/"halloween"/"autumn" genuinely do
+        // not just assumed from the slug. "january"/"coffeeshop"/"february" are internal dev names
+        // ONLY; real in-game names are "Lake"/"Coffee Shop"/"Romantic" respectively (user-reported:
+        // the January schedule was showing as "Lake" in a real playthrough, prompting a re-check of
+        // every entry here, not just the one reported). "turbo"/"halloween"/"autumn" genuinely do
         // match their real in-game names (also verified), so those stay as-is.
         var schedules = new object[]
         {
@@ -509,6 +541,7 @@ public static class CardExtractor
             new { slug = "halloween", displayName = "Halloween", packId = halloweenPackId },
             new { slug = "autumn", displayName = "Autumn", packId = autumnPackId },
             new { slug = "january", displayName = "Lake", packId = januaryPackId },
+            new { slug = "february", displayName = "Romantic", packId = februaryPackId },
         };
         File.WriteAllText(Path.Combine(outputRoot, "cards", "card-schedules.json"), JsonSerializer.Serialize(schedules, jsonOptions));
         Console.WriteLine($"  Wrote {schedules.Length} card schedule(s) to cards/card-schedules.json");

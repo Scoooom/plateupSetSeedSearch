@@ -65,6 +65,16 @@
       786043106
     ]
   },
+  "-654728586": {
+    "name": "February Pack",
+    "type": "composite",
+    "subPackIds": [
+      1355831133,
+      1659224512,
+      786043106,
+      2136512392
+    ]
+  },
   "1355831133": {
     "name": "Franchise Cards Pack",
     "type": "modular",
@@ -379,6 +389,29 @@
       "kind": "forcedCard",
       "fixedCardIds": [
         -361249036
+      ]
+    },
+    "condition": {
+      "kind": "once",
+      "day": 0
+    },
+    "filter": {
+      "ignoreUnlockability": true,
+      "ignoreFranchiseTier": true,
+      "ignoreDuplicateFilter": false,
+      "ignoreRequirements": true,
+      "allowBaseDishes": false,
+      "ignoreBlocksOtherFood": false,
+      "ignoreFilterByHasMain": false
+    }
+  },
+  "2136512392": {
+    "name": "February Special Card",
+    "type": "modular",
+    "selector": {
+      "kind": "forcedCard",
+      "fixedCardIds": [
+        -2106646073
       ]
     },
     "condition": {
