@@ -46,11 +46,12 @@ public static partial class LayoutEndpoints
         // below for the same URL shape, regardless of registration order.
         app.MapGet("/preview/{setting}/{seed}.png", GetLayoutPng);
 
-        // Real (non-fallback) HTML endpoint for the bare hotlink, so it can inject an og:image tag
-        // pointing at the .png above - Discord (and similar link-unfurlers) can then show *a* image
-        // embed for a bare share, even though only a true image/* response gets the fully
-        // chrome-less embed treatment. Takes over from Program.cs's MapFallbackToFile for this exact
-        // 2-segment shape, so it must reproduce "just serve the static file" for invalid input itself.
+        // Real (non-fallback) HTML endpoint for the bare hotlink, so it can inject og:title/
+        // og:description/og:image tags pointing at the .png above - Discord (and similar
+        // link-unfurlers) then show a rich embed with the setting name, seed, dimensions, and table
+        // count as real copyable text, not just a bare image. Takes over from Program.cs's
+        // MapFallbackToFile for this exact 2-segment shape, so it must reproduce "just serve the
+        // static file" for invalid input itself.
         app.MapGet("/preview/{setting}/{seed}", GetPreviewHtml);
     }
 
@@ -81,33 +82,34 @@ public static partial class LayoutEndpoints
         string setting, string seed, HttpContext httpContext, GameDataRepository repo,
         ICacheStore<LayoutResponse> cache, IWebHostEnvironment env)
     {
-        var isValidSetting = repo.ListSettings().Any(s => s.Slug == setting);
-        var isValidSeed = ValidSeedPattern().IsMatch(seed);
-
-        // Discord's link-unfurl crawler identifies itself via this substring (its real UA is
-        // something like "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)").
-        // Serving it the PNG directly - rather than this HTML page with an og:image tag - gets the
-        // fully chrome-less "just the image" embed that Discord only gives to genuine image/*
-        // responses (see GetLayoutPng); an og:image-tagged HTML page still gets wrapped in Discord's
-        // rich-embed chrome (title bar/site name). User-Agent sniffing is inherently
-        // spoofable/fragile - bots can change their UA without notice - so this is purely a
-        // best-effort embed-quality enhancement, never a security boundary. A real browser hitting
-        // this same URL always gets the interactive HTML page below.
-        var userAgent = httpContext.Request.Headers.UserAgent.ToString();
-        if (isValidSetting && isValidSeed && userAgent.Contains("Discordbot", StringComparison.OrdinalIgnoreCase))
-        {
-            return await GetLayoutPng(setting, seed, httpContext, repo, cache, env);
-        }
-
         var html = File.ReadAllText(Path.Combine(env.WebRootPath, "preview.html"));
-        if (isValidSetting && isValidSeed)
+
+        // Every request - crawler or real browser - gets this same HTML with a full set of Open
+        // Graph tags (title/description/image), rather than special-casing Discord's crawler UA to
+        // hand it the raw PNG. The chrome-less "just the image" embed that got is no longer worth
+        // it: it meant the seed itself was only readable by opening the link and hand-selecting a
+        // substring out of the URL. A normal rich embed costs a title bar but makes the seed, tile
+        // dimensions, and table count plain copyable text in the embed itself.
+        var (layout, _) = await ResolveLayout(setting, seed, repo, cache);
+        if (layout is not null)
         {
             var request = httpContext.Request;
-            var imageUrl = $"{request.Scheme}://{request.Host}/preview/{Uri.EscapeDataString(setting)}/{Uri.EscapeDataString(seed.ToLowerInvariant())}.png";
-            // og:title/og:description are deliberately omitted - either would reintroduce the
-            // title-bar chrome around the embed that a bare-URL share was hoping to minimize (see
-            // project plan's "Open Graph tags on the bare URL" section).
-            var ogTags = $"""<meta property="og:image" content="{imageUrl}" /><meta property="og:type" content="website" />""";
+            var normalizedSeed = seed.ToLowerInvariant();
+            var imageUrl = $"{request.Scheme}://{request.Host}/preview/{Uri.EscapeDataString(setting)}/{Uri.EscapeDataString(normalizedSeed)}.png";
+            var tableCount = layout.Appliances.Count(a => a.ApplianceId == layout.TableApplianceId);
+
+            var title = System.Net.WebUtility.HtmlEncode($"{layout.SettingName} — PlateUp Seed Preview");
+            var description = System.Net.WebUtility.HtmlEncode(
+                $"Seed: {layout.Seed} · {layout.Width}×{layout.Height} tiles · {tableCount} dining table{(tableCount == 1 ? "" : "s")}");
+
+            var ogTags = $"""
+                <meta property="og:title" content="{title}" />
+                <meta property="og:description" content="{description}" />
+                <meta property="og:image" content="{imageUrl}" />
+                <meta property="og:type" content="website" />
+                <meta property="og:site_name" content="PlateUp Seed Tools" />
+                <meta name="twitter:card" content="summary_large_image" />
+                """;
             html = html.Replace(OgMetaMarker, ogTags);
         }
 
