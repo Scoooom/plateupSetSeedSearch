@@ -475,6 +475,27 @@ button[type="submit"]:hover {
   outline: none;
 }
 
+.card-path-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+}
+
+.card-path-tabs button {
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.card-path-tabs button[aria-selected="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .card-path-list {
   margin: 0.5rem 0 0;
   padding-left: 1.4rem;

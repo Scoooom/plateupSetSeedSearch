@@ -121,26 +121,104 @@ public static class SeedSearcher
         return true;
     }
 
+    // Safety valve for ResolveCardPaths' backtracking search - bounds worst-case work (many filler
+    // days where most alternate branches dead-end before reaching a later target) so a single
+    // dialog-open can't run away. The guaranteed-valid canonical path (Unlock1Id at every filler
+    // day, matching Matches' own policy) is always explored first, so this only ever costs "fewer
+    // than maxPaths alternates found," never "no path at all."
+    private const int MaxPathSearchNodes = 20_000;
+
     /// <summary>
-    /// Replays the same day-by-day simulation <see cref="Matches"/> used to confirm a match, but
-    /// returns what was actually picked each day instead of discarding it - lets a caller show the
-    /// user a concrete card to pick for every day, including "filler" days that had no explicit
-    /// target (which matters for schedules like "turbo" that draw every day, not just every 3rd) -
-    /// see SearchEndpoints' POST /api/search/path. Uses the exact same filler policy (prefer the
-    /// day's target if offered, otherwise Unlock1Id) as Matches so the reconstructed path is
-    /// guaranteed consistent with why this seed matched in the first place.
+    /// Finds up to <paramref name="maxPaths"/> distinct complete day-by-day card-pick sequences that
+    /// all reproduce this seed's match - not just the single filler-policy path <see cref="Matches"/>
+    /// itself used. Branches only on "filler" days (no explicit target) that offer two cards: which
+    /// one is picked doesn't matter for that day, but CAN change what's offered/eligible on LATER
+    /// days (Requires/BlockedBy - see UnlockPackEvaluator), so not every branch reaches a full valid
+    /// completion - this backtracks and discards dead branches rather than assuming both options are
+    /// always interchangeable. Depth-first, Unlock1Id tried before Unlock2Id at every branch point,
+    /// so the first result is always the same canonical path Matches confirmed the seed with; extra
+    /// results are alternate ways to reach the same targets. See SearchEndpoints' POST /api/search/path.
     /// </summary>
-    public static IReadOnlyList<(int Day, int? CardId)> ResolveCardPath(
+    public static IReadOnlyList<IReadOnlyList<(int Day, int? CardId)>> ResolveCardPaths(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier)
+        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier, int maxPaths)
     {
-        var path = new List<(int Day, int? CardId)>();
-        foreach (var (day, _, actual) in Walk(repo, seed, settingPackId, setup, dayTargets, maxDay, tier))
+        var results = new List<IReadOnlyList<(int Day, int? CardId)>>();
+        var current = new List<(int Day, int? CardId)>();
+        var nodesVisited = 0;
+        Backtrack(
+            repo, seed, settingPackId, setup, dayTargets, maxDay, tier,
+            day: 1, ownedIds: new HashSet<int>(setup.InitiallyOwnedIds),
+            current, results, maxPaths, ref nodesVisited);
+        return results;
+    }
+
+    private static void Backtrack(
+        GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
+        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier, int day, HashSet<int> ownedIds,
+        List<(int Day, int? CardId)> current, List<IReadOnlyList<(int Day, int? CardId)>> results,
+        int maxPaths, ref int nodesVisited)
+    {
+        if (results.Count >= maxPaths || nodesVisited >= MaxPathSearchNodes)
         {
-            path.Add((day, actual.SelectedId));
+            return;
         }
 
-        return path;
+        if (day > maxDay)
+        {
+            results.Add(current.ToList());
+            return;
+        }
+
+        nodesVisited++;
+
+        // A fresh, single-use simulator just to read this day's offer for the current branch's
+        // owned-set - the decline policy (returns null) means it never mutates anything we keep.
+        var peekSetup = new ResolvedRunSetup(new HashSet<int>(ownedIds), setup.BonusPackIds);
+        var offered = default(UnlockOptions);
+        new CardDrawSimulator(repo, seed, settingPackId, peekSetup, tier).SimulateDay(day, o =>
+        {
+            offered = o;
+            return null;
+        });
+
+        if (offered.Unlock1Id is null)
+        {
+            current.Add((day, null));
+            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, day + 1, ownedIds, current, results, maxPaths, ref nodesVisited);
+            current.RemoveAt(current.Count - 1);
+            return;
+        }
+
+        List<int> candidates;
+        if (dayTargets.TryGetValue(day, out var target))
+        {
+            if (offered.Unlock1Id != target && offered.Unlock2Id != target)
+            {
+                return; // Dead end: this branch's owned-set no longer offers the target on this day.
+            }
+
+            candidates = [target];
+        }
+        else
+        {
+            candidates = offered.Unlock2Id is int u2 && u2 != offered.Unlock1Id
+                ? [offered.Unlock1Id.Value, u2]
+                : [offered.Unlock1Id.Value];
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (results.Count >= maxPaths || nodesVisited >= MaxPathSearchNodes)
+            {
+                return;
+            }
+
+            current.Add((day, candidate));
+            var nextOwned = new HashSet<int>(ownedIds) { candidate };
+            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, day + 1, nextOwned, current, results, maxPaths, ref nodesVisited);
+            current.RemoveAt(current.Count - 1);
+        }
     }
 
     private static IEnumerable<(int Day, int? TargetId, CardDayResult Actual)> Walk(

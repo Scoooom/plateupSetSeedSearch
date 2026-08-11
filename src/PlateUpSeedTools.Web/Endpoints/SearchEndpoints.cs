@@ -21,6 +21,10 @@ public static class SearchEndpoints
     private const int FranchiseCardsPackId = 1355831133;
     private const int ThemeCardsPackId = 786043106;
 
+    // How many alternate card-pick paths GetSearchPath surfaces per matched seed - see
+    // SeedSearcher.ResolveCardPaths's doc comment for why "all of them" isn't offered.
+    private const int MaxCardPaths = 3;
+
     public static void MapSearchEndpoints(this WebApplication app)
     {
         app.MapGet("/api/search/unlocks", GetUnlocks);
@@ -396,14 +400,16 @@ public static class SearchEndpoints
         }
 
         var maxDay = targetIds.Count == 0 ? 0 : targetIds.Keys.Max();
-        var path = SeedSearcher.ResolveCardPath(repo, new Seed(request.Seed), settingPackId, setup, targetIds, maxDay, request.Tier);
+        var paths = SeedSearcher.ResolveCardPaths(repo, new Seed(request.Seed), settingPackId, setup, targetIds, maxDay, request.Tier, MaxCardPaths);
 
-        var days = path
-            .Where(entry => entry.CardId is not null)
-            .Select(entry => new CardPathEntryDto(entry.Day, repo.GetUnlock(entry.CardId!.Value).Name))
+        var pathDtos = paths
+            .Select(path => new CardPathDto(path
+                .Where(entry => entry.CardId is not null)
+                .Select(entry => new CardPathEntryDto(entry.Day, repo.GetUnlock(entry.CardId!.Value).Name))
+                .ToList()))
             .ToList();
 
-        return Results.Ok(new SearchPathResponse(days));
+        return Results.Ok(new SearchPathResponse(pathDtos));
     }
 
     private static IResult CancelSearch(string jobId, SearchJobManager jobs) =>

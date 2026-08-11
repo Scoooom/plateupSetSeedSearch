@@ -31,6 +31,7 @@ const previewDialogClose = document.getElementById("preview-dialog-close");
 const previewDialogStatus = document.getElementById("preview-dialog-status");
 const previewDialogImage = document.getElementById("preview-dialog-image");
 const previewDialogStats = document.getElementById("preview-dialog-stats");
+const previewDialogPathTabs = document.getElementById("preview-dialog-path-tabs");
 const previewDialogPath = document.getElementById("preview-dialog-path");
 
 // VALID_SEED/fetchSettings/populateSettingSelect come from shared.js.
@@ -773,6 +774,8 @@ async function openPreviewDialog(seed) {
   previewDialogStatus.classList.remove("error");
   previewDialogImage.removeAttribute("src");
   previewDialogStats.textContent = "";
+  previewDialogPathTabs.innerHTML = "";
+  previewDialogPathTabs.hidden = true;
   previewDialogPath.innerHTML = "";
   previewDialog.showModal();
 
@@ -802,7 +805,9 @@ async function openPreviewDialog(seed) {
 // Shows the full card pick for every drawing day up to the last target, not just the days the
 // user explicitly targeted - schedules like "turbo" draw a card every day, so without this a
 // sparse-target search (e.g. day 1 and day 10 only) left days 2-9 with no way to know what to
-// pick. See SeedSearcher.ResolveCardPath's doc comment for the exact filler policy used.
+// pick. There's often more than one valid way to fill those in-between days (either offered card
+// on a non-target day can be fine), so the server returns up to a few alternate complete paths
+// (see SeedSearcher.ResolveCardPaths) - rendered here as tabs when there's more than one.
 async function loadPreviewDialogPath(seed) {
   if (!currentSearchPayload) {
     return;
@@ -818,16 +823,43 @@ async function loadPreviewDialogPath(seed) {
       return;
     }
 
-    const { days } = await response.json();
-    previewDialogPath.innerHTML = "";
-    for (const { day, cardName } of days) {
-      const li = document.createElement("li");
-      li.textContent = `Day ${day}: ${cardName}`;
-      previewDialogPath.appendChild(li);
-    }
+    const { paths } = await response.json();
+    renderPathTabs(paths);
   } catch {
     // Best-effort - the layout preview above is the primary content of this dialog, so a failed
     // path fetch just leaves the list empty rather than surfacing a second error state.
+  }
+}
+
+function renderPathTabs(paths) {
+  previewDialogPathTabs.innerHTML = "";
+  previewDialogPathTabs.hidden = paths.length <= 1;
+
+  paths.forEach((path, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.role = "tab";
+    button.textContent = `Path ${index + 1}`;
+    button.setAttribute("aria-selected", index === 0 ? "true" : "false");
+    button.addEventListener("click", () => {
+      for (const tab of previewDialogPathTabs.children) {
+        tab.setAttribute("aria-selected", "false");
+      }
+      button.setAttribute("aria-selected", "true");
+      renderPathDays(path);
+    });
+    previewDialogPathTabs.appendChild(button);
+  });
+
+  renderPathDays(paths[0] ?? { days: [] });
+}
+
+function renderPathDays(path) {
+  previewDialogPath.innerHTML = "";
+  for (const { day, cardName } of path.days) {
+    const li = document.createElement("li");
+    li.textContent = `Day ${day}: ${cardName}`;
+    previewDialogPath.appendChild(li);
   }
 }
 

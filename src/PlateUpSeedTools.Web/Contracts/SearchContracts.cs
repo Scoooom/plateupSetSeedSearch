@@ -107,4 +107,13 @@ public sealed record SearchPathRequest(
 
 public sealed record CardPathEntryDto(int Day, string CardName);
 
-public sealed record SearchPathResponse(IReadOnlyList<CardPathEntryDto> Days);
+/// <summary>One complete, self-consistent day-by-day pick sequence - see SeedSearcher.ResolveCardPaths.</summary>
+public sealed record CardPathDto(IReadOnlyList<CardPathEntryDto> Days);
+
+/// <summary>
+/// Up to a handful of alternate valid paths, not just one - non-target ("filler") days can often be
+/// filled with more than one card without breaking later targets, so there's rarely only one way to
+/// play a matched seed. Capped (currently 3) rather than exhaustive - see
+/// SeedSearcher.ResolveCardPaths's doc comment for why "all of them" isn't practical in general.
+/// </summary>
+public sealed record SearchPathResponse(IReadOnlyList<CardPathDto> Paths);
