@@ -32,4 +32,8 @@ public sealed record UnlockDto(
     string Kind,
     bool HasSubOptions,
     string? OptionCard1Name,
-    string? OptionCard2Name);
+    string? OptionCard2Name,
+    bool IsStartingDish);
+
+/// <summary>Level is signed - positive for Heat N, negative for Chill N (magnitude = N), matching RunSetup's heatLevel parameter directly.</summary>
+public sealed record HeatLevelDto(int Level, string Name);

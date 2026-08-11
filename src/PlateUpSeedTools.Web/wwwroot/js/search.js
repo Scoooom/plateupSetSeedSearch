@@ -3,7 +3,7 @@ const dishSelect = document.getElementById("dish-select");
 const subOptionField = document.getElementById("sub-option-field");
 const subOption1Label = document.getElementById("sub-option-1-label");
 const subOption2Label = document.getElementById("sub-option-2-label");
-const heatInput = document.getElementById("heat-input");
+const heatSelect = document.getElementById("heat-select");
 const tierInput = document.getElementById("tier-input");
 const alphabetInput = document.getElementById("alphabet-input");
 const lengthInput = document.getElementById("length-input");
@@ -128,7 +128,7 @@ async function loadUnlocksForSetting(setting) {
   unlocksForSetting = unlocks;
 
   dishSelect.innerHTML = "";
-  for (const unlock of unlocks.filter((u) => u.kind === "Dish")) {
+  for (const unlock of unlocks.filter((u) => u.isStartingDish)) {
     const option = document.createElement("option");
     option.value = unlock.name;
     option.textContent = unlock.name;
@@ -137,6 +137,40 @@ async function loadUnlocksForSetting(setting) {
 
   updateSubOptionUi();
   refreshCardSelectOptions();
+}
+
+// Not setting-dependent (heat/chill cards are the same across every restaurant setting), so this
+// is loaded once, not refetched when settingSelect changes.
+async function loadHeatLevels() {
+  const response = await fetch("/api/search/heat-levels");
+  const levels = await response.json();
+
+  heatSelect.innerHTML = "";
+  let noneInserted = false;
+  const insertNone = () => {
+    const option = document.createElement("option");
+    option.value = "0";
+    option.textContent = "0 — None";
+    heatSelect.appendChild(option);
+    noneInserted = true;
+  };
+
+  // levels is sorted ascending by signed level (Chill 3..1, then Heat 1..15) - insert "None"
+  // where 0 would naturally sit in that order rather than always at the front.
+  for (const level of levels) {
+    if (!noneInserted && level.level >= 0) {
+      insertNone();
+    }
+    const option = document.createElement("option");
+    option.value = String(level.level);
+    const kind = level.level > 0 ? "Heat" : "Chill";
+    option.textContent = `${kind} ${Math.abs(level.level)} — ${level.name}`;
+    heatSelect.appendChild(option);
+  }
+  if (!noneInserted) {
+    insertNone();
+  }
+  heatSelect.value = "0";
 }
 
 dishSelect.addEventListener("change", updateSubOptionUi);
@@ -148,6 +182,7 @@ async function loadInit() {
   const settings = await fetchSettings();
   populateSettingSelect(settingSelect, settings);
   await loadUnlocksForSetting(settingSelect.value);
+  await loadHeatLevels();
   addDayTargetRow();
 }
 
@@ -268,7 +303,7 @@ form.addEventListener("submit", async (event) => {
     setting: settingSelect.value,
     dishName: dishSelect.value,
     subOptionChoice: subOptionField.hidden ? null : Number(checkedSubOption?.value ?? 1),
-    heat: Number(heatInput.value),
+    heat: Number(heatSelect.value),
     tier: Number(tierInput.value),
     franchiseCardNames,
     dayTargets,

@@ -12,6 +12,7 @@ public static class SearchEndpoints
     public static void MapSearchEndpoints(this WebApplication app)
     {
         app.MapGet("/api/search/unlocks", GetUnlocks);
+        app.MapGet("/api/search/heat-levels", GetHeatLevels);
         app.MapPost("/api/search", StartSearch);
         app.MapGet("/api/search/{jobId}", GetStatus);
         app.MapPost("/api/search/{jobId}/cancel", CancelSearch);
@@ -30,9 +31,23 @@ public static class SearchEndpoints
             u.Kind,
             u.HasSubOptions,
             u.OptionCard1Id is int o1 ? repo.GetUnlock(o1).Name : null,
-            u.OptionCard2Id is int o2 ? repo.GetUnlock(o2).Name : null)).ToList();
+            u.OptionCard2Id is int o2 ? repo.GetUnlock(o2).Name : null,
+            u.IsBaseDish && u.IsUnlockable)).ToList();
 
         return Results.Ok(dtos);
+    }
+
+    // Not setting-scoped - heat/chill cards are the same regardless of restaurant setting (see
+    // RunSetup.Resolve, which takes heatLevel independent of any setting parameter).
+    private static IResult GetHeatLevels(GameDataRepository repo)
+    {
+        var levels = repo.AllUnlocksOrderedById
+            .Where(u => u.HeatCardDisplayedNumber != 0)
+            .Select(u => new HeatLevelDto(u.HeatCardDisplayedNumber, u.Name))
+            .OrderBy(h => h.Level)
+            .ToList();
+
+        return Results.Ok(levels);
     }
 
     private static IResult StartSearch(SearchStartRequest request, GameDataRepository repo, SearchJobManager jobs)

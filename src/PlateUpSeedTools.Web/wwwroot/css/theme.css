@@ -27,6 +27,15 @@
   box-sizing: border-box;
 }
 
+/* Without this, any element that both has the `hidden` attribute AND a class setting an explicit
+   `display` (e.g. `.field { display: flex }`) stays visible - `[hidden] { display: none }` is a
+   browser default with the same specificity as a single class selector, so a same-specificity
+   author rule appearing later in the cascade wins and silently defeats `hidden`. Restores the
+   attribute's actual meaning regardless of what display any other class sets. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
