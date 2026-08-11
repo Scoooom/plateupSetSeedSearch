@@ -181,15 +181,19 @@ public static class LayoutImageRenderer
                 ? FrontDoorThicknessPx
                 : FeatureThicknessPx;
 
-            // North is up (screen y decreases toward larger tile.Y - see CellOrigin) - matches
-            // app.js:81-86's edgeClassFor exactly.
+            // North is up (screen y decreases toward larger tile.Y - see CellOrigin). Centered ON
+            // the shared boundary between Tile1/Tile2 (half the bar's thickness on each tile's
+            // side), not flush against one edge of Tile1's own cell - the latter used to make the
+            // bar hug whichever tile happened to be Tile1 in the underlying data, which isn't
+            // consistent from one feature to the next, so visually similar doors/hatches looked
+            // like they were "randomly picking a side" instead of all centering the same way.
             var rect = dy > 0
-                ? SKRect.Create(x, y, TileSizePx, thickness)
+                ? SKRect.Create(x, y - thickness / 2f, TileSizePx, thickness)
                 : dy < 0
-                    ? SKRect.Create(x, y + TileSizePx - thickness, TileSizePx, thickness)
+                    ? SKRect.Create(x, y + TileSizePx - thickness / 2f, TileSizePx, thickness)
                     : dx > 0
-                        ? SKRect.Create(x + TileSizePx - thickness, y, thickness, TileSizePx)
-                        : SKRect.Create(x, y, thickness, TileSizePx);
+                        ? SKRect.Create(x + TileSizePx - thickness / 2f, y, thickness, TileSizePx)
+                        : SKRect.Create(x - thickness / 2f, y, thickness, TileSizePx);
 
             paint.Color = LayoutColors.FeatureColor(feature.Type);
             canvas.DrawRoundRect(rect, FeatureRadiusPx, FeatureRadiusPx, paint);
