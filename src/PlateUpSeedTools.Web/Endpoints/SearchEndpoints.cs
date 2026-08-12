@@ -16,12 +16,6 @@ public static class SearchEndpoints
     // is just this same mechanism with a cap of 1.
     private const long DefaultMatchCap = 500;
 
-    // AssetReference IDs for the two hand-curated packs whose eligibility rules
-    // (Requires/BlockedBy/tier/unlockability) drive the franchise-candidates endpoint below - see
-    // data/settings/cards/packs.json.
-    private const int FranchiseCardsPackId = 1355831133;
-    private const int ThemeCardsPackId = 786043106;
-
     // How many alternate card-pick paths GetSearchPath surfaces per matched seed - see
     // SeedSearcher.ResolveCardPaths's doc comment for why "all of them" isn't offered.
     private const int MaxCardPaths = 3;
@@ -67,12 +61,17 @@ public static class SearchEndpoints
     }
 
     /// <summary>
-    /// Eligible Franchise (group 5) / Theme (group 3) cards for one franchise-carryover row - filters
-    /// by the starting dish's initial owned set, Requires/BlockedBy against every OTHER already-
-    /// selected card in the form, and the Theme/franchise-tier caps (<see cref="SelectionCapValidator"/>).
-    /// Unresolvable/blank names in <see cref="FranchiseCandidatesRequest.OtherSelectedCardNames"/> are
-    /// skipped rather than erroring - this endpoint is called on every keystroke elsewhere in the form
-    /// and a momentarily-stale other-row value shouldn't break this row's own candidate list.
+    /// Candidate cards for one franchise-carryover row - every Unlock in the game (not restricted to
+    /// Franchise/Theme groups - carryover isn't restricted by card type, ground-truth-verified in
+    /// game-domain-knowledge.md's "Franchise tier / carryover cards" section) that's internally
+    /// consistent with the rest of the selection - see
+    /// <see cref="UnlockPackEvaluator.IsValidCarryoverPick"/>'s doc comment for exactly what "valid"
+    /// means here (Requires/BlockedBy/duplicate/tier checks, real data-verified constraints) and why
+    /// this deliberately does NOT reuse the Franchise/Theme pack's own offer-eligibility Filter or
+    /// the count caps a previous version of this endpoint had (both were invented, not real).
+    /// Unresolvable/blank names in <see cref="FranchiseCandidatesRequest.OtherSelectedCardNames"/>
+    /// are skipped rather than erroring - this endpoint is called on every keystroke elsewhere in
+    /// the form and a momentarily-stale other-row value shouldn't break this row's own candidate list.
     /// </summary>
     private static IResult GetFranchiseCandidates(FranchiseCandidatesRequest request, GameDataRepository repo)
     {
@@ -98,8 +97,6 @@ public static class SearchEndpoints
         }
 
         var ownedIds = new HashSet<int>(setup.InitiallyOwnedIds);
-        var tiersUsed = new HashSet<int>();
-        var themeUsed = false;
         foreach (var name in request.OtherSelectedCardNames ?? [])
         {
             if (string.IsNullOrEmpty(name) || !TryResolveUnlock(repo, name, "card", out var other, out _))
@@ -108,25 +105,10 @@ public static class SearchEndpoints
             }
 
             ownedIds.Add(other.Id);
-            switch ((Engine.Data.UnlockGroup)other.UnlockGroup)
-            {
-                case Engine.Data.UnlockGroup.Theme:
-                    themeUsed = true;
-                    break;
-                case Engine.Data.UnlockGroup.Franchise:
-                    tiersUsed.Add(other.MinimumFranchiseTier);
-                    break;
-            }
         }
 
-        var franchiseFilter = repo.GetPack(FranchiseCardsPackId).Filter ?? throw new InvalidOperationException("Franchise Cards Pack has no Filter");
-        var themeFilter = repo.GetPack(ThemeCardsPackId).Filter ?? throw new InvalidOperationException("Theme Cards Pack has no Filter");
-
         var names = repo.AllUnlocksOrderedById
-            .Where(c => (Engine.Data.UnlockGroup)c.UnlockGroup is Engine.Data.UnlockGroup.Franchise or Engine.Data.UnlockGroup.Theme)
-            .Where(c => (Engine.Data.UnlockGroup)c.UnlockGroup != Engine.Data.UnlockGroup.Theme || !themeUsed)
-            .Where(c => (Engine.Data.UnlockGroup)c.UnlockGroup != Engine.Data.UnlockGroup.Franchise || !tiersUsed.Contains(c.MinimumFranchiseTier))
-            .Where(c => UnlockPackEvaluator.IsEligible(repo, c, ownedIds, request.Tier, (Engine.Data.UnlockGroup)c.UnlockGroup == Engine.Data.UnlockGroup.Theme ? themeFilter : franchiseFilter))
+            .Where(c => UnlockPackEvaluator.IsValidCarryoverPick(repo, c, ownedIds, request.Tier))
             .Select(c => c.Name)
             .OrderBy(n => n)
             .ToList();
@@ -259,10 +241,19 @@ public static class SearchEndpoints
             franchiseCarryoverIds.Add(card.Id);
         }
 
-        var capError = SelectionCapValidator.Validate(repo, targetIds.Values.Concat(franchiseCarryoverIds));
-        if (capError is not null)
+        // Defense in depth for non-JS callers (the CLI/curl/etc. don't go through
+        // GetFranchiseCandidates' filtering) - the same Requires/BlockedBy/tier consistency check
+        // the candidate-list endpoint uses, applied to the whole submitted set at once. See
+        // UnlockPackEvaluator.IsValidCarryoverPick's doc comment for what "valid" means here.
+        var franchiseIdSet = new HashSet<int>(franchiseCarryoverIds);
+        foreach (var id in franchiseCarryoverIds)
         {
-            return Results.BadRequest(new { error = capError });
+            var otherIds = new HashSet<int>(franchiseIdSet);
+            otherIds.Remove(id);
+            if (!UnlockPackEvaluator.IsValidCarryoverPick(repo, repo.GetUnlock(id), otherIds, request.Tier))
+            {
+                return Results.BadRequest(new { error = $"'{repo.GetUnlock(id).Name}' isn't a valid franchise-carryover pick given the rest of the selection and tier {request.Tier}." });
+            }
         }
 
         if (request.Length is < 1 or > Seed.MaxLength)

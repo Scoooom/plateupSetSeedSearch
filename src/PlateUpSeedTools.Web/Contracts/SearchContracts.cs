@@ -72,10 +72,15 @@ public sealed record HeatLevelDto(int Level, string Name);
 public sealed record CardScheduleDto(string Slug, string DisplayName);
 
 /// <summary>
-/// Candidate list for one franchise-carryover row - Franchise (group 5) and Theme (group 3) cards
-/// only, filtered by Requires/BlockedBy/tier eligibility against the starting dish and every OTHER
-/// already-selected card in the form (day-target picks and other franchise rows alike), plus the
-/// "at most 1 Theme card, at most 1 Franchise card per tier" caps (see SelectionCapValidator).
+/// Candidate list for one franchise-carryover row - every Unlock in the game (any group, not just
+/// Franchise/Theme - carryover is unrestricted by card type) that's internally consistent with the
+/// rest of the selection: Requires/BlockedBy chains, no exact duplicates, franchise-tier
+/// eligibility. See UnlockPackEvaluator.IsValidCarryoverPick's doc comment for why those three
+/// specifically stay enforced (real, data-verified constraints - e.g. every tier of the "Variety"
+/// franchise bonus is genuinely BlockedBy ["Community", "Coffee"]) while the old "1 Theme card
+/// total, 1 Franchise card per tier" count caps and Franchise/Theme-group-only restriction were
+/// removed (both were invented, contradicted by a ground-truth capture that carried over 5 cards
+/// under a single tier - see game-domain-knowledge.md's "Franchise tier / carryover cards" section).
 /// </summary>
 public sealed record FranchiseCandidatesRequest(
     string Setting,

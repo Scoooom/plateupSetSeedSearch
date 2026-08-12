@@ -196,15 +196,37 @@ public static class UnlockPackEvaluator
     }
 
     /// <summary>
-    /// Whether <paramref name="candidate"/> is a legal pick for the given <paramref name="filter"/>
-    /// given the cards already owned/selected so far - reuses <see cref="ShouldBlockCard"/> (the
-    /// single source of truth for unlockability/franchise-tier/duplicate/Requires/BlockedBy
-    /// eligibility) rather than reimplementing it. Intended for validating a manually-chosen card
-    /// (e.g. a franchise-carryover pick in the search UI), not a simulated draw - Day is irrelevant
-    /// to every check ShouldBlockCard performs (only Tier is consulted), so 0 is a safe placeholder.
+    /// Whether <paramref name="candidate"/> is an internally-consistent "already owned" pick given
+    /// <paramref name="currentCards"/> (other cards already owned/selected) and
+    /// <paramref name="tier"/> - for validating a manually-asserted franchise-carryover card in the
+    /// search UI, NOT a simulated draw. Deliberately distinct from asking "would the Franchise/Theme
+    /// pack ever OFFER this" (a previous version of this check reused that pack's own Filter, which
+    /// was wrong - offer-eligibility flags like unlockability/blocks-other-food/has-a-main are about
+    /// the DRAW mechanism, irrelevant to whether a card could already be owned from a prior run).
+    /// What DOES matter for "already owned" - and is real, data-verified, not an invented
+    /// restriction (e.g. every tier of the "Variety" franchise bonus is genuinely `BlockedBy`
+    /// ["Community", "Coffee"] in the extracted data) - is internal consistency: Requires/BlockedBy
+    /// chains against the rest of the selection, no exact duplicates, and franchise-tier eligibility
+    /// (can't already own something from a tier this run hasn't reached). Day is irrelevant to every
+    /// check `ShouldBlockCard` performs (only Tier is consulted), so 0 is a safe placeholder.
     /// </summary>
-    public static bool IsEligible(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier, FilterData filter) =>
-        !ShouldBlockCard(repo, candidate, currentCards, new UnlockRequest(Day: 0, tier), filter);
+    public static bool IsValidCarryoverPick(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier) =>
+        !ShouldBlockCard(repo, candidate, currentCards, new UnlockRequest(Day: 0, tier), CarryoverFilter);
+
+    // Ignores every offer-specific gate (unlockability/blocks-other-food/has-a-main/base-dish) -
+    // those govern whether a card would be freshly DRAWN, not whether it could already be owned.
+    // Requires/BlockedBy/duplicate/franchise-tier stay enforced - see IsValidCarryoverPick's doc
+    // comment for why those specifically are real constraints, not invented ones.
+    private static readonly FilterData CarryoverFilter = new()
+    {
+        IgnoreUnlockability = true,
+        IgnoreFranchiseTier = false,
+        IgnoreDuplicateFilter = false,
+        IgnoreRequirements = false,
+        AllowBaseDishes = true,
+        IgnoreBlocksOtherFood = true,
+        IgnoreFilterByHasMain = true,
+    };
 
     // --- FilterBasic.ShouldBlockCard ---
 
