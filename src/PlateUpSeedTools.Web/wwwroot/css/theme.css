@@ -367,14 +367,72 @@ button[type="submit"]:hover {
   flex: 1;
 }
 
-.color-panel-row input[type="color"] {
+.color-panel-row .color-swatch {
   width: 1.8rem;
   height: 1.8rem;
   padding: 0;
   border: 1px solid var(--panel-border);
   border-radius: 4px;
-  background: none;
   cursor: pointer;
+  flex: none;
+}
+
+/* Custom color-picker popover (see app.js) - a saturation/value square + hue strip, no RGB fields
+   anywhere (the browser's native <input type=color> shows RGB, not hex, and can't be restyled -
+   real player request to replace it entirely rather than pair a hex box alongside it). */
+.color-picker-popover {
+  position: absolute;
+  z-index: 50;
+  width: 180px;
+  padding: 0.6rem;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.color-picker-sv {
+  position: relative;
+  width: 100%;
+  height: 120px;
+  border-radius: 4px;
+  background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.color-picker-sv-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.color-picker-hue {
+  position: relative;
+  width: 100%;
+  height: 14px;
+  margin-top: 0.6rem;
+  border-radius: 7px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.color-picker-hue-thumb {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 .color-panel-row .color-hex {

@@ -178,12 +178,113 @@ function buildColorEntries(layout, roomOrderByType, indexByRoomId) {
 let colorPanelSignature = null;
 let colorPanelInputsByKey = new Map();
 
-// Native <input type=color> pickers default to an RGB-sliders view in most browsers, not hex -
-// real player request was a color wheel (still the native picker, that part's fine) PLUS a hex
-// text box next to it that can be typed/pasted into directly. The two inputs stay in sync; the hex
-// box only commits (updates colorOverrides / re-renders) once its content is a complete, valid
-// "#rrggbb" - so typing/pasting mid-edit doesn't spam invalid intermediate values through.
+// Real player feedback: the browser's native <input type=color> popup shows RGB number fields,
+// not hex, and there's no way to suppress that (it's OS/browser chrome we don't control) or add a
+// hex field into it. So the picker itself is custom-built here: a saturation/value square + a hue
+// strip, no RGB anywhere - the hex text box (always visible per row) is the only numeric readout,
+// and can be typed/pasted into directly. One popover instance is shared across all rows (opened/
+// repositioned per swatch click) rather than one per row, since only one can be open at a time.
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+const colorPickerPopover = document.createElement("div");
+colorPickerPopover.className = "color-picker-popover";
+colorPickerPopover.hidden = true;
+colorPickerPopover.innerHTML = `
+  <div class="color-picker-sv"><div class="color-picker-sv-thumb"></div></div>
+  <div class="color-picker-hue"><div class="color-picker-hue-thumb"></div></div>
+`;
+document.body.appendChild(colorPickerPopover);
+const colorPickerSv = colorPickerPopover.querySelector(".color-picker-sv");
+const colorPickerSvThumb = colorPickerPopover.querySelector(".color-picker-sv-thumb");
+const colorPickerHue = colorPickerPopover.querySelector(".color-picker-hue");
+const colorPickerHueThumb = colorPickerPopover.querySelector(".color-picker-hue-thumb");
+
+let pickerH = 0;
+let pickerS = 1;
+let pickerV = 1;
+let pickerOnChange = null; // (hex) => void, set per-row while its popover is open
+
+function updatePickerVisuals() {
+  const [hr, hg, hb] = hsvToRgb(pickerH, 1, 1);
+  colorPickerSv.style.backgroundColor = rgbToHex(hr, hg, hb);
+  colorPickerSvThumb.style.left = `${pickerS * 100}%`;
+  colorPickerSvThumb.style.top = `${(1 - pickerV) * 100}%`;
+  colorPickerHueThumb.style.left = `${pickerH * 100}%`;
+}
+
+// deferImage=true while actively dragging (updates colorOverrides + the legend/panel swatches
+// only, no server round-trip); the final call on pointer-release passes deferImage=false so the
+// rendered PNG re-fetches exactly once per drag, not on every intermediate pointermove tick.
+function applyPickerColor(deferImage) {
+  const [r, g, b] = hsvToRgb(pickerH, pickerS, pickerV);
+  pickerOnChange?.(rgbToHex(r, g, b), deferImage);
+}
+
+function openColorPicker(anchorEl, hex, onChange) {
+  pickerOnChange = onChange;
+  const [r, g, b] = hexToRgb(hex);
+  [pickerH, pickerS, pickerV] = rgbToHsv(r, g, b);
+  updatePickerVisuals();
+
+  const rect = anchorEl.getBoundingClientRect();
+  colorPickerPopover.style.left = `${window.scrollX + rect.left}px`;
+  colorPickerPopover.style.top = `${window.scrollY + rect.bottom + 6}px`;
+  colorPickerPopover.hidden = false;
+}
+
+function closeColorPicker() {
+  colorPickerPopover.hidden = true;
+  pickerOnChange = null;
+}
+
+function trackPointer(el, onMove, onEnd) {
+  el.addEventListener("pointerdown", (event) => {
+    el.setPointerCapture(event.pointerId);
+    onMove(event);
+    const move = (moveEvent) => onMove(moveEvent);
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      onEnd();
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up, { once: true });
+    event.preventDefault();
+  });
+}
+
+trackPointer(
+  colorPickerSv,
+  (event) => {
+    const rect = colorPickerSv.getBoundingClientRect();
+    pickerS = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    pickerV = 1 - Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    updatePickerVisuals();
+    applyPickerColor(true);
+  },
+  () => applyPickerColor(false),
+);
+
+trackPointer(
+  colorPickerHue,
+  (event) => {
+    const rect = colorPickerHue.getBoundingClientRect();
+    pickerH = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    updatePickerVisuals();
+    applyPickerColor(true);
+  },
+  () => applyPickerColor(false),
+);
+
+document.addEventListener("pointerdown", (event) => {
+  if (!colorPickerPopover.hidden && !colorPickerPopover.contains(event.target) && !event.target.closest(".color-swatch")) {
+    closeColorPicker();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeColorPicker();
+  }
+});
 
 function buildColorPanelRows(entries) {
   colorPanelRowsEl.innerHTML = "";
@@ -195,10 +296,11 @@ function buildColorPanelRows(entries) {
     const label = document.createElement("span");
     label.textContent = entry.label;
 
-    const colorInput = document.createElement("input");
-    colorInput.type = "color";
-    colorInput.value = entry.color;
-    colorInput.setAttribute("aria-label", `${entry.label} color wheel`);
+    const swatch = document.createElement("button");
+    swatch.type = "button";
+    swatch.className = "color-swatch";
+    swatch.style.background = entry.color;
+    swatch.setAttribute("aria-label", `${entry.label} color`);
 
     const hexInput = document.createElement("input");
     hexInput.type = "text";
@@ -209,15 +311,22 @@ function buildColorPanelRows(entries) {
     hexInput.autocomplete = "off";
     hexInput.setAttribute("aria-label", `${entry.label} hex code`);
 
-    function commit(value) {
+    function commit(value, deferImage = false) {
+      swatch.style.background = value;
+      hexInput.value = value;
       colorOverrides[key] = value;
       saveColorOverrides();
-      refreshCurrentLayout();
+      // While dragging in the picker popover, only the legend/panel need to update live - the
+      // rendered PNG re-fetches once, when the drag actually finishes (deferImage=false).
+      if (deferImage) {
+        refreshLegendAndPanel();
+      } else {
+        refreshCurrentLayout();
+      }
     }
 
-    colorInput.addEventListener("input", () => {
-      hexInput.value = colorInput.value;
-      commit(colorInput.value);
+    swatch.addEventListener("click", () => {
+      openColorPicker(swatch, hexInput.value, commit);
     });
 
     hexInput.addEventListener("input", () => {
@@ -228,10 +337,7 @@ function buildColorPanelRows(entries) {
       if (!HEX_COLOR_PATTERN.test(value)) {
         return;
       }
-      value = value.toLowerCase();
-      hexInput.value = value;
-      colorInput.value = value;
-      commit(value);
+      commit(value.toLowerCase());
     });
 
     const reset = document.createElement("button");
@@ -246,9 +352,9 @@ function buildColorPanelRows(entries) {
       refreshCurrentLayout();
     });
 
-    row.append(label, colorInput, hexInput, reset);
+    row.append(label, swatch, hexInput, reset);
     colorPanelRowsEl.appendChild(row);
-    colorPanelInputsByKey.set(key, { colorInput, hexInput });
+    colorPanelInputsByKey.set(key, { swatch, hexInput });
   }
 }
 
@@ -264,7 +370,7 @@ function syncColorPanel(entries) {
     // Skip the hex box the player is actively typing/pasting into - overwriting it mid-edit would
     // clobber a partial value (e.g. "#ff") before it ever becomes a complete, valid hex.
     if (pair && document.activeElement !== pair.hexInput) {
-      pair.colorInput.value = entry.color;
+      pair.swatch.style.background = entry.color;
       pair.hexInput.value = entry.color;
     }
   }
@@ -330,6 +436,43 @@ function rgbToHex(r, g, b) {
   return `#${c(r)}${c(g)}${c(b)}`;
 }
 
+// HSV (not HSL) - the standard model for a saturation/value picker square, used only by the
+// custom color-picker popover below (buildColorPickerPopover). Distinct from rgbToHsl/hslToRgb
+// above, which drive shadeColor's per-instance variants.
+function rgbToHsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const v = max;
+  const d = max - min;
+  const s = max === 0 ? 0 : d / max;
+  if (max === min) {
+    return [0, s, v];
+  }
+  let h;
+  switch (max) {
+    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+    case g: h = (b - r) / d + 2; break;
+    default: h = (r - g) / d + 4; break;
+  }
+  return [h / 6, s, v];
+}
+
+function hsvToRgb(h, s, v) {
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+    case 0: return [v * 255, t * 255, p * 255];
+    case 1: return [q * 255, v * 255, p * 255];
+    case 2: return [p * 255, v * 255, t * 255];
+    case 3: return [p * 255, q * 255, v * 255];
+    case 4: return [t * 255, p * 255, v * 255];
+    default: return [v * 255, p * 255, q * 255];
+  }
+}
+
 function rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -390,6 +533,72 @@ function shadeColor(baseHex, index) {
   return rgbToHex(nr, ng, nb);
 }
 
+// Tile/feature loops below don't touch the DOM - they only exist to compute the legend (color per
+// room-type/instance, feature types present), which needs the same per-instance Dining/Unassigned
+// grouping used server-side. Group tiles by physical room instance (roomId), not just roomType,
+// for the two room types where that distinction actually matters to a player:
+//  - Dining: DiningDecorator only ever places tables in Dining rooms, so two separate dining
+//    rooms in one layout are two real rooms a player eats in, not one.
+//  - Unassigned: confirmed via real-game ground truth (session 3) that these are NOT empty
+//    padding - they're genuine walkable side-rooms/corridors, each connected to the rest of the
+//    layout by its own door, that the graph's room-generation modules just never assign a
+//    gameplay type to (see game-domain-knowledge.md's Extended/Huge Layout room-shape notes).
+//    This is exactly the "extra rooms" a user originally asked to see distinguished.
+// Every other room type (Kitchen, Garden, ...) keeps one color/legend entry per type, however
+// many separate physical rooms of that type exist - per explicit user decision, only rooms that
+// are individually meaningful to a player (eaten in, or walked through as their own space) get
+// split out.
+function computeRoomGrouping(layout) {
+  const PER_INSTANCE_ROOM_TYPES = new Set(["Dining", "Unassigned"]);
+  const roomOrderByType = new Map(); // roomType -> [roomId, ...] in first-seen order
+  const seenRoomIds = new Set();
+  for (const tile of layout.tiles) {
+    if (PER_INSTANCE_ROOM_TYPES.has(tile.roomType) && !seenRoomIds.has(tile.roomId)) {
+      if (!roomOrderByType.has(tile.roomType)) {
+        roomOrderByType.set(tile.roomType, []);
+      }
+      roomOrderByType.get(tile.roomType).push(tile.roomId);
+    }
+    seenRoomIds.add(tile.roomId);
+  }
+  const indexByRoomId = new Map();
+  for (const order of roomOrderByType.values()) {
+    order.forEach((id, i) => indexByRoomId.set(id, i));
+  }
+  return { roomOrderByType, indexByRoomId };
+}
+
+// Updates the legend and the customize panel only - no network request, no touching the <img>.
+// Split out from renderLayout so a color-picker drag can update these live on every pointermove
+// (cheap, client-side) while deferring the actual image re-fetch until the drag finishes (real
+// player request - re-fetching the PNG on every drag tick was wasteful/janky).
+function updateLegendAndPanel(layout) {
+  const { roomOrderByType, indexByRoomId } = computeRoomGrouping(layout);
+  // Single ordered source for both the legend and the customize panel (buildColorEntries) - keeps
+  // them from ever drifting apart, and means the "R1/R2 always last" ordering (real player request)
+  // only has to be implemented once.
+  const colorEntries = buildColorEntries(layout, roomOrderByType, indexByRoomId);
+
+  legendEl.innerHTML = "";
+  for (const [, entry] of colorEntries) {
+    const span = document.createElement("span");
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = entry.color;
+    span.appendChild(swatch);
+    span.appendChild(document.createTextNode(entry.legendLabel));
+    legendEl.appendChild(span);
+  }
+
+  syncColorPanel(colorEntries);
+}
+
+function refreshLegendAndPanel() {
+  if (currentLayout) {
+    updateLegendAndPanel(currentLayout);
+  }
+}
+
 function renderLayout(layout) {
   const xs = layout.tiles.map((t) => t.x);
   const ys = layout.tiles.map((t) => t.y);
@@ -416,56 +625,7 @@ function renderLayout(layout) {
   gridEl.appendChild(image);
 
   currentLayout = layout;
-
-  // Tile/feature loops below don't touch the DOM anymore - they only exist to compute the legend
-  // (color per room-type/instance, feature types present), which still needs the same per-instance
-  // Dining/Unassigned grouping used server-side. Group tiles by physical room instance (roomId), not
-  // just roomType, for the two room types where
-  // that distinction actually matters to a player:
-  //  - Dining: DiningDecorator only ever places tables in Dining rooms, so two separate dining
-  //    rooms in one layout are two real rooms a player eats in, not one.
-  //  - Unassigned: confirmed via real-game ground truth (session 3) that these are NOT empty
-  //    padding - they're genuine walkable side-rooms/corridors, each connected to the rest of the
-  //    layout by its own door, that the graph's room-generation modules just never assign a
-  //    gameplay type to (see game-domain-knowledge.md's Extended/Huge Layout room-shape notes).
-  //    This is exactly the "extra rooms" a user originally asked to see distinguished.
-  // Every other room type (Kitchen, Garden, ...) keeps one color/legend entry per type, however
-  // many separate physical rooms of that type exist - per explicit user decision, only rooms that
-  // are individually meaningful to a player (eaten in, or walked through as their own space) get
-  // split out.
-  const PER_INSTANCE_ROOM_TYPES = new Set(["Dining", "Unassigned"]);
-  const roomOrderByType = new Map(); // roomType -> [roomId, ...] in first-seen order
-  const seenRoomIds = new Set();
-  for (const tile of layout.tiles) {
-    if (PER_INSTANCE_ROOM_TYPES.has(tile.roomType) && !seenRoomIds.has(tile.roomId)) {
-      if (!roomOrderByType.has(tile.roomType)) {
-        roomOrderByType.set(tile.roomType, []);
-      }
-      roomOrderByType.get(tile.roomType).push(tile.roomId);
-    }
-    seenRoomIds.add(tile.roomId);
-  }
-  const indexByRoomId = new Map();
-  for (const order of roomOrderByType.values()) {
-    order.forEach((id, i) => indexByRoomId.set(id, i));
-  }
-  // Single ordered source for both the legend and the customize panel (buildColorEntries) - keeps
-  // them from ever drifting apart, and means the "R1/R2 always last" ordering (real player request)
-  // only has to be implemented once.
-  const colorEntries = buildColorEntries(layout, roomOrderByType, indexByRoomId);
-
-  legendEl.innerHTML = "";
-  for (const [, entry] of colorEntries) {
-    const span = document.createElement("span");
-    const swatch = document.createElement("span");
-    swatch.className = "swatch";
-    swatch.style.background = entry.color;
-    span.appendChild(swatch);
-    span.appendChild(document.createTextNode(entry.legendLabel));
-    legendEl.appendChild(span);
-  }
-
-  syncColorPanel(colorEntries);
+  updateLegendAndPanel(layout);
 
   const frontDoor = layout.features.find((f) => f.type === "FrontDoor");
   const frontDoorText = frontDoor ? `, front door at (${frontDoor.tile1X}, ${frontDoor.tile1Y})` : "";
