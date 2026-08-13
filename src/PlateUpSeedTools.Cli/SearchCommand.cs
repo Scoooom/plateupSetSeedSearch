@@ -74,6 +74,25 @@ public static class SearchCommand
             targetIds[day] = card.Id;
         }
 
+        var flexibleTargetNames = new List<string>();
+        var flexibleTargetIds = new HashSet<int>();
+        foreach (var cardName in options.AnyDayCardNames)
+        {
+            if (!TryResolveUnlockByName(repo, cardName, "card", out var card))
+            {
+                return 1;
+            }
+
+            flexibleTargetNames.Add(card.Name);
+            flexibleTargetIds.Add(card.Id);
+        }
+
+        if (UnlockPackEvaluator.HasBlockedByConflict(repo, new HashSet<int>(targetIds.Values.Concat(flexibleTargetIds)), out var conflict))
+        {
+            Console.WriteLine($"'{repo.GetUnlock(conflict.CardId).Name}' and '{repo.GetUnlock(conflict.BlockedById).Name}' can never coexist (BlockedBy) - this target set can never be satisfied.");
+            return 1;
+        }
+
         var franchiseCarryoverIds = new List<int>();
         foreach (var cardName in options.FranchiseCardNames)
         {
@@ -110,11 +129,13 @@ public static class SearchCommand
                 Console.WriteLine($"Franchise carryover: {string.Join(", ", options.FranchiseCardNames)}");
             }
 
-            Console.WriteLine($"Targets: {string.Join(", ", targetNames.OrderBy(t => t.Key).Select(t => $"d{t.Key}={t.Value}"))}");
+            var targetSummary = targetNames.OrderBy(t => t.Key).Select(t => $"d{t.Key}={t.Value}")
+                .Concat(flexibleTargetNames.Select(n => $"{n} (any day, by day 15)"));
+            Console.WriteLine($"Targets: {string.Join(", ", targetSummary)}");
             Console.WriteLine($"Searching {options.Alphabet.Length}^{options.Length} = {spaceSize:N0} seed(s) (checking {totalToCheck:N0})...");
         }
 
-        var request = new SeedSearchRequest(settingPackId, setup, targetIds, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds);
+        var request = new SeedSearchRequest(settingPackId, setup, targetIds, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds, flexibleTargetIds);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var matchCount = 0;
@@ -191,6 +212,7 @@ public static class SearchCommand
         public int Tier { get; init; }
         public required List<string> FranchiseCardNames { get; init; }
         public required Dictionary<int, string> DayTargets { get; init; }
+        public required List<string> AnyDayCardNames { get; init; }
         public required string Alphabet { get; init; }
         public required int Length { get; init; }
         public long? Limit { get; init; }
@@ -215,6 +237,7 @@ public static class SearchCommand
         var tier = 0;
         var franchiseCardNames = new List<string>();
         var dayTargets = new Dictionary<int, string>();
+        var anyDayCardNames = new List<string>();
         var alphabet = Seed.FriendlyCharacters;
         var length = 4;
         long? limit = null;
@@ -256,6 +279,9 @@ public static class SearchCommand
 
                     dayTargets[day] = parts[1];
                     break;
+                case "--any-day-card" when i + 1 < args.Length:
+                    anyDayCardNames.Add(args[++i]);
+                    break;
                 case "--alphabet" when i + 1 < args.Length:
                     alphabet = args[++i];
                     break;
@@ -296,13 +322,16 @@ public static class SearchCommand
             }
         }
 
-        if (settingSlug is null || dishName is null || dayTargets.Count == 0)
+        if (settingSlug is null || dishName is null || (dayTargets.Count == 0 && anyDayCardNames.Count == 0))
         {
             Console.WriteLine("Usage: search --setting <slug> --dish <name> [--sub-option 1|2] [--heat <n>]");
             Console.WriteLine("              [--tier <n>] [--franchise-card <name> ...]");
-            Console.WriteLine("              --day <n>=<card name> [--day <n>=<card name> ...]");
+            Console.WriteLine("              [--day <n>=<card name> ...] [--any-day-card <card name> ...]");
             Console.WriteLine("              [--alphabet <chars>] [--length <n>] [--limit <n>] [--max-results <n>]");
             Console.WriteLine();
+            Console.WriteLine("--day pins a card to an exact day; --any-day-card (repeatable) only requires the card be");
+            Console.WriteLine("obtained by day 15, in any order - combine both freely in the same search. At least one of");
+            Console.WriteLine("--day/--any-day-card is required.");
             Console.WriteLine($"--max-results caps how many matches are found before stopping early (default {DefaultMaxResults},");
             Console.WriteLine("same as the web UI's hard cap) - pass 0 or a negative number to search without a cap.");
             Console.WriteLine("--tier/--franchise-card model continuing an existing franchise save into this run");
@@ -329,6 +358,7 @@ public static class SearchCommand
             Tier = tier,
             FranchiseCardNames = franchiseCardNames,
             DayTargets = dayTargets,
+            AnyDayCardNames = anyDayCardNames,
             Alphabet = alphabet,
             Length = length,
             Limit = limit,

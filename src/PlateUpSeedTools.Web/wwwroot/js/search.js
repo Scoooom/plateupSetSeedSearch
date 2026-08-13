@@ -130,12 +130,53 @@ function getRowDay(row) {
   return Number.isInteger(day) ? day : null;
 }
 
+// A row toggled "any day" (see addDayTargetRow) only needs its card obtained by day 15, order/day
+// unspecified - see SeedSearchRequest.FlexibleTargetIds. Its day INPUT is ignored/cleared while
+// this is checked.
+function isRowFlexible(row) {
+  return row.querySelector(".day-target-any-day")?.checked ?? false;
+}
+
+// The day value that actually governs matching/refresh for this row - null for a flexible row
+// (always) or a fixed row that hasn't been given a valid day yet.
+function getEffectiveDay(row) {
+  return isRowFlexible(row) ? null : getRowDay(row);
+}
+
 function getAllDayTargetRows() {
   return [...dayTargetRowsEl.querySelectorAll(".dynamic-row")];
 }
 
 function getAllFranchiseRows() {
   return [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")];
+}
+
+// Client-side mirror of UnlockPackEvaluator.HasBlockedByConflict - flags a pair of chosen
+// day-target cards (fixed or flexible, same as the server's target set) that can never coexist
+// because owning one permanently prevents the other from ever being offered again. Purely a UX
+// nicety (immediate feedback instead of waiting on a submit round-trip); StartSearch's own check
+// is the authoritative backstop for non-JS callers. Re-validates every day-target row's base
+// validity first (via validateCardInput) so a resolved conflict doesn't leave a stale message
+// behind, then overlays the conflict message on top where one still applies.
+function refreshBlockedByValidation() {
+  const entries = getAllDayTargetRows().map((row) => {
+    const input = row.querySelector(".day-target-card");
+    return { input, unlock: unlocksForSetting.find((u) => u.name === input.value) };
+  });
+
+  for (const { input } of entries) {
+    validateCardInput(input);
+  }
+
+  for (const a of entries) {
+    if (!a.unlock) continue;
+    for (const b of entries) {
+      if (a === b || !b.unlock) continue;
+      if (a.unlock.blockedByIds.includes(b.unlock.id)) {
+        a.input.setCustomValidity(`"${a.unlock.name}" and "${b.unlock.name}" can never coexist (BlockedBy) - remove one of them.`);
+      }
+    }
+  }
 }
 
 function getFranchiseCardNames() {
@@ -164,15 +205,43 @@ function addDayTargetRow() {
   cardInput.disabled = true;
   cardInput.required = true;
 
+  // Per-card toggle (not a global mode): this row's card just needs to be obtained by day 15, in
+  // any order relative to the rest of the list - mixed freely with pinned-day rows in one search.
+  const anyDayLabel = document.createElement("label");
+  anyDayLabel.className = "any-day-toggle";
+  const anyDayCheckbox = document.createElement("input");
+  anyDayCheckbox.type = "checkbox";
+  anyDayCheckbox.className = "day-target-any-day";
+  anyDayLabel.appendChild(anyDayCheckbox);
+  anyDayLabel.appendChild(document.createTextNode("Any day (by day 15)"));
+
   const removeButton = document.createElement("button");
   removeButton.type = "button";
   removeButton.className = "link-button";
   removeButton.textContent = "Remove";
   removeButton.addEventListener("click", () => {
-    const removedDay = getRowDay(row) ?? 1;
+    // A flexible row being removed can't be scoped to a threshold (it isn't tied to a day), so
+    // fall back to refreshing every remaining row.
+    const refreshThreshold = isRowFlexible(row) ? 0 : (getEffectiveDay(row) ?? 1);
     row.remove();
-    scheduleAffectedDayTargetRefresh(removedDay);
+    scheduleAffectedDayTargetRefresh(refreshThreshold);
     scheduleAllFranchiseRefresh(); // removing a picked card can free up the Theme/tier caps
+  });
+
+  anyDayCheckbox.addEventListener("change", () => {
+    const flexible = anyDayCheckbox.checked;
+    dayInput.disabled = flexible;
+    dayInput.required = !flexible;
+    dayInput.hidden = flexible;
+    if (flexible) {
+      dayInput.value = "";
+      dayInput.dataset.prevDay = "";
+    }
+    // Toggling changes both what this row needs (day vs. no day) and what counts as "prior" for
+    // every other row, so the simplest correct thing is to refresh the whole section rather than
+    // try to compute a narrower threshold.
+    scheduleAllDayTargetRefresh();
+    scheduleAllFranchiseRefresh();
   });
 
   // Editing this row's day only changes what's reachable for rows whose day is >= the smaller of
@@ -186,16 +255,23 @@ function addDayTargetRow() {
     scheduleAffectedDayTargetRefresh(threshold);
   });
 
-  // Changing this row's card only changes what's reachable for rows with a LATER day - and can
-  // change the Theme/franchise-tier caps, so franchise rows need a recheck too.
+  // Changing this row's card only changes what's reachable for rows with a LATER day (or every
+  // row, if this one is flexible - it could end up owned at any point) - and can change the
+  // Theme/franchise-tier caps, so franchise rows need a recheck too.
   cardInput.addEventListener("change", () => {
     validateCardInput(cardInput);
-    const day = getRowDay(row) ?? 0;
-    scheduleAffectedDayTargetRefresh(day + 1);
+    refreshBlockedByValidation();
+    if (isRowFlexible(row)) {
+      scheduleAllDayTargetRefresh();
+    } else {
+      const day = getRowDay(row) ?? 0;
+      scheduleAffectedDayTargetRefresh(day + 1);
+    }
     scheduleAllFranchiseRefresh();
   });
 
   row.appendChild(dayInput);
+  row.appendChild(anyDayLabel);
   row.appendChild(cardInput);
   row.appendChild(cardDatalist);
   row.appendChild(removeButton);
@@ -265,7 +341,7 @@ function scheduleFranchiseRowRefresh(row) {
 // anywhere in the form.
 function scheduleAffectedDayTargetRefresh(threshold) {
   for (const row of getAllDayTargetRows()) {
-    const day = getRowDay(row);
+    const day = getEffectiveDay(row);
     if (day === null || day >= threshold) {
       scheduleRowRefresh(row);
     }
@@ -336,9 +412,9 @@ async function fetchFranchiseCandidates(otherSelectedCardNames) {
 }
 
 async function refreshDayTargetRow(row) {
-  const dayInput = row.querySelector(".day-target-day");
   const cardInput = row.querySelector(".day-target-card");
   const datalist = document.getElementById(cardInput.getAttribute("list"));
+  const flexible = isRowFlexible(row);
 
   if (!dishSelect.value) {
     // Nothing to type against yet, but this doesn't hide anything from validation - the whole
@@ -356,8 +432,9 @@ async function refreshDayTargetRow(row) {
   // validateCardInput's :invalid styling communicates the problem instead, and stays effective.
   cardInput.disabled = false;
 
-  const day = getRowDay(row);
-  if (day === null || day < 0) {
+  // A flexible row has no day to validate - it's always queryable once a dish is chosen.
+  const day = flexible ? null : getRowDay(row);
+  if (!flexible && (day === null || day < 0)) {
     setDatalistOptions(datalist, []);
     validateCardInput(cardInput);
     return;
@@ -366,10 +443,18 @@ async function refreshDayTargetRow(row) {
   const state = getRowState(row);
   const myGeneration = ++state.generation;
 
+  // A flexible prior is always included (it could end up owned at any point); a fixed prior is
+  // only included if it's strictly before this row's own day, OR this row itself is flexible (no
+  // day to be "before" - conservatively treat every fixed prior as possibly-already-owned too).
   const priorTargets = getAllDayTargetRows()
     .filter((other) => other !== row)
-    .map((other) => ({ day: getRowDay(other), cardName: other.querySelector(".day-target-card").value }))
-    .filter((t) => Number.isInteger(t.day) && t.day < day && t.cardName);
+    .map((other) => ({
+      day: getEffectiveDay(other),
+      cardName: other.querySelector(".day-target-card").value,
+      isFlexible: isRowFlexible(other),
+    }))
+    .filter((t) => t.cardName && (t.isFlexible || (t.day !== null && (day === null || t.day < day))))
+    .map((t) => ({ day: t.day, cardName: t.cardName }));
 
   const cardNames = await fetchPossibleCardNames(day, priorTargets, getFranchiseCardNames());
 
@@ -379,6 +464,11 @@ async function refreshDayTargetRow(row) {
 
   setDatalistOptions(datalist, cardNames);
   validateCardInput(cardInput);
+  // This async refresh's own validateCardInput call above can overwrite a BlockedBy message
+  // refreshBlockedByValidation previously set on this same input (e.g. a flexible row's change
+  // event re-refreshes every other row on a debounce) - reapply it so the more specific message
+  // survives instead of silently reverting to the generic "not a valid card" one.
+  refreshBlockedByValidation();
 }
 
 async function refreshFranchiseRow(row) {
@@ -560,7 +650,13 @@ async function prefillFormFromPayload(request) {
   for (const target of request.dayTargets ?? []) {
     addDayTargetRow();
     const row = getAllDayTargetRows().at(-1);
-    row.querySelector(".day-target-day").value = String(target.day);
+    if (target.day === null || target.day === undefined) {
+      const anyDayCheckbox = row.querySelector(".day-target-any-day");
+      anyDayCheckbox.checked = true;
+      anyDayCheckbox.dispatchEvent(new Event("change"));
+    } else {
+      row.querySelector(".day-target-day").value = String(target.day);
+    }
     row.querySelector(".day-target-card").value = target.cardName;
   }
 
@@ -803,10 +899,15 @@ form.addEventListener("submit", async (event) => {
   // set an explicit status message, not just the native bubble - a native validation bubble only
   // ever points at ONE field and is easy to miss/dismiss, which was leaving submit silently
   // refusing to do anything with no visible explanation.
+  for (const input of franchiseInputs) {
+    validateCardInput(input);
+  }
+  refreshBlockedByValidation(); // validates every day-target input, then overlays any BlockedBy conflict
+
   let allValid = true;
   let invalidCount = 0;
   for (const input of [...dayTargetInputs, ...franchiseInputs]) {
-    if (!validateCardInput(input)) {
+    if (!input.checkValidity()) {
       allValid = false;
       invalidCount++;
     }
@@ -823,7 +924,7 @@ form.addEventListener("submit", async (event) => {
   }
 
   const dayTargets = getAllDayTargetRows().map((row) => ({
-    day: Number(row.querySelector(".day-target-day").value),
+    day: isRowFlexible(row) ? null : Number(row.querySelector(".day-target-day").value),
     cardName: row.querySelector(".day-target-card").value,
   }));
 

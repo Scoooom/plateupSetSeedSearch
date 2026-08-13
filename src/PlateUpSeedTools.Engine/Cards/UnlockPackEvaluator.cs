@@ -213,6 +213,38 @@ public static class UnlockPackEvaluator
     public static bool IsValidCarryoverPick(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier) =>
         !ShouldBlockCard(repo, candidate, currentCards, new UnlockRequest(Day: 0, tier), CarryoverFilter);
 
+    /// <summary>
+    /// True if <paramref name="targetIds"/> contains two cards that can never coexist because owning
+    /// one permanently prevents the other from ever being offered again (see ShouldBlockCard's
+    /// BlockedByIds check - e.g. every tier of "Variety" is genuinely BlockedBy ["Community",
+    /// "Coffee"] in the extracted data, see IsValidCarryoverPick's doc comment). Used by the
+    /// "any day" search target mode (SeedSearcher.FlexibleTargetIds) to reject an unsatisfiable
+    /// target set up front, before starting a potentially long brute-force run - no seed could ever
+    /// satisfy a set containing such a pair, regardless of pick order.
+    ///
+    /// A single pairwise pass suffices - no transitive/graph traversal is needed, since
+    /// ShouldBlockCard only ever looks one hop back at currently-owned cards
+    /// (candidate.BlockedByIds.Any(currentCards.Contains)), so any two targets that can conflict do
+    /// so directly, not through an intermediate card.
+    /// </summary>
+    public static bool HasBlockedByConflict(GameDataRepository repo, IReadOnlySet<int> targetIds, out (int CardId, int BlockedById) conflict)
+    {
+        foreach (var id in targetIds)
+        {
+            foreach (var blockerId in repo.GetUnlock(id).BlockedByIds)
+            {
+                if (targetIds.Contains(blockerId))
+                {
+                    conflict = (id, blockerId);
+                    return true;
+                }
+            }
+        }
+
+        conflict = default;
+        return false;
+    }
+
     // Ignores every offer-specific gate (unlockability/blocks-other-food/has-a-main/base-dish) -
     // those govern whether a card would be freshly DRAWN, not whether it could already be owned.
     // Requires/BlockedBy/duplicate/franchise-tier stay enforced - see IsValidCarryoverPick's doc

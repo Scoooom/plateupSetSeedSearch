@@ -1,6 +1,7 @@
 namespace PlateUpSeedTools.Web.Contracts;
 
-public sealed record DayTargetDto(int Day, string CardName);
+/// <summary>Day is null for a "flexible" target - the card just needs to be obtained by day 15, order/day unspecified (see SeedSearchRequest.FlexibleTargetIds).</summary>
+public sealed record DayTargetDto(int? Day, string CardName);
 
 public sealed record SearchStartRequest(
     string Setting,
@@ -35,7 +36,10 @@ public sealed record SearchStatusResponse(
 /// filtering (see UnlockPackEvaluator.GetPossibleCardIds). PriorTargets should only include entries
 /// for days strictly before Day that the user has actually picked a card for - the server also
 /// defensively re-filters by Day, but the caller is expected to have already excluded later/empty
-/// rows.
+/// rows. A flexible PriorTargets entry (Day: null) is always included regardless of Day, since a
+/// flexible card could end up owned at any point. Day itself is null when querying a flexible row's
+/// own dropdown - the server unions reachability across every day up to the flexible horizon instead
+/// of one specific day.
 /// </summary>
 public sealed record PossibleCardsRequest(
     string Setting,
@@ -45,7 +49,7 @@ public sealed record PossibleCardsRequest(
     int Tier,
     List<string>? FranchiseCardNames,
     List<DayTargetDto> PriorTargets,
-    int Day,
+    int? Day,
     string? CardPack = null);
 
 public sealed record PossibleCardsResponse(IReadOnlyList<string> CardNames);

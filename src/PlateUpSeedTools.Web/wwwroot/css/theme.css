@@ -534,6 +534,16 @@ button[type="submit"]:hover {
   border-color: var(--error, #d33);
 }
 
+.any-day-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: none;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--text-muted, var(--text));
+}
+
 .advanced-fields {
   border: 1px solid var(--panel-border);
   border-radius: 8px;

@@ -20,6 +20,10 @@ public static class SearchEndpoints
     // SeedSearcher.ResolveCardPaths's doc comment for why "all of them" isn't offered.
     private const int MaxCardPaths = 3;
 
+    // Fixed cutoff for "any day" flexible targets - see SeedSearchRequest.FlexibleHorizon and the
+    // per-card "any day, by day 15" toggle in the search form. Not user-configurable by design.
+    private const int FlexibleHorizon = 15;
+
     public static void MapSearchEndpoints(this WebApplication app)
     {
         app.MapGet("/api/search/unlocks", GetUnlocks);
@@ -171,7 +175,15 @@ public static class SearchEndpoints
         var ownedIds = new HashSet<int>(setup.InitiallyOwnedIds);
         foreach (var prior in request.PriorTargets)
         {
-            if (prior.Day >= request.Day || string.IsNullOrEmpty(prior.CardName))
+            if (string.IsNullOrEmpty(prior.CardName))
+            {
+                continue;
+            }
+
+            // A flexible prior (Day: null) could end up owned at any point, so it's always included
+            // regardless of this row's own Day - see PossibleCardsRequest's doc comment. Two fixed
+            // days only exclude each other when the prior's day isn't strictly before this row's.
+            if (prior.Day is int priorDay && request.Day is int day && priorDay >= day)
             {
                 continue;
             }
@@ -190,7 +202,23 @@ public static class SearchEndpoints
         }
 
         List<int> activePackIds = [settingPackId, .. setup.BonusPackIds];
-        var possibleIds = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, ownedIds, request.Day, request.Tier);
+
+        // A flexible row (Day: null) isn't scoped to one specific day - union reachability across
+        // every day up to the flexible horizon, since offer eligibility genuinely varies per day
+        // (not every pack fires every day - see UnlockPackEvaluator.GetPossibleCardIds's doc comment).
+        var possibleIds = new HashSet<int>();
+        if (request.Day is int fixedDay)
+        {
+            possibleIds = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, ownedIds, fixedDay, request.Tier);
+        }
+        else
+        {
+            for (var day = 0; day <= FlexibleHorizon; day++)
+            {
+                possibleIds.UnionWith(UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, ownedIds, day, request.Tier));
+            }
+        }
+
         var names = possibleIds.Select(id => repo.GetUnlock(id).Name).OrderBy(n => n).ToList();
         return Results.Ok(new PossibleCardsResponse(names));
     }
@@ -216,10 +244,11 @@ public static class SearchEndpoints
 
         if (request.DayTargets is not { Count: > 0 })
         {
-            return Results.BadRequest(new { error = "At least one day target is required." });
+            return Results.BadRequest(new { error = "At least one card target is required." });
         }
 
         var targetIds = new Dictionary<int, int>();
+        var flexibleTargetIds = new HashSet<int>();
         foreach (var target in request.DayTargets)
         {
             if (!TryResolveUnlock(repo, target.CardName, "card", out var card, out var cardError))
@@ -227,7 +256,19 @@ public static class SearchEndpoints
                 return Results.BadRequest(new { error = cardError });
             }
 
-            targetIds[target.Day] = card.Id;
+            if (target.Day is int day)
+            {
+                targetIds[day] = card.Id;
+            }
+            else
+            {
+                flexibleTargetIds.Add(card.Id);
+            }
+        }
+
+        if (UnlockPackEvaluator.HasBlockedByConflict(repo, new HashSet<int>(targetIds.Values.Concat(flexibleTargetIds)), out var targetConflict))
+        {
+            return Results.BadRequest(new { error = $"'{repo.GetUnlock(targetConflict.CardId).Name}' and '{repo.GetUnlock(targetConflict.BlockedById).Name}' can never coexist (BlockedBy) - this target set can never be satisfied." });
         }
 
         var franchiseCarryoverIds = new List<int>();
@@ -291,7 +332,7 @@ public static class SearchEndpoints
         var excludedSeeds = request.ExcludedSeeds is { Count: > 0 }
             ? new HashSet<string>(request.ExcludedSeeds.Select(s => s.ToLowerInvariant()), StringComparer.Ordinal)
             : null;
-        var searchRequest = new SeedSearchRequest(settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds);
+        var searchRequest = new SeedSearchRequest(settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds, flexibleTargetIds);
         var matchCap = request.StopAfterFirstMatch == true ? 1L : DefaultMatchCap;
         var job = jobs.StartSearch(searchRequest, matchCap);
 
@@ -343,6 +384,7 @@ public static class SearchEndpoints
         }
 
         var targetIds = new Dictionary<int, int>();
+        var flexibleTargetIds = new HashSet<int>();
         foreach (var target in request.DayTargets)
         {
             if (!TryResolveUnlock(repo, target.CardName, "card", out var card, out var cardError))
@@ -350,7 +392,14 @@ public static class SearchEndpoints
                 return Results.BadRequest(new { error = cardError });
             }
 
-            targetIds[target.Day] = card.Id;
+            if (target.Day is int day)
+            {
+                targetIds[day] = card.Id;
+            }
+            else
+            {
+                flexibleTargetIds.Add(card.Id);
+            }
         }
 
         var franchiseCarryoverIds = new List<int>();
@@ -380,8 +429,8 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = packError });
         }
 
-        var maxDay = targetIds.Count == 0 ? 0 : targetIds.Keys.Max();
-        var paths = SeedSearcher.ResolveCardPaths(repo, new Seed(request.Seed), settingPackId, setup, targetIds, maxDay, request.Tier, MaxCardPaths);
+        var maxDay = Math.Max(targetIds.Count == 0 ? 0 : targetIds.Keys.Max(), flexibleTargetIds.Count > 0 ? FlexibleHorizon : 0);
+        var paths = SeedSearcher.ResolveCardPaths(repo, new Seed(request.Seed), settingPackId, setup, targetIds, flexibleTargetIds, maxDay, request.Tier, MaxCardPaths);
 
         var pathDtos = paths
             .Select(path => new CardPathDto(path

@@ -12,7 +12,12 @@ public sealed record SeedSearchRequest(
     string Alphabet,
     int Length,
     long TotalToCheck,
-    IReadOnlySet<string>? ExcludedSeeds = null);
+    IReadOnlySet<string>? ExcludedSeeds = null,
+    // Cards the caller wants obtained by FlexibleHorizon but doesn't care which day - mixed freely
+    // with DayTargets in the same search (e.g. "Ice Cream on day 3, Individual Dining any day").
+    // Empty/null means "fixed-day targets only", reproducing pre-existing behavior exactly.
+    IReadOnlySet<int>? FlexibleTargetIds = null,
+    int FlexibleHorizon = 15);
 
 /// <summary>Result of a <see cref="SeedSearcher.Search"/> call - <see cref="MatchCapReached"/> distinguishes "stopped early because matchCap was hit" from a genuine full-space completion, since both otherwise look like the loop just finishing.</summary>
 public readonly record struct SeedSearchResult(bool MatchCapReached);
@@ -52,7 +57,11 @@ public static class SeedSearcher
         Action<long> onProgress,
         CancellationToken cancellationToken)
     {
-        var maxDay = request.DayTargets.Count == 0 ? 0 : request.DayTargets.Keys.Max();
+        var hasFlexibleTargets = request.FlexibleTargetIds is { Count: > 0 };
+        var maxDay = Math.Max(
+            request.DayTargets.Count == 0 ? 0 : request.DayTargets.Keys.Max(),
+            hasFlexibleTargets ? request.FlexibleHorizon : 0);
+        var flexibleTargetIds = hasFlexibleTargets ? request.FlexibleTargetIds! : (IReadOnlySet<int>)new HashSet<int>();
         long checkedCount = 0;
         long matchCount = 0;
         var matchCapReached = false;
@@ -74,7 +83,7 @@ public static class SeedSearcher
             {
                 var seedString = IndexToSeedString(i, request.Alphabet, request.Length);
                 if (request.ExcludedSeeds?.Contains(seedString) != true &&
-                    Matches(repo, new Seed(seedString), request.SettingPackId, request.Setup, request.DayTargets, maxDay, request.Tier))
+                    Matches(repo, new Seed(seedString), request.SettingPackId, request.Setup, request.DayTargets, flexibleTargetIds, maxDay, request.Tier))
                 {
                     onMatch(seedString);
                     if (Interlocked.Increment(ref matchCount) >= matchCap)
@@ -108,9 +117,13 @@ public static class SeedSearcher
 
     private static bool Matches(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier)
+        IReadOnlyDictionary<int, int> dayTargets, IReadOnlySet<int> flexibleTargetIds, int maxDay, int tier)
     {
-        foreach (var (_, targetId, actual) in Walk(repo, seed, settingPackId, setup, dayTargets, maxDay, tier))
+        // Mutated in place by Walk as flexible targets get picked up - a strict subset check at the
+        // end (rather than a running "found day X" flag) since order among flexible targets doesn't
+        // matter, only that all of them end up owned by maxDay.
+        var remainingFlexible = new HashSet<int>(flexibleTargetIds);
+        foreach (var (_, targetId, actual) in Walk(repo, seed, settingPackId, setup, dayTargets, remainingFlexible, maxDay, tier))
         {
             if (targetId is int t && actual.Unlock1Id != t && actual.Unlock2Id != t)
             {
@@ -118,7 +131,7 @@ public static class SeedSearcher
             }
         }
 
-        return true;
+        return remainingFlexible.Count == 0;
     }
 
     // Safety valve for ResolveCardPaths' backtracking search - bounds worst-case work (many filler
@@ -141,21 +154,21 @@ public static class SeedSearcher
     /// </summary>
     public static IReadOnlyList<IReadOnlyList<(int Day, int? CardId)>> ResolveCardPaths(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier, int maxPaths)
+        IReadOnlyDictionary<int, int> dayTargets, IReadOnlySet<int> flexibleTargetIds, int maxDay, int tier, int maxPaths)
     {
         var results = new List<IReadOnlyList<(int Day, int? CardId)>>();
         var current = new List<(int Day, int? CardId)>();
         var nodesVisited = 0;
         Backtrack(
             repo, seed, settingPackId, setup, dayTargets, maxDay, tier,
-            day: 0, ownedIds: new HashSet<int>(setup.InitiallyOwnedIds),
+            day: 0, ownedIds: new HashSet<int>(setup.InitiallyOwnedIds), remainingFlexible: new HashSet<int>(flexibleTargetIds),
             current, results, maxPaths, ref nodesVisited);
         return results;
     }
 
     private static void Backtrack(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier, int day, HashSet<int> ownedIds,
+        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier, int day, HashSet<int> ownedIds, HashSet<int> remainingFlexible,
         List<(int Day, int? CardId)> current, List<IReadOnlyList<(int Day, int? CardId)>> results,
         int maxPaths, ref int nodesVisited)
     {
@@ -166,7 +179,15 @@ public static class SeedSearcher
 
         if (day > maxDay)
         {
-            results.Add(current.ToList());
+            // A complete day-by-day trace only counts as a real path if every flexible target was
+            // actually picked up somewhere along the way, not just "we reached the horizon" - a
+            // trace that never offered one of them is a dead end for this purpose, same as any
+            // other branch that fails to reproduce the match.
+            if (remainingFlexible.Count == 0)
+            {
+                results.Add(current.ToList());
+            }
+
             return;
         }
 
@@ -185,7 +206,7 @@ public static class SeedSearcher
         if (offered.Unlock1Id is null)
         {
             current.Add((day, null));
-            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, day + 1, ownedIds, current, results, maxPaths, ref nodesVisited);
+            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, day + 1, ownedIds, remainingFlexible, current, results, maxPaths, ref nodesVisited);
             current.RemoveAt(current.Count - 1);
             return;
         }
@@ -202,9 +223,16 @@ public static class SeedSearcher
         }
         else
         {
-            candidates = offered.Unlock2Id is int u2 && u2 != offered.Unlock1Id
-                ? [offered.Unlock1Id.Value, u2]
-                : [offered.Unlock1Id.Value];
+            var opts = offered.Unlock2Id is int u2 && u2 != offered.Unlock1Id
+                ? new List<int> { offered.Unlock1Id.Value, u2 }
+                : new List<int> { offered.Unlock1Id.Value };
+
+            // Prefer whichever offered option satisfies a still-remaining flexible target first
+            // (mirrors Matches'/Walk's own greedy accept-if-remaining policy, so the canonical first
+            // result stays consistent with what Matches actually confirmed) - but still explore the
+            // "leave it as filler" branch too, same as today's multi-option filler days, since a
+            // flexible target left for a later day is just as valid a path as picking it now.
+            candidates = opts.OrderByDescending(remainingFlexible.Contains).ToList();
         }
 
         foreach (var candidate in candidates)
@@ -216,14 +244,17 @@ public static class SeedSearcher
 
             current.Add((day, candidate));
             var nextOwned = new HashSet<int>(ownedIds) { candidate };
-            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, day + 1, nextOwned, current, results, maxPaths, ref nodesVisited);
+            var nextRemainingFlexible = remainingFlexible.Contains(candidate)
+                ? new HashSet<int>(remainingFlexible.Where(id => id != candidate))
+                : remainingFlexible;
+            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, day + 1, nextOwned, nextRemainingFlexible, current, results, maxPaths, ref nodesVisited);
             current.RemoveAt(current.Count - 1);
         }
     }
 
     private static IEnumerable<(int Day, int? TargetId, CardDayResult Actual)> Walk(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier)
+        IReadOnlyDictionary<int, int> dayTargets, HashSet<int> remainingFlexible, int maxDay, int tier)
     {
         // ResolvedRunSetup.InitiallyOwnedIds gets mutated per-day by the simulator, so each candidate
         // seed needs its own copy - dish/heat/franchise-carryover resolution itself doesn't depend on
@@ -238,7 +269,29 @@ public static class SeedSearcher
         {
             var targetId = dayTargets.TryGetValue(day, out var t) ? t : (int?)null;
             var result = sim.SimulateDay(day, offered =>
-                targetId is int tid && (offered.Unlock1Id == tid || offered.Unlock2Id == tid) ? tid : offered.Unlock1Id);
+            {
+                if (targetId is int tid)
+                {
+                    return offered.Unlock1Id == tid || offered.Unlock2Id == tid ? tid : offered.Unlock1Id;
+                }
+
+                // No fixed target this day - greedily accept whichever offered slot still needs
+                // picking up (Unlock1Id preferred, matching the existing filler convention below),
+                // else fall back to the same "accept Unlock1Id as filler" policy as always.
+                if (offered.Unlock1Id is int u1 && remainingFlexible.Contains(u1))
+                {
+                    remainingFlexible.Remove(u1);
+                    return u1;
+                }
+
+                if (offered.Unlock2Id is int u2 && remainingFlexible.Contains(u2))
+                {
+                    remainingFlexible.Remove(u2);
+                    return u2;
+                }
+
+                return offered.Unlock1Id;
+            });
 
             yield return (day, targetId, result);
         }

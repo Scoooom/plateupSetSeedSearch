@@ -62,4 +62,29 @@ public class UnlockPackEvaluatorPossibleCardsTests
         var possible = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, owned, day: 3, tier: 0);
         Assert.DoesNotContain(MediumGroupsId, possible);
     }
+
+    [Fact]
+    public void HasBlockedByConflict_DetectsDirectConflict()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+
+        // Reuses the same real, data-verified mutual-BlockedBy pair as the tests above -
+        // "Medium Groups" and "Individual Dining" can never coexist.
+        var targetIds = new HashSet<int> { MediumGroupsId, IndividualDiningId };
+        var found = UnlockPackEvaluator.HasBlockedByConflict(repo, targetIds, out var conflict);
+
+        Assert.True(found);
+        Assert.Equal(targetIds, new HashSet<int> { conflict.CardId, conflict.BlockedById });
+    }
+
+    [Fact]
+    public void HasBlockedByConflict_ReturnsFalseForIndependentCards()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+
+        var targetIds = new HashSet<int> { MediumGroupsId, LargeGroupsId };
+        var found = UnlockPackEvaluator.HasBlockedByConflict(repo, targetIds, out _);
+
+        Assert.False(found);
+    }
 }
