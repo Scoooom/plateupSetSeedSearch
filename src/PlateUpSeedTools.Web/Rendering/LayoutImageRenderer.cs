@@ -144,7 +144,17 @@ public static class LayoutImageRenderer
         IReadOnlyDictionary<string, SKColor>? colorOverrides)
     {
         var typeKey = tile.RoomType.ToLowerInvariant();
-        if (roomOrderByType.TryGetValue(tile.RoomType, out var order) && order.Count > 1)
+        // Unassigned always goes through the per-instance path, even with only one room in the
+        // layout - DrawRoomLabels always numbers Unassigned rooms R1/R2/... regardless of count
+        // (see its comment), so the fill color has to key the same way or a "unassigned:0"
+        // override set while viewing a 2+-instance seed silently stops applying the moment the
+        // player loads a seed with only one Unassigned room (real player-reported bug: a
+        // customized color "not carrying over" to a new seed). Other per-instance types (Dining)
+        // keep the >1 gate - they're never re-numbered on a single instance, so there's no such
+        // mismatch to fix.
+        var usesInstanceKey = tile.RoomType == "Unassigned"
+            || (roomOrderByType.TryGetValue(tile.RoomType, out var order) && order.Count > 1);
+        if (usesInstanceKey)
         {
             var index = indexByRoomId[tile.RoomId];
             // A per-instance override ("unassigned:1", matching wwwroot/js/app.js's customize-colors

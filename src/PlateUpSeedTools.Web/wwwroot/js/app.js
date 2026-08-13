@@ -130,17 +130,29 @@ function buildColorEntries(layout, roomOrderByType, indexByRoomId) {
   const unassignedInstances = [];
   for (const tile of layout.tiles) {
     const typeKey = tile.roomType.toLowerCase();
+
+    // Unassigned always uses its per-instance key ("unassigned:0", ...), even when this layout
+    // only has one - mirrors LayoutImageRenderer.ColorForTile/DrawRoomLabels, which always number
+    // Unassigned rooms R1/R2/... regardless of count. Without this, a color set on "R1" while
+    // viewing a seed with 2+ Unassigned rooms (key "unassigned:0") silently stopped applying on a
+    // seed with only one (which used to fall back to the bare "unassigned" key instead) - real
+    // player-reported bug: a customized color "not carrying over" to a new seed.
+    if (tile.roomType === "Unassigned") {
+      const index = indexByRoomId.get(tile.roomId);
+      const key = `${typeKey}:${index}`;
+      if (!unassignedInstances.some((e) => e[0] === key)) {
+        const label = `R${index + 1}`;
+        const color = colorOverrides[key] ?? shadeColor(resolveColor(typeKey), index);
+        unassignedInstances.push([key, { index, label, legendLabel: `Unassigned ${index + 1} (${label})`, color }]);
+      }
+      continue;
+    }
+
     const order = roomOrderByType.get(tile.roomType);
     if (order && order.length > 1) {
       const index = indexByRoomId.get(tile.roomId);
       const key = `${typeKey}:${index}`;
-      if (tile.roomType === "Unassigned") {
-        if (!unassignedInstances.some((e) => e[0] === key)) {
-          const label = `R${index + 1}`;
-          const color = colorOverrides[key] ?? shadeColor(resolveColor(typeKey), index);
-          unassignedInstances.push([key, { index, label, legendLabel: `Unassigned ${index + 1} (${label})`, color }]);
-        }
-      } else if (!namedRooms.has(key)) {
+      if (!namedRooms.has(key)) {
         const label = `${tile.roomType} ${index + 1}`;
         const color = colorOverrides[key] ?? shadeColor(resolveColor(typeKey), index);
         namedRooms.set(key, { label, legendLabel: label, color });
