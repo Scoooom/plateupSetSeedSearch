@@ -143,12 +143,21 @@ public static class LayoutImageRenderer
         TileDto tile, Dictionary<string, List<int>> roomOrderByType, Dictionary<int, int> indexByRoomId,
         IReadOnlyDictionary<string, SKColor>? colorOverrides)
     {
-        var baseColor = Resolve(colorOverrides, tile.RoomType.ToLowerInvariant(), LayoutColors.RoomColor(tile.RoomType));
+        var typeKey = tile.RoomType.ToLowerInvariant();
         if (roomOrderByType.TryGetValue(tile.RoomType, out var order) && order.Count > 1)
         {
-            return LayoutColors.ShadeColor(baseColor, indexByRoomId[tile.RoomId]);
+            var index = indexByRoomId[tile.RoomId];
+            // A per-instance override ("unassigned:1", matching wwwroot/js/app.js's customize-colors
+            // panel - one swatch per physical instance, e.g. R1/R2, not one shared type-level swatch)
+            // wins outright; otherwise fall back to the type-level override/default, auto-shaded.
+            if (colorOverrides is not null && colorOverrides.TryGetValue($"{typeKey}:{index}", out var instanceColor))
+            {
+                return instanceColor;
+            }
+            var baseColor = Resolve(colorOverrides, typeKey, LayoutColors.RoomColor(tile.RoomType));
+            return LayoutColors.ShadeColor(baseColor, index);
         }
-        return baseColor;
+        return Resolve(colorOverrides, typeKey, LayoutColors.RoomColor(tile.RoomType));
     }
 
     // Draws a room-type code (LayoutColors.RoomCode, e.g. "KIT"/"UNA") as a full-tile badge - solid

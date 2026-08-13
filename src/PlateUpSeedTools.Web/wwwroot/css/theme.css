@@ -351,7 +351,7 @@ button[type="submit"]:hover {
 .color-panel-rows {
   margin-top: 0.75rem;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 0.5rem 1rem;
 }
 
@@ -375,6 +375,23 @@ button[type="submit"]:hover {
   border-radius: 4px;
   background: none;
   cursor: pointer;
+}
+
+.color-panel-row .color-hex {
+  width: 5.2rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  flex: none;
+}
+
+.color-panel-row .color-hex:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .color-panel-row .color-reset {

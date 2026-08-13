@@ -12,8 +12,9 @@ const colorPanelResetAllButton = document.getElementById("color-panel-reset-all"
 
 // VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
 
-// Used only for the legend's feature swatches now (the layout image itself draws features
-// server-side, see LayoutColors.cs) - kept in sync with that C# copy by convention.
+// Shipped defaults for feature colors (the layout image draws features server-side, see
+// LayoutColors.cs) - kept in sync with that C# copy by convention. Used as the fallback in
+// shippedDefaultColor below, and as legend/panel swatch colors via resolveColor/buildColorEntries.
 const FEATURE_COLORS = {
   frontdoor: "#ffe066",
   door: "#f1e6d8",
@@ -21,14 +22,6 @@ const FEATURE_COLORS = {
   hatch: "#7fd4c1",
 };
 const DEFAULT_FEATURE_COLOR = "#9a8a76";
-function featureColor(type) {
-  // "doorreversed" shares the "door" customization swatch too - mirrors LayoutImageRenderer.DrawFeatures.
-  const key = type.toLowerCase() === "doorreversed" ? "door" : type.toLowerCase();
-  if (DEFAULT_COLORS.has(key)) {
-    return resolveColor(key);
-  }
-  return FEATURE_COLORS[type.toLowerCase()] ?? DEFAULT_FEATURE_COLOR;
-}
 
 // Mirrors LayoutColors.WallColor - walls aren't part of the `features` list (there's no "Wall"
 // concept in the underlying data; LayoutImageRenderer.DrawWalls derives them from tile/feature
@@ -58,47 +51,39 @@ function roomCode(roomType) {
   return ROOM_CODES[roomType.toLowerCase()] ?? "UNA";
 }
 
-// Player color customization (real player request) - full per-swatch pickers over everything in
-// LayoutColors.cs (14 room fills + wall + door/frontdoor/hatch), saved to localStorage and
-// deliberately browser-local: only the <img> request this page makes for itself carries the
-// `colors` query param (see renderLayout below) - the address bar URL, "Copy link", and the
-// shareable /preview/.../seed.png used for Discord/OG embeds never do, so anyone else opening a
-// shared link always sees the shipped default palette. `kind` drives where each field's shipped
-// default color comes from (defaultColorFor below); `key` is what both this page and
-// LayoutEndpoints.GetLayoutPng's `?colors=` parsing use to identify a swatch.
-const COLOR_FIELDS = [
-  { key: "dining", label: "Dining", kind: "room" },
-  { key: "kitchen", label: "Kitchen", kind: "room" },
-  { key: "garden", label: "Garden", kind: "room" },
-  { key: "workshop", label: "Workshop", kind: "room" },
-  { key: "office", label: "Office", kind: "room" },
-  { key: "frontentrance", label: "Front Entrance", kind: "room" },
-  { key: "locations", label: "Locations", kind: "room" },
-  { key: "storage", label: "Storage", kind: "room" },
-  { key: "bedroom", label: "Bedroom", kind: "room" },
-  { key: "trophies", label: "Trophies", kind: "room" },
-  { key: "garage", label: "Garage", kind: "room" },
-  { key: "contracts", label: "Contracts", kind: "room" },
-  { key: "unassigned", label: "Unassigned", kind: "room" },
-  { key: "socialspace", label: "Social Space", kind: "room" },
-  { key: "wall", label: "Wall", kind: "wall" },
-  { key: "door", label: "Door", kind: "feature" },
-  { key: "frontdoor", label: "Front Door", kind: "feature" },
-  { key: "hatch", label: "Hatch", kind: "feature" },
-];
+// Player color customization (real player request): a swatch per color this SPECIFIC layout
+// actually uses - not every RoomType the game engine knows about (most settings only ever show a
+// handful of the 14). Room types that appear more than once (Dining, Unassigned - see
+// PER_INSTANCE_ROOM_TYPES below) get one row per physical instance, labeled to match its badge on
+// the image (R1/R2/... for Unassigned), not one generic type-level row - so the panel always
+// mirrors exactly what's in the legend. Saved to localStorage, deliberately browser-local: only
+// the <img> request this page makes for itself carries the `colors` query param (see renderLayout)
+// - the address bar URL, "Copy link", and the shareable /preview/.../seed.png used for Discord/OG
+// embeds never do, so anyone else opening a shared link always sees the shipped default palette.
+//
+// Key scheme (also what LayoutEndpoints.GetLayoutPng's `?colors=` parsing expects):
+//  - single-instance room / wall / feature: the lowercase name ("kitchen", "wall", "door", ...)
+//  - a room type with multiple physical instances: "<type>:<0-based index>" (e.g. "unassigned:1"
+//    for R2) - overriding this bypasses LayoutColors.ShadeColor's auto-derived variant for that
+//    one instance only; resetting it falls back to the auto-shaded color again, not the type's
+//    shipped default, since there's no single "default" for an arbitrary Nth instance.
+const FIELD_LABELS = {
+  dining: "Dining", kitchen: "Kitchen", garden: "Garden", workshop: "Workshop", office: "Office",
+  frontentrance: "Front Entrance", locations: "Locations", storage: "Storage", bedroom: "Bedroom",
+  trophies: "Trophies", garage: "Garage", contracts: "Contracts", unassigned: "Unassigned",
+  socialspace: "Social Space", wall: "Wall", door: "Door", frontdoor: "Front Door", hatch: "Hatch",
+};
+const KNOWN_COLOR_KEYS = new Set(Object.keys(FIELD_LABELS));
 
-function shippedDefaultColor(field) {
-  if (field.kind === "room") {
-    return getComputedStyle(document.documentElement).getPropertyValue(`--room-${field.key}`).trim();
-  }
-  if (field.kind === "wall") {
+function shippedDefaultColor(key) {
+  if (key === "wall") {
     return WALL_COLOR;
   }
-  return FEATURE_COLORS[field.key] ?? DEFAULT_FEATURE_COLOR;
+  if (key === "door" || key === "frontdoor" || key === "hatch") {
+    return FEATURE_COLORS[key] ?? DEFAULT_FEATURE_COLOR;
+  }
+  return getComputedStyle(document.documentElement).getPropertyValue(`--room-${key}`).trim();
 }
-
-// Computed once - theme.css's custom properties don't change at runtime.
-const DEFAULT_COLORS = new Map(COLOR_FIELDS.map((field) => [field.key, shippedDefaultColor(field)]));
 
 const COLOR_OVERRIDES_STORAGE_KEY = "plateup:colorOverrides";
 function loadColorOverrides() {
@@ -119,63 +104,180 @@ function saveColorOverrides() {
 }
 let colorOverrides = loadColorOverrides();
 
-// The single source of truth for "what color is this thing right now" - a player's override if
-// they've set one, else the shipped default. Used both for the legend swatches (computed here,
-// client-side) and to build the `colors` param the rendered <img> asks the server for.
+// The single source of truth for "what color is this thing right now" for a type-level/wall/
+// feature key - a player's override if they've set one, else the shipped default. Per-instance
+// keys ("unassigned:1") are resolved separately in buildColorEntries, since their fallback is a
+// computed shade, not a fixed default.
 function resolveColor(key) {
-  return colorOverrides[key] ?? DEFAULT_COLORS.get(key);
+  return colorOverrides[key] ?? shippedDefaultColor(key);
 }
 
 function buildColorsQueryParam() {
   return Object.keys(colorOverrides).length > 0 ? `?colors=${encodeURIComponent(JSON.stringify(colorOverrides))}` : "";
 }
 
-function renderColorPanel() {
+// Builds the ordered set of {key, label, legendLabel, color} rows this layout actually needs -
+// shared by both the legend and the customize panel so they can never drift apart (`label` is the
+// compact panel text, e.g. "R2"; `legendLabel` is the fuller legend text, e.g. "Unassigned 2 (R2)").
+// `roomOrderByType`/`indexByRoomId` come from renderLayout's existing per-instance grouping.
+//
+// Ordering: every non-Unassigned-instance entry (rooms alphabetically, then features, then Wall)
+// comes first, with the R1/R2/... Unassigned rows always last, in R-number order - real player
+// request, since Unassigned rooms are the "extra" ones with no fixed identity and read better as a
+// trailing group than interleaved alphabetically among named rooms.
+function buildColorEntries(layout, roomOrderByType, indexByRoomId) {
+  const namedRooms = new Map();
+  const unassignedInstances = [];
+  for (const tile of layout.tiles) {
+    const typeKey = tile.roomType.toLowerCase();
+    const order = roomOrderByType.get(tile.roomType);
+    if (order && order.length > 1) {
+      const index = indexByRoomId.get(tile.roomId);
+      const key = `${typeKey}:${index}`;
+      if (tile.roomType === "Unassigned") {
+        if (!unassignedInstances.some((e) => e[0] === key)) {
+          const label = `R${index + 1}`;
+          const color = colorOverrides[key] ?? shadeColor(resolveColor(typeKey), index);
+          unassignedInstances.push([key, { index, label, legendLabel: `Unassigned ${index + 1} (${label})`, color }]);
+        }
+      } else if (!namedRooms.has(key)) {
+        const label = `${tile.roomType} ${index + 1}`;
+        const color = colorOverrides[key] ?? shadeColor(resolveColor(typeKey), index);
+        namedRooms.set(key, { label, legendLabel: label, color });
+      }
+    } else if (!namedRooms.has(typeKey)) {
+      const label = FIELD_LABELS[typeKey] ?? tile.roomType;
+      namedRooms.set(typeKey, { label, legendLabel: `${label} (${roomCode(tile.roomType)})`, color: resolveColor(typeKey) });
+    }
+  }
+
+  const features = new Map();
+  for (const feature of layout.features) {
+    const key = feature.type.toLowerCase() === "doorreversed" ? "door" : feature.type.toLowerCase();
+    if (KNOWN_COLOR_KEYS.has(key) && !features.has(key)) {
+      features.set(key, { label: FIELD_LABELS[key], legendLabel: FIELD_LABELS[key], color: resolveColor(key) });
+    }
+  }
+
+  const entries = new Map([...namedRooms].sort((a, b) => a[1].label.localeCompare(b[1].label)));
+  for (const [key, entry] of [...features].sort()) {
+    entries.set(key, entry);
+  }
+  entries.set("wall", { label: "Wall", legendLabel: "Wall", color: resolveColor("wall") });
+  for (const [key, entry] of unassignedInstances.sort((a, b) => a[1].index - b[1].index)) {
+    entries.set(key, entry);
+  }
+  return entries;
+}
+
+// Rebuilding every <input> on each color tweak would close any native color-picker popup the
+// player currently has open mid-drag (an <input type=color>'s picker closes the moment its
+// element is removed from the DOM) - so rows are only rebuilt when the actual set of colorable
+// things changes (a new seed/setting with different room types), tracked via this signature; a
+// plain color change just updates existing inputs' values in place via colorPanelInputsByKey.
+let colorPanelSignature = null;
+let colorPanelInputsByKey = new Map();
+
+// Native <input type=color> pickers default to an RGB-sliders view in most browsers, not hex -
+// real player request was a color wheel (still the native picker, that part's fine) PLUS a hex
+// text box next to it that can be typed/pasted into directly. The two inputs stay in sync; the hex
+// box only commits (updates colorOverrides / re-renders) once its content is a complete, valid
+// "#rrggbb" - so typing/pasting mid-edit doesn't spam invalid intermediate values through.
+const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+function buildColorPanelRows(entries) {
   colorPanelRowsEl.innerHTML = "";
-  for (const field of COLOR_FIELDS) {
+  colorPanelInputsByKey = new Map();
+  for (const [key, entry] of entries) {
     const row = document.createElement("div");
     row.className = "color-panel-row";
 
     const label = document.createElement("span");
-    label.textContent = field.label;
+    label.textContent = entry.label;
 
-    const input = document.createElement("input");
-    input.type = "color";
-    input.value = resolveColor(field.key);
-    input.setAttribute("aria-label", `${field.label} color`);
-    input.addEventListener("input", () => {
-      colorOverrides[field.key] = input.value;
+    const colorInput = document.createElement("input");
+    colorInput.type = "color";
+    colorInput.value = entry.color;
+    colorInput.setAttribute("aria-label", `${entry.label} color wheel`);
+
+    const hexInput = document.createElement("input");
+    hexInput.type = "text";
+    hexInput.className = "color-hex";
+    hexInput.value = entry.color;
+    hexInput.maxLength = 7;
+    hexInput.spellcheck = false;
+    hexInput.autocomplete = "off";
+    hexInput.setAttribute("aria-label", `${entry.label} hex code`);
+
+    function commit(value) {
+      colorOverrides[key] = value;
       saveColorOverrides();
       refreshCurrentLayout();
+    }
+
+    colorInput.addEventListener("input", () => {
+      hexInput.value = colorInput.value;
+      commit(colorInput.value);
+    });
+
+    hexInput.addEventListener("input", () => {
+      let value = hexInput.value.trim();
+      if (value && !value.startsWith("#")) {
+        value = `#${value}`;
+      }
+      if (!HEX_COLOR_PATTERN.test(value)) {
+        return;
+      }
+      value = value.toLowerCase();
+      hexInput.value = value;
+      colorInput.value = value;
+      commit(value);
     });
 
     const reset = document.createElement("button");
     reset.type = "button";
     reset.className = "color-reset";
-    reset.title = `Reset ${field.label} to default`;
-    reset.setAttribute("aria-label", `Reset ${field.label} to default`);
+    reset.title = `Reset ${entry.label} to default`;
+    reset.setAttribute("aria-label", `Reset ${entry.label} to default`);
     reset.textContent = "↺";
     reset.addEventListener("click", () => {
-      delete colorOverrides[field.key];
+      delete colorOverrides[key];
       saveColorOverrides();
-      input.value = resolveColor(field.key);
       refreshCurrentLayout();
     });
 
-    row.append(label, input, reset);
+    row.append(label, colorInput, hexInput, reset);
     colorPanelRowsEl.appendChild(row);
+    colorPanelInputsByKey.set(key, { colorInput, hexInput });
+  }
+}
+
+function syncColorPanel(entries) {
+  const signature = [...entries.keys()].join("|");
+  if (signature !== colorPanelSignature) {
+    colorPanelSignature = signature;
+    buildColorPanelRows(entries);
+    return;
+  }
+  for (const [key, entry] of entries) {
+    const pair = colorPanelInputsByKey.get(key);
+    // Skip the hex box the player is actively typing/pasting into - overwriting it mid-edit would
+    // clobber a partial value (e.g. "#ff") before it ever becomes a complete, valid hex.
+    if (pair && document.activeElement !== pair.hexInput) {
+      pair.colorInput.value = entry.color;
+      pair.hexInput.value = entry.color;
+    }
   }
 }
 
 colorPanelResetAllButton.addEventListener("click", () => {
   colorOverrides = {};
   saveColorOverrides();
-  renderColorPanel();
   refreshCurrentLayout();
 });
 
 // Set by renderLayout so a color change can redraw without re-fetching /api/layout - the palette
-// is global, not per-seed, so only the image/legend need to change, not the underlying layout data.
+// is global, not per-seed, so only the image/legend/panel need to change, not the underlying layout data.
 let currentLayout = null;
 function refreshCurrentLayout() {
   if (currentLayout) {
@@ -347,61 +449,23 @@ function renderLayout(layout) {
   for (const order of roomOrderByType.values()) {
     order.forEach((id, i) => indexByRoomId.set(id, i));
   }
-  const baseColorByType = new Map([...PER_INSTANCE_ROOM_TYPES].map((t) => [t, resolveColor(t.toLowerCase())]));
-
-  function styleForTile(tile) {
-    // Unassigned rooms have no real per-room identity in the game data - a shared "UNA" code on
-    // every one of them was ambiguous when a layout has several, so each physical instance gets its
-    // own R1/R2/R3... instead (mirrors LayoutColors/LayoutImageRenderer server-side), in the same
-    // first-seen order used for shading below, so "R2" always lines up with the second-shaded tile.
-    const code = tile.roomType === "Unassigned" ? `R${indexByRoomId.get(tile.roomId) + 1}` : roomCode(tile.roomType);
-    const order = roomOrderByType.get(tile.roomType);
-    if (order && order.length > 1) {
-      const index = indexByRoomId.get(tile.roomId);
-      return { color: shadeColor(baseColorByType.get(tile.roomType), index), label: `${tile.roomType} ${index + 1} (${code})` };
-    }
-    return { color: resolveColor(tile.roomType.toLowerCase()), label: `${tile.roomType} (${code})` };
-  }
-
-  const legendRoomsSeen = new Map();
-  for (const tile of layout.tiles) {
-    const style = styleForTile(tile);
-    legendRoomsSeen.set(style.label, style.color);
-  }
-
-  const featureTypesSeen = new Set();
-  for (const feature of layout.features) {
-    featureTypesSeen.add(feature.type);
-  }
+  // Single ordered source for both the legend and the customize panel (buildColorEntries) - keeps
+  // them from ever drifting apart, and means the "R1/R2 always last" ordering (real player request)
+  // only has to be implemented once.
+  const colorEntries = buildColorEntries(layout, roomOrderByType, indexByRoomId);
 
   legendEl.innerHTML = "";
-  for (const label of [...legendRoomsSeen.keys()].sort()) {
+  for (const [, entry] of colorEntries) {
     const span = document.createElement("span");
     const swatch = document.createElement("span");
     swatch.className = "swatch";
-    swatch.style.background = legendRoomsSeen.get(label);
+    swatch.style.background = entry.color;
     span.appendChild(swatch);
-    span.appendChild(document.createTextNode(label));
+    span.appendChild(document.createTextNode(entry.legendLabel));
     legendEl.appendChild(span);
   }
-  for (const featureType of [...featureTypesSeen].sort()) {
-    const span = document.createElement("span");
-    const swatch = document.createElement("span");
-    swatch.className = "swatch";
-    swatch.style.background = featureColor(featureType);
-    span.appendChild(swatch);
-    span.appendChild(document.createTextNode(featureType));
-    legendEl.appendChild(span);
-  }
-  {
-    const span = document.createElement("span");
-    const swatch = document.createElement("span");
-    swatch.className = "swatch";
-    swatch.style.background = resolveColor("wall");
-    span.appendChild(swatch);
-    span.appendChild(document.createTextNode("Wall"));
-    legendEl.appendChild(span);
-  }
+
+  syncColorPanel(colorEntries);
 
   const frontDoor = layout.features.find((f) => f.type === "FrontDoor");
   const frontDoorText = frontDoor ? `, front door at (${frontDoor.tile1X}, ${frontDoor.tile1Y})` : "";
@@ -460,5 +524,4 @@ copyLinkButton.addEventListener("click", async () => {
   }
 });
 
-renderColorPanel();
 loadSettings().catch(() => setStatus("Failed to load restaurant settings.", true));
