@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Layouts;
@@ -5,6 +6,7 @@ using PlateUpSeedTools.Engine.Seeding;
 using PlateUpSeedTools.Infrastructure.Cache;
 using PlateUpSeedTools.Web.Contracts;
 using PlateUpSeedTools.Web.Rendering;
+using SkiaSharp;
 
 namespace PlateUpSeedTools.Web.Endpoints;
 
@@ -19,6 +21,12 @@ public static partial class LayoutEndpoints
     // control characters/whitespace/URL-unsafe input reaching the cache key and hash function).
     [GeneratedRegex("^[a-zA-Z0-9]{1,8}$")]
     private static partial Regex ValidSeedPattern();
+
+    // A player's saved color-customization panel (wwwroot/js/app.js) sends its overrides as this
+    // shape on the .png request only - never on the bare hotlink/og:image routes, so shared links
+    // and Discord embeds always render the shipped default palette regardless of who's viewing.
+    [GeneratedRegex("^#[0-9a-fA-F]{6}$")]
+    private static partial Regex HexColorPattern();
 
     // Matches the synthesized fallback label SettingExtractor.ResolveAppliance assigns to appliance
     // IDs with no real English display name in any locale (currently only "Item Source Reservation",
@@ -72,10 +80,52 @@ public static partial class LayoutEndpoints
             return Results.BadRequest(new { error });
         }
 
-        // Content is deterministic per setting+seed - safe for browsers/Discord's own fetcher to cache.
+        // Content is deterministic per setting+seed+colors - safe for browsers/Discord's own
+        // fetcher to cache (the full override state is baked into the URL itself, not a session/
+        // cookie, so a "public" cache never mixes up different players' choices).
         httpContext.Response.Headers.CacheControl = "public, max-age=86400";
-        var png = LayoutImageRenderer.Render(layout, env.WebRootPath);
+        var colorOverrides = ParseColorOverrides(httpContext.Request.Query["colors"]);
+        var png = LayoutImageRenderer.Render(layout, env.WebRootPath, colorOverrides);
         return Results.File(png, "image/png");
+    }
+
+    // `colors` is a JSON object of lowercase keys (a RoomType name, "wall", "door", "frontdoor", or
+    // "hatch" - see LayoutImageRenderer.Render's doc comment) to "#rrggbb" strings. Deliberately
+    // lenient: malformed JSON or a bad individual value just falls back to the default for that
+    // key/skips the whole param, rather than failing the image request - a stale/corrupted
+    // localStorage value shouldn't be able to break a player's preview.
+    private static IReadOnlyDictionary<string, SKColor>? ParseColorOverrides(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        Dictionary<string, string>? raw;
+        try
+        {
+            raw = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (raw is null)
+        {
+            return null;
+        }
+
+        var overrides = new Dictionary<string, SKColor>();
+        foreach (var (key, value) in raw)
+        {
+            if (HexColorPattern().IsMatch(value))
+            {
+                overrides[key.ToLowerInvariant()] = SKColor.Parse(value);
+            }
+        }
+
+        return overrides.Count > 0 ? overrides : null;
     }
 
     private static async Task<IResult> GetPreviewHtml(

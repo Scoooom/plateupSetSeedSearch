@@ -27,16 +27,34 @@ public static class LayoutImageRenderer
     private const float FeatureRadiusPx = TileSizePx * 2f / 28f;
     private const float FeatureThicknessPx = TileSizePx * 5f / 28f;
     private const float FrontDoorThicknessPx = TileSizePx * 7f / 28f;
+    private const float WallThicknessPx = TileSizePx * 4f / 28f;
+
+    // Full-tile room-code badge - deliberately near the tile's full size (a thin margin, not the
+    // appliance box's) so it reads as "this whole tile is the label", per real player feedback that
+    // the old small floating text didn't stand out enough.
+    private const float RoomLabelMarginPx = TileSizePx * 1f / 28f;
+    private const float RoomLabelRadiusPx = TileSizePx * 2f / 28f;
+    private const float RoomLabelBorderPx = TileSizePx * 2.5f / 28f;
 
     private static readonly HashSet<string> PerInstanceRoomTypes = new(StringComparer.Ordinal) { "Dining", "Unassigned" };
     private static readonly SKColor ApplianceBoxColor = SKColor.Parse("#e0793c");
     private static readonly SKColor ApplianceTextColor = SKColor.Parse("#1b1410");
+    private static readonly SKColor RoomLabelBackground = SKColor.Parse("#f1e6d8");
+    private static readonly SKColor RoomLabelBorder = SKColor.Parse("#1b1410");
+    private static readonly SKColor RoomLabelText = SKColor.Parse("#1b1410");
+
+    private static readonly (int Dx, int Dy)[] Neighbors4 = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
     // Icon files never change without a redeploy - safe to cache decoded bitmaps for the process
     // lifetime rather than re-decoding on every request.
     private static readonly ConcurrentDictionary<string, SKBitmap?> IconCache = new();
 
-    public static byte[] Render(LayoutResponse layout, string webRootPath)
+    // Player-supplied per-request color overrides (LayoutEndpoints.GetLayoutPng's `?colors=` query
+    // param) - lowercase keys: a RoomType name ("kitchen", "unassigned", ...), "wall", or a feature
+    // type ("door" - also covers "doorreversed", "frontdoor", "hatch"). Browser-local by design (see
+    // app.js) - never affects the canonical /preview/.../seed.png used for og:image/Discord embeds
+    // or shared hotlinks, only a request a player's own page makes for itself.
+    public static byte[] Render(LayoutResponse layout, string webRootPath, IReadOnlyDictionary<string, SKColor>? colorOverrides = null)
     {
         var bounds = ComputeBounds(layout.Tiles, layout.Appliances);
         var widthPx = (int)MathF.Round(bounds.Width * TileSizePx);
@@ -57,20 +75,26 @@ public static class LayoutImageRenderer
         {
             foreach (var tile in layout.Tiles)
             {
-                tilePaint.Color = ColorForTile(tile, roomOrderByType, indexByRoomId);
+                tilePaint.Color = ColorForTile(tile, roomOrderByType, indexByRoomId, colorOverrides);
                 var (x, y) = CellOrigin(tile.X, tile.Y, bounds);
                 var rect = SKRect.Create(x + HairlinePx, y + HairlinePx, TileSizePx - HairlinePx, TileSizePx - HairlinePx);
                 canvas.DrawRect(rect, tilePaint);
             }
         }
 
+        DrawRoomLabels(canvas, layout.Tiles, layout.Appliances, layout.Features, bounds);
         DrawAppliances(canvas, layout.Appliances, bounds, webRootPath);
-        DrawFeatures(canvas, layout.Features, bounds);
+        DrawWalls(canvas, layout.Tiles, layout.Features, bounds, colorOverrides);
+        DrawFeatures(canvas, layout.Features, bounds, colorOverrides);
 
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         return data.ToArray();
     }
+
+    // A player override wins if present for `key`; otherwise the caller's normal default.
+    private static SKColor Resolve(IReadOnlyDictionary<string, SKColor>? overrides, string key, SKColor fallback) =>
+        overrides is not null && overrides.TryGetValue(key, out var color) ? color : fallback;
 
     // Tiles ∪ appliances, matching app.js:182-191 - not LayoutResponse.Width/Height, which is
     // tiles-only (LayoutEndpoints.ToResponse) and already goes unused by the client's own renderer
@@ -116,14 +140,162 @@ public static class LayoutImageRenderer
     }
 
     private static SKColor ColorForTile(
-        TileDto tile, Dictionary<string, List<int>> roomOrderByType, Dictionary<int, int> indexByRoomId)
+        TileDto tile, Dictionary<string, List<int>> roomOrderByType, Dictionary<int, int> indexByRoomId,
+        IReadOnlyDictionary<string, SKColor>? colorOverrides)
     {
+        var baseColor = Resolve(colorOverrides, tile.RoomType.ToLowerInvariant(), LayoutColors.RoomColor(tile.RoomType));
         if (roomOrderByType.TryGetValue(tile.RoomType, out var order) && order.Count > 1)
         {
-            return LayoutColors.ShadeColor(LayoutColors.RoomColor(tile.RoomType), indexByRoomId[tile.RoomId]);
+            return LayoutColors.ShadeColor(baseColor, indexByRoomId[tile.RoomId]);
         }
-        return LayoutColors.RoomColor(tile.RoomType);
+        return baseColor;
     }
+
+    // Draws a room-type code (LayoutColors.RoomCode, e.g. "KIT"/"UNA") as a full-tile badge - solid
+    // near-white background, dark border and bold ink - on one representative tile per physical room
+    // instance (grouped by RoomId, regardless of type - not just the two PerInstanceRoomTypes that
+    // get their own shaded color). Real player feedback asked for colorblind-safe symbols that
+    // actually stand out (the original small floating text over the room's own fill color didn't),
+    // and to avoid landing on an appliance or touching a door/hatch (a badge overlapping the door bar
+    // it sits next to reads as broken, not deliberate) - a fixed neutral badge (rather than text
+    // colored for contrast against whatever the room's fill happens to be) reads clearly against
+    // every room color and every appliance icon alike. Always on, not a toggle: appliances get an
+    // equivalent always-on box+text treatment already. The representative tile is the best-scoring
+    // tile nearest the room's centroid, preferring (in order) a tile with no appliance and no
+    // adjacent door/hatch/front-door, then no appliance regardless of adjacency, then any tile at
+    // all - so a badge only ever covers a fixture or crowds an opening when a room genuinely leaves
+    // no cleaner option (e.g. a room that's entirely doorway-adjacent).
+    private static void DrawRoomLabels(
+        SKCanvas canvas, IReadOnlyList<TileDto> tiles, IReadOnlyList<ApplianceDto> appliances,
+        IReadOnlyList<FeatureDto> features, Bounds bounds)
+    {
+        var applianceTiles = new HashSet<(int X, int Y)>(appliances.Select(a => (a.X, a.Y)));
+        var featureTiles = new HashSet<(int X, int Y)>(
+            features.SelectMany(f => new[] { (f.Tile1X, f.Tile1Y), (f.Tile2X, f.Tile2Y) }));
+        var unassignedIndexByRoomId = UnassignedIndexByRoomId(tiles);
+
+        using var backgroundPaint = new SKPaint { Style = SKPaintStyle.Fill, Color = RoomLabelBackground, IsAntialias = true };
+        using var borderPaint = new SKPaint { Style = SKPaintStyle.Stroke, Color = RoomLabelBorder, StrokeWidth = RoomLabelBorderPx, IsAntialias = true };
+        using var textPaint = new SKPaint { Color = RoomLabelText, IsAntialias = true };
+        using var font = new SKFont { Size = TileSizePx * 0.4f, Embolden = true };
+
+        foreach (var room in tiles.GroupBy(t => t.RoomId))
+        {
+            var roomTiles = room.ToList();
+            var candidates = roomTiles.Where(t => !applianceTiles.Contains((t.X, t.Y)) && !featureTiles.Contains((t.X, t.Y))).ToList();
+            if (candidates.Count == 0)
+            {
+                candidates = roomTiles.Where(t => !applianceTiles.Contains((t.X, t.Y))).ToList();
+            }
+            if (candidates.Count == 0)
+            {
+                candidates = roomTiles;
+            }
+
+            var centroidX = candidates.Average(t => t.X);
+            var centroidY = candidates.Average(t => t.Y);
+            var labelTile = candidates
+                .OrderBy(t => ((t.X - centroidX) * (t.X - centroidX)) + ((t.Y - centroidY) * (t.Y - centroidY)))
+                .First();
+
+            var (x, y) = CellOrigin(labelTile.X, labelTile.Y, bounds);
+            var badgeRect = SKRect.Create(
+                x + RoomLabelMarginPx, y + RoomLabelMarginPx,
+                TileSizePx - (2 * RoomLabelMarginPx), TileSizePx - (2 * RoomLabelMarginPx));
+
+            var code = labelTile.RoomType == "Unassigned"
+                ? $"R{unassignedIndexByRoomId[labelTile.RoomId] + 1}"
+                : LayoutColors.RoomCode(labelTile.RoomType);
+
+            canvas.DrawRoundRect(badgeRect, RoomLabelRadiusPx, RoomLabelRadiusPx, backgroundPaint);
+            canvas.DrawRoundRect(badgeRect, RoomLabelRadiusPx, RoomLabelRadiusPx, borderPaint);
+            canvas.DrawText(code, badgeRect.MidX, badgeRect.MidY + (font.Size * 0.35f), SKTextAlign.Center, font, textPaint);
+        }
+    }
+
+    // Unassigned rooms have no real per-room identity in the game data (they're just "the graph
+    // never assigned this a type") - a shared "UNA" code on every one of them was ambiguous when a
+    // layout has several, so each physical Unassigned room instead gets its own R1/R2/R3.../ number,
+    // in first-seen tile order - the same order LayoutColors.ShadeColor already uses to give each
+    // instance a distinguishable fill color, so "R2" always lines up with the second-shaded instance.
+    private static Dictionary<int, int> UnassignedIndexByRoomId(IReadOnlyList<TileDto> tiles)
+    {
+        var indexByRoomId = new Dictionary<int, int>();
+        foreach (var tile in tiles)
+        {
+            if (tile.RoomType == "Unassigned" && !indexByRoomId.ContainsKey(tile.RoomId))
+            {
+                indexByRoomId[tile.RoomId] = indexByRoomId.Count;
+            }
+        }
+        return indexByRoomId;
+    }
+
+    // Draws an explicit, solid bar on every tile boundary that is neither same-room nor covered by a
+    // door/hatch/front-door Feature - i.e. every real wall - so walls read as a deliberate barrier
+    // the same way DrawFeatures already makes doors/hatches read as deliberate openings, rather than
+    // being indistinguishable from the plain 1px hairline drawn between every tile regardless of
+    // whether it's a real wall. There's no "Wall" concept in the underlying data (Engine/Layouts) -
+    // a wall is just the absence of a Feature between two adjacent tiles of different RoomId (or a
+    // tile and the exterior, i.e. no tile at all at that position) - so this is computed here from
+    // tile/feature adjacency, not read off a field. Square corners (vs. DrawFeatures' rounded pill
+    // shapes) reinforce "solid barrier" vs. "opening" as a second, shape-based cue.
+    private static void DrawWalls(
+        SKCanvas canvas, IReadOnlyList<TileDto> tiles, IReadOnlyList<FeatureDto> features, Bounds bounds,
+        IReadOnlyDictionary<string, SKColor>? colorOverrides)
+    {
+        var roomIdByPos = tiles.ToDictionary(t => (t.X, t.Y), t => t.RoomId);
+        var featureEdges = new HashSet<(int Ax, int Ay, int Bx, int By)>(
+            features.Select(f => EdgeKey(f.Tile1X, f.Tile1Y, f.Tile2X, f.Tile2Y)));
+
+        var wallEdges = new HashSet<(int Ax, int Ay, int Bx, int By)>();
+        foreach (var tile in tiles)
+        {
+            foreach (var (dx, dy) in Neighbors4)
+            {
+                var neighborPos = (tile.X + dx, tile.Y + dy);
+                var neighborRoomId = roomIdByPos.TryGetValue(neighborPos, out var rid) ? rid : (int?)null;
+                if (neighborRoomId == tile.RoomId)
+                {
+                    continue;
+                }
+
+                var edge = EdgeKey(tile.X, tile.Y, neighborPos.Item1, neighborPos.Item2);
+                if (!featureEdges.Contains(edge))
+                {
+                    wallEdges.Add(edge);
+                }
+            }
+        }
+
+        using var paint = new SKPaint
+        {
+            Style = SKPaintStyle.Fill,
+            Color = Resolve(colorOverrides, "wall", LayoutColors.WallColor),
+            IsAntialias = true,
+        };
+        foreach (var (ax, ay, bx, by) in wallEdges)
+        {
+            var dx = bx - ax;
+            var dy = by - ay;
+            var (x, y) = CellOrigin(ax, ay, bounds);
+
+            var rect = dy > 0
+                ? SKRect.Create(x, y - WallThicknessPx / 2f, TileSizePx, WallThicknessPx)
+                : dy < 0
+                    ? SKRect.Create(x, y + TileSizePx - WallThicknessPx / 2f, TileSizePx, WallThicknessPx)
+                    : dx > 0
+                        ? SKRect.Create(x + TileSizePx - WallThicknessPx / 2f, y, WallThicknessPx, TileSizePx)
+                        : SKRect.Create(x - WallThicknessPx / 2f, y, WallThicknessPx, TileSizePx);
+
+            canvas.DrawRect(rect, paint);
+        }
+    }
+
+    // Normalizes an (unordered) pair of adjacent grid positions into a single lexically-sorted key,
+    // so a wall/feature edge between A and B matches regardless of which tile happens to be Tile1.
+    private static (int Ax, int Ay, int Bx, int By) EdgeKey(int x1, int y1, int x2, int y2) =>
+        (x1 < x2 || (x1 == x2 && y1 < y2)) ? (x1, y1, x2, y2) : (x2, y2, x1, y1);
 
     private static void DrawAppliances(
         SKCanvas canvas, IReadOnlyList<ApplianceDto> appliances, Bounds bounds, string webRootPath)
@@ -168,7 +340,9 @@ public static class LayoutImageRenderer
         }
     }
 
-    private static void DrawFeatures(SKCanvas canvas, IReadOnlyList<FeatureDto> features, Bounds bounds)
+    private static void DrawFeatures(
+        SKCanvas canvas, IReadOnlyList<FeatureDto> features, Bounds bounds,
+        IReadOnlyDictionary<string, SKColor>? colorOverrides)
     {
         using var paint = new SKPaint { Style = SKPaintStyle.Fill, IsAntialias = true };
 
@@ -195,7 +369,13 @@ public static class LayoutImageRenderer
                         ? SKRect.Create(x + TileSizePx - thickness / 2f, y, thickness, TileSizePx)
                         : SKRect.Create(x - thickness / 2f, y, thickness, TileSizePx);
 
-            paint.Color = LayoutColors.FeatureColor(feature.Type);
+            // "doorreversed" shares the "door" override key too - the default table already
+            // collapses them to the same hex (LayoutColors.FeatureColors), so a player picking one
+            // "Door" swatch should recolor both.
+            var overrideKey = string.Equals(feature.Type, "doorreversed", StringComparison.OrdinalIgnoreCase)
+                ? "door"
+                : feature.Type.ToLowerInvariant();
+            paint.Color = Resolve(colorOverrides, overrideKey, LayoutColors.FeatureColor(feature.Type));
             canvas.DrawRoundRect(rect, FeatureRadiusPx, FeatureRadiusPx, paint);
         }
     }

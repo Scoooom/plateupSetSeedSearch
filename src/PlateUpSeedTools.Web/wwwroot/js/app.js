@@ -7,6 +7,8 @@ const resultTitle = document.getElementById("result-title");
 const gridEl = document.getElementById("grid");
 const legendEl = document.getElementById("legend");
 const copyLinkButton = document.getElementById("copy-link");
+const colorPanelRowsEl = document.getElementById("color-panel-rows");
+const colorPanelResetAllButton = document.getElementById("color-panel-reset-all");
 
 // VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
 
@@ -20,7 +22,165 @@ const FEATURE_COLORS = {
 };
 const DEFAULT_FEATURE_COLOR = "#9a8a76";
 function featureColor(type) {
+  // "doorreversed" shares the "door" customization swatch too - mirrors LayoutImageRenderer.DrawFeatures.
+  const key = type.toLowerCase() === "doorreversed" ? "door" : type.toLowerCase();
+  if (DEFAULT_COLORS.has(key)) {
+    return resolveColor(key);
+  }
   return FEATURE_COLORS[type.toLowerCase()] ?? DEFAULT_FEATURE_COLOR;
+}
+
+// Mirrors LayoutColors.WallColor - walls aren't part of the `features` list (there's no "Wall"
+// concept in the underlying data; LayoutImageRenderer.DrawWalls derives them from tile/feature
+// adjacency), so unlike the feature swatches above this is a fixed legend entry rather than one
+// built from data seen on this layout - any real layout has walls somewhere.
+const WALL_COLOR = "#b8a688";
+
+// Mirrors LayoutColors.RoomCodes - short codes the server also draws on every room instance in the
+// rendered image (LayoutImageRenderer.DrawRoomLabels), so identity never depends on color alone.
+// Appended to legend labels here so the legend and the image agree on the same code per room.
+const ROOM_CODES = {
+  dining: "DIN",
+  kitchen: "KIT",
+  garden: "GDN",
+  frontentrance: "FNT",
+  socialspace: "SOC",
+  bedroom: "BED",
+  garage: "GRG",
+  office: "OFF",
+  workshop: "WRK",
+  contracts: "CON",
+  trophies: "TRO",
+  locations: "LOC",
+  storage: "STO",
+};
+function roomCode(roomType) {
+  return ROOM_CODES[roomType.toLowerCase()] ?? "UNA";
+}
+
+// Player color customization (real player request) - full per-swatch pickers over everything in
+// LayoutColors.cs (14 room fills + wall + door/frontdoor/hatch), saved to localStorage and
+// deliberately browser-local: only the <img> request this page makes for itself carries the
+// `colors` query param (see renderLayout below) - the address bar URL, "Copy link", and the
+// shareable /preview/.../seed.png used for Discord/OG embeds never do, so anyone else opening a
+// shared link always sees the shipped default palette. `kind` drives where each field's shipped
+// default color comes from (defaultColorFor below); `key` is what both this page and
+// LayoutEndpoints.GetLayoutPng's `?colors=` parsing use to identify a swatch.
+const COLOR_FIELDS = [
+  { key: "dining", label: "Dining", kind: "room" },
+  { key: "kitchen", label: "Kitchen", kind: "room" },
+  { key: "garden", label: "Garden", kind: "room" },
+  { key: "workshop", label: "Workshop", kind: "room" },
+  { key: "office", label: "Office", kind: "room" },
+  { key: "frontentrance", label: "Front Entrance", kind: "room" },
+  { key: "locations", label: "Locations", kind: "room" },
+  { key: "storage", label: "Storage", kind: "room" },
+  { key: "bedroom", label: "Bedroom", kind: "room" },
+  { key: "trophies", label: "Trophies", kind: "room" },
+  { key: "garage", label: "Garage", kind: "room" },
+  { key: "contracts", label: "Contracts", kind: "room" },
+  { key: "unassigned", label: "Unassigned", kind: "room" },
+  { key: "socialspace", label: "Social Space", kind: "room" },
+  { key: "wall", label: "Wall", kind: "wall" },
+  { key: "door", label: "Door", kind: "feature" },
+  { key: "frontdoor", label: "Front Door", kind: "feature" },
+  { key: "hatch", label: "Hatch", kind: "feature" },
+];
+
+function shippedDefaultColor(field) {
+  if (field.kind === "room") {
+    return getComputedStyle(document.documentElement).getPropertyValue(`--room-${field.key}`).trim();
+  }
+  if (field.kind === "wall") {
+    return WALL_COLOR;
+  }
+  return FEATURE_COLORS[field.key] ?? DEFAULT_FEATURE_COLOR;
+}
+
+// Computed once - theme.css's custom properties don't change at runtime.
+const DEFAULT_COLORS = new Map(COLOR_FIELDS.map((field) => [field.key, shippedDefaultColor(field)]));
+
+const COLOR_OVERRIDES_STORAGE_KEY = "plateup:colorOverrides";
+function loadColorOverrides() {
+  try {
+    const raw = localStorage.getItem(COLOR_OVERRIDES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+function saveColorOverrides() {
+  try {
+    localStorage.setItem(COLOR_OVERRIDES_STORAGE_KEY, JSON.stringify(colorOverrides));
+  } catch {
+    // localStorage unavailable (private browsing, storage full, ...) - customization just won't
+    // persist across reloads; still works for the current page view.
+  }
+}
+let colorOverrides = loadColorOverrides();
+
+// The single source of truth for "what color is this thing right now" - a player's override if
+// they've set one, else the shipped default. Used both for the legend swatches (computed here,
+// client-side) and to build the `colors` param the rendered <img> asks the server for.
+function resolveColor(key) {
+  return colorOverrides[key] ?? DEFAULT_COLORS.get(key);
+}
+
+function buildColorsQueryParam() {
+  return Object.keys(colorOverrides).length > 0 ? `?colors=${encodeURIComponent(JSON.stringify(colorOverrides))}` : "";
+}
+
+function renderColorPanel() {
+  colorPanelRowsEl.innerHTML = "";
+  for (const field of COLOR_FIELDS) {
+    const row = document.createElement("div");
+    row.className = "color-panel-row";
+
+    const label = document.createElement("span");
+    label.textContent = field.label;
+
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = resolveColor(field.key);
+    input.setAttribute("aria-label", `${field.label} color`);
+    input.addEventListener("input", () => {
+      colorOverrides[field.key] = input.value;
+      saveColorOverrides();
+      refreshCurrentLayout();
+    });
+
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "color-reset";
+    reset.title = `Reset ${field.label} to default`;
+    reset.setAttribute("aria-label", `Reset ${field.label} to default`);
+    reset.textContent = "↺";
+    reset.addEventListener("click", () => {
+      delete colorOverrides[field.key];
+      saveColorOverrides();
+      input.value = resolveColor(field.key);
+      refreshCurrentLayout();
+    });
+
+    row.append(label, input, reset);
+    colorPanelRowsEl.appendChild(row);
+  }
+}
+
+colorPanelResetAllButton.addEventListener("click", () => {
+  colorOverrides = {};
+  saveColorOverrides();
+  renderColorPanel();
+  refreshCurrentLayout();
+});
+
+// Set by renderLayout so a color change can redraw without re-fetching /api/layout - the palette
+// is global, not per-seed, so only the image/legend need to change, not the underlying layout data.
+let currentLayout = null;
+function refreshCurrentLayout() {
+  if (currentLayout) {
+    renderLayout(currentLayout);
+  }
 }
 
 // Hotlinking: /preview/<slug>/<seed> loads straight into that layout without the user touching the
@@ -120,7 +280,10 @@ function shadeColor(baseHex, index) {
   let [h, s, l] = rgbToHsl(r, g, b);
   h = (h + 0.13 * index) % 1;
   s = Math.max(s, 0.4);
-  l = Math.min(0.72, Math.max(0.28, l + (index % 2 === 0 ? 0.12 : -0.12) * Math.ceil(index / 2)));
+  // Floor raised from 0.28 to 0.5 (ceiling to 0.82) - see LayoutColors.ShadeColor's comment (kept in
+  // sync by convention): with the brighter room palette, the old floor let a shaded instance collapse
+  // to a near-black/navy variant, undoing the point of brightening the base colors.
+  l = Math.min(0.82, Math.max(0.5, l + (index % 2 === 0 ? 0.12 : -0.12) * Math.ceil(index / 2)));
   const [nr, ng, nb] = hslToRgb(h, s, l);
   return rgbToHex(nr, ng, nb);
 }
@@ -144,8 +307,13 @@ function renderLayout(layout) {
   const image = document.createElement("img");
   image.className = "layout-image";
   image.alt = `${layout.settingName} — seed "${layout.seed}"`;
-  image.src = `/preview/${encodeURIComponent(layout.settingSlug)}/${encodeURIComponent(layout.seed)}.png`;
+  // The colors query param is intentionally NOT part of the address-bar hotlink/Copy Link URL
+  // (see previewLayout) - it only ever rides along on this <img> request the page makes for
+  // itself, so a player's customization stays browser-local.
+  image.src = `/preview/${encodeURIComponent(layout.settingSlug)}/${encodeURIComponent(layout.seed)}.png${buildColorsQueryParam()}`;
   gridEl.appendChild(image);
+
+  currentLayout = layout;
 
   // Tile/feature loops below don't touch the DOM anymore - they only exist to compute the legend
   // (color per room-type/instance, feature types present), which still needs the same per-instance
@@ -179,17 +347,20 @@ function renderLayout(layout) {
   for (const order of roomOrderByType.values()) {
     order.forEach((id, i) => indexByRoomId.set(id, i));
   }
-  const baseColorByType = new Map(
-    [...PER_INSTANCE_ROOM_TYPES].map((t) => [t, getComputedStyle(document.documentElement).getPropertyValue(`--room-${t.toLowerCase()}`)])
-  );
+  const baseColorByType = new Map([...PER_INSTANCE_ROOM_TYPES].map((t) => [t, resolveColor(t.toLowerCase())]));
 
   function styleForTile(tile) {
+    // Unassigned rooms have no real per-room identity in the game data - a shared "UNA" code on
+    // every one of them was ambiguous when a layout has several, so each physical instance gets its
+    // own R1/R2/R3... instead (mirrors LayoutColors/LayoutImageRenderer server-side), in the same
+    // first-seen order used for shading below, so "R2" always lines up with the second-shaded tile.
+    const code = tile.roomType === "Unassigned" ? `R${indexByRoomId.get(tile.roomId) + 1}` : roomCode(tile.roomType);
     const order = roomOrderByType.get(tile.roomType);
     if (order && order.length > 1) {
       const index = indexByRoomId.get(tile.roomId);
-      return { color: shadeColor(baseColorByType.get(tile.roomType), index), label: `${tile.roomType} ${index + 1}` };
+      return { color: shadeColor(baseColorByType.get(tile.roomType), index), label: `${tile.roomType} ${index + 1} (${code})` };
     }
-    return { color: `var(--room-${tile.roomType.toLowerCase()}, var(--room-unassigned))`, label: tile.roomType };
+    return { color: resolveColor(tile.roomType.toLowerCase()), label: `${tile.roomType} (${code})` };
   }
 
   const legendRoomsSeen = new Map();
@@ -220,6 +391,15 @@ function renderLayout(layout) {
     swatch.style.background = featureColor(featureType);
     span.appendChild(swatch);
     span.appendChild(document.createTextNode(featureType));
+    legendEl.appendChild(span);
+  }
+  {
+    const span = document.createElement("span");
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = resolveColor("wall");
+    span.appendChild(swatch);
+    span.appendChild(document.createTextNode("Wall"));
     legendEl.appendChild(span);
   }
 
@@ -280,4 +460,5 @@ copyLinkButton.addEventListener("click", async () => {
   }
 });
 
+renderColorPanel();
 loadSettings().catch(() => setStatus("Failed to load restaurant settings.", true));
