@@ -16,6 +16,9 @@ const treeViewEl = document.getElementById("tree-view");
 const dayPanelEl = document.getElementById("day-panel");
 const deleteBranchButton = document.getElementById("delete-branch");
 const copyLinkButton = document.getElementById("copy-link");
+const layoutPanelLink = document.getElementById("layout-panel-link");
+const layoutPanelImage = document.getElementById("layout-panel-image");
+const layoutPanelStats = document.getElementById("layout-panel-stats");
 
 // VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
 
@@ -215,6 +218,66 @@ function resetExploration() {
   explorerResultEl.hidden = true;
   treeViewEl.innerHTML = "";
   dayPanelEl.innerHTML = "";
+  layoutPanelImage.removeAttribute("src");
+  layoutPanelLink.removeAttribute("href");
+  layoutPanelStats.textContent = "";
+}
+
+// Layout (room shapes/appliance placement) depends only on setting+seed, never on the explored
+// path/dish/heat/cards - reuses the same server-rendered PNG the Seed Previewer page shows
+// (Rendering/LayoutImageRenderer.cs) rather than a second client-side renderer. Generation counter
+// guards against a slow-to-load earlier request overwriting a later one if the user resubmits
+// quickly (same pattern as search.js's per-row refresh state).
+let layoutPreviewGeneration = 0;
+
+async function loadLayoutPreview() {
+  const setting = settingSelect.value;
+  const seed = seedInput.value;
+  const myGeneration = ++layoutPreviewGeneration;
+
+  const pngUrl = `/preview/${encodeURIComponent(setting)}/${encodeURIComponent(seed)}.png`;
+  const pageUrl = `/preview/${encodeURIComponent(setting)}/${encodeURIComponent(seed)}`;
+  layoutPanelLink.href = pageUrl;
+  layoutPanelStats.textContent = "Loading...";
+
+  try {
+    const response = await fetch(`/api/layout/${encodeURIComponent(setting)}/${encodeURIComponent(seed)}`);
+    const layout = await response.json();
+    if (myGeneration !== layoutPreviewGeneration) {
+      return; // superseded by a newer request
+    }
+
+    if (!response.ok) {
+      layoutPanelStats.textContent = layout.error ?? "Failed to load layout.";
+      return;
+    }
+
+    // Preload off-DOM so the visible <img> only ever receives a fully-decoded image, same
+    // flicker-avoidance approach as search.js's click-to-preview dialog.
+    await new Promise((resolve) => {
+      const preloadImg = new Image();
+      preloadImg.onload = () => {
+        if (myGeneration === layoutPreviewGeneration) {
+          layoutPanelImage.src = pngUrl;
+          layoutPanelImage.alt = `${layout.settingName} — seed "${layout.seed}"`;
+        }
+        resolve();
+      };
+      preloadImg.onerror = () => resolve();
+      preloadImg.src = pngUrl;
+    });
+
+    if (myGeneration !== layoutPreviewGeneration) {
+      return;
+    }
+
+    const tableCount = layout.appliances.filter((a) => a.applianceId === layout.tableApplianceId).length;
+    layoutPanelStats.textContent = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)`;
+  } catch {
+    if (myGeneration === layoutPreviewGeneration) {
+      layoutPanelStats.textContent = "Failed to reach the server.";
+    }
+  }
 }
 
 function pathToNode(node) {
@@ -524,6 +587,7 @@ form.addEventListener("submit", async (event) => {
 
   rootNode = makeRootNode();
   explorerResultEl.hidden = false;
+  loadLayoutPreview().catch(() => {});
   await viewNode(rootNode, null);
 });
 
@@ -563,6 +627,7 @@ async function applyPreload(preload) {
 
   rootNode = makeRootNode();
   explorerResultEl.hidden = false;
+  loadLayoutPreview().catch(() => {});
 
   let node = rootNode;
   for (const step of preload.path ?? []) {

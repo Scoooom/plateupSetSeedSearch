@@ -773,6 +773,21 @@ button[type="submit"]:hover {
   margin: 0 0 0.3rem;
 }
 
+/* Read-only reference view of the seed's layout (see Rendering/LayoutImageRenderer.cs) - same image
+   the Seed Previewer page shows, embedded here so switching pages isn't needed while exploring. */
+.layout-panel {
+  flex: 0 0 240px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+}
+
+.layout-panel h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
 .pack-tag {
   color: var(--text-muted);
   font-size: 0.85rem;
@@ -881,6 +896,11 @@ button[type="submit"]:hover {
   }
 
   .day-panel {
+    width: 100%;
+  }
+
+  .layout-panel {
+    flex: none;
     width: 100%;
   }
 
