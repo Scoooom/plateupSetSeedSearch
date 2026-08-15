@@ -48,7 +48,7 @@ public static class SearchCommand
             return 1;
         }
 
-        if (!TryResolveUnlockByName(repo, options.DishName, "dish", out var dish))
+        if (!TryResolveUnlockByName(repo, options.DishName, "dish", options.Tier, out var dish))
         {
             return 1;
         }
@@ -65,7 +65,7 @@ public static class SearchCommand
         var targetIds = new Dictionary<int, int>();
         foreach (var (day, cardName) in options.DayTargets)
         {
-            if (!TryResolveUnlockByName(repo, cardName, "card", out var card))
+            if (!TryResolveUnlockByName(repo, cardName, "card", options.Tier, out var card))
             {
                 return 1;
             }
@@ -78,7 +78,7 @@ public static class SearchCommand
         var flexibleTargetIds = new HashSet<int>();
         foreach (var cardName in options.AnyDayCardNames)
         {
-            if (!TryResolveUnlockByName(repo, cardName, "card", out var card))
+            if (!TryResolveUnlockByName(repo, cardName, "card", options.Tier, out var card))
             {
                 return 1;
             }
@@ -96,12 +96,37 @@ public static class SearchCommand
         var franchiseCarryoverIds = new List<int>();
         foreach (var cardName in options.FranchiseCardNames)
         {
-            if (!TryResolveUnlockByName(repo, cardName, "franchise card", out var card))
+            if (!TryResolveUnlockByName(repo, cardName, "franchise card", options.Tier, out var card))
             {
                 return 1;
             }
 
             franchiseCarryoverIds.Add(card.Id);
+        }
+
+        // Same Requires/BlockedBy/tier consistency check the web UI's franchise-candidate dropdown
+        // and its own StartSearch backstop use - the CLI has no interactive dropdown to filter this
+        // during typing, so it needs this explicit check here instead. See
+        // UnlockPackEvaluator.IsValidCarryoverPick's doc comment for what "valid" means, including
+        // the cumulative lower-tier prerequisite for tier-laddered cards like "Variety".
+        var franchiseIdSet = new HashSet<int>(franchiseCarryoverIds);
+        foreach (var id in franchiseCarryoverIds)
+        {
+            var otherIds = new HashSet<int>(franchiseIdSet);
+            otherIds.Remove(id);
+            var candidate = repo.GetUnlock(id);
+            if (!UnlockPackEvaluator.IsValidCarryoverPick(repo, candidate, otherIds, options.Tier))
+            {
+                var missingLowerTiers = UnlockNameResolver.GetTierLadderSiblings(repo, candidate)
+                    .Where(s => s.MinimumFranchiseTier < candidate.MinimumFranchiseTier && !otherIds.Contains(s.Id))
+                    .OrderBy(s => s.MinimumFranchiseTier)
+                    .Select(s => $"{s.Name} (Tier {s.MinimumFranchiseTier})")
+                    .ToList();
+                Console.WriteLine(missingLowerTiers.Count > 0
+                    ? $"'{candidate.Name} (Tier {candidate.MinimumFranchiseTier})' also needs its lower tiers listed: {string.Join(", ", missingLowerTiers)}."
+                    : $"'{candidate.Name}' isn't a valid franchise-carryover pick given the rest of the selection and tier {options.Tier}.");
+                return 1;
+            }
         }
 
         int settingPackId;
@@ -179,26 +204,16 @@ public static class SearchCommand
         return 0;
     }
 
-    private static bool TryResolveUnlockByName(GameDataRepository repo, string name, string label, out UnlockData unlock)
+    private static bool TryResolveUnlockByName(GameDataRepository repo, string name, string label, int tier, out UnlockData unlock)
     {
-        var lookup = UnlockNameResolver.TryResolveByName(repo, name);
+        var lookup = UnlockNameResolver.TryResolveByName(repo, name, tier);
         if (lookup.Unlock is not null)
         {
             unlock = lookup.Unlock;
             return true;
         }
 
-        if (lookup.AmbiguousMatches.Count > 0)
-        {
-            Console.WriteLine($"Ambiguous {label} name '{name}' - {lookup.AmbiguousMatches.Count} matches (IDs: {string.Join(", ", lookup.AmbiguousMatches.Select(m => m.Id))}).");
-        }
-        else
-        {
-            Console.WriteLine(lookup.Suggestions.Count > 0
-                ? $"Unknown {label} '{name}'. Did you mean: {string.Join(", ", lookup.Suggestions)}?"
-                : $"Unknown {label} '{name}'.");
-        }
-
+        Console.WriteLine(UnlockNameResolver.BuildAmbiguousOrUnknownErrorMessage(label, name, lookup));
         unlock = null!;
         return false;
     }
@@ -339,6 +354,11 @@ public static class SearchCommand
             Console.WriteLine("franchise tier of that prior save (0 for a fresh, non-franchise run), and each");
             Console.WriteLine("--franchise-card names one card already owned from it. See");
             Console.WriteLine("CardDrawSimulatorGroundTruthTests.MatchesRealFranchiseCapture for a real example.");
+            Console.WriteLine("Some franchise cards are granted once per tier reached (e.g. \"Variety\", one record per");
+            Console.WriteLine("tier 0-5) and share a name across tiers - qualify which one with \"Name (Tier N)\", e.g.");
+            Console.WriteLine("--franchise-card \"Variety (Tier 2)\"; an unqualified name resolves to the highest tier");
+            Console.WriteLine("<= --tier when that's unambiguous. Each tier also requires every lower tier of the same");
+            Console.WriteLine("card to be listed too (franchise tiers are reached in order).");
             Console.WriteLine("--exclude-seed <seed> (repeatable) / --exclude-seeds-file <path> skip already-found seeds");
             Console.WriteLine("so a rerun surfaces new matches instead of the same ones. --matches-only prints just the");
             Console.WriteLine("MATCH seed strings (no header/summary lines), suitable for piping into a future");

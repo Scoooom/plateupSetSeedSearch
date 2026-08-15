@@ -209,9 +209,40 @@ public static class UnlockPackEvaluator
     /// chains against the rest of the selection, no exact duplicates, and franchise-tier eligibility
     /// (can't already own something from a tier this run hasn't reached). Day is irrelevant to every
     /// check `ShouldBlockCard` performs (only Tier is consulted), so 0 is a safe placeholder.
+    ///
+    /// One more DRAW-timing rule doesn't apply here either, for the same reason `IgnoreUnlockability`
+    /// is set: `ShouldBlockCard`'s exact-tier-equality check for `IsSpecificFranchiseTier` candidates
+    /// is correct for FRESH DRAWS (a tier-N reward is only ever freshly *offered* the exact night a
+    /// player ranks up to tier N) but wrong for "could this already be owned" - a player who reached
+    /// tier 5 has, over their franchise history, actually been granted the tier-0 through tier-5
+    /// reward cards cumulatively, not just tier 5's. `CarryoverFilter` sets `TierIsFloorNotExact` so
+    /// this uses the same `MinimumFranchiseTier &lt;= tier` floor as non-specific-tier cards instead.
+    ///
+    /// Floor eligibility alone isn't sufficient for a tier-laddered card though: it would happily
+    /// accept "Variety" at tier 4 as an isolated pick without also requiring tiers 0-3's records to
+    /// be present, even though franchise tiers are reached in order (owning a higher tier's reward
+    /// implies owning every lower tier's too). The cumulative check below enforces that explicitly.
     /// </summary>
-    public static bool IsValidCarryoverPick(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier) =>
-        !ShouldBlockCard(repo, candidate, currentCards, new UnlockRequest(Day: 0, tier), CarryoverFilter);
+    public static bool IsValidCarryoverPick(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier)
+    {
+        if (ShouldBlockCard(repo, candidate, currentCards, new UnlockRequest(Day: 0, tier), CarryoverFilter))
+        {
+            return false;
+        }
+
+        // Cumulative lower-tier prerequisite: every live sibling of a tier-laddered card with a
+        // strictly lower MinimumFranchiseTier must already be in currentCards - order-independent
+        // (checks final-set membership, not the order rows were added in).
+        foreach (var sibling in UnlockNameResolver.GetTierLadderSiblings(repo, candidate))
+        {
+            if (sibling.MinimumFranchiseTier < candidate.MinimumFranchiseTier && !currentCards.Contains(sibling.Id))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// True if <paramref name="targetIds"/> contains two cards that can never coexist because owning
@@ -258,6 +289,7 @@ public static class UnlockPackEvaluator
         AllowBaseDishes = true,
         IgnoreBlocksOtherFood = true,
         IgnoreFilterByHasMain = true,
+        TierIsFloorNotExact = true,
     };
 
     // --- FilterBasic.ShouldBlockCard ---
@@ -269,7 +301,7 @@ public static class UnlockPackEvaluator
             return true;
         }
 
-        var franchiseBlock = !filter.IgnoreFranchiseTier && candidate.IsSpecificFranchiseTier
+        var franchiseBlock = !filter.IgnoreFranchiseTier && candidate.IsSpecificFranchiseTier && !filter.TierIsFloorNotExact
             ? candidate.MinimumFranchiseTier != request.Tier
             : candidate.MinimumFranchiseTier > request.Tier;
         if (franchiseBlock)
