@@ -48,7 +48,7 @@ public static class SearchCommand
             return 1;
         }
 
-        if (!TryResolveUnlockByName(repo, options.DishName, "dish", options.Tier, out var dish))
+        if (!TryResolveUnlockByName(repo, options.DishName, "dish", out var dish))
         {
             return 1;
         }
@@ -65,7 +65,7 @@ public static class SearchCommand
         var targetIds = new Dictionary<int, int>();
         foreach (var (day, cardName) in options.DayTargets)
         {
-            if (!TryResolveUnlockByName(repo, cardName, "card", options.Tier, out var card))
+            if (!TryResolveUnlockByName(repo, cardName, "card", out var card))
             {
                 return 1;
             }
@@ -78,7 +78,7 @@ public static class SearchCommand
         var flexibleTargetIds = new HashSet<int>();
         foreach (var cardName in options.AnyDayCardNames)
         {
-            if (!TryResolveUnlockByName(repo, cardName, "card", options.Tier, out var card))
+            if (!TryResolveUnlockByName(repo, cardName, "card", out var card))
             {
                 return 1;
             }
@@ -96,7 +96,7 @@ public static class SearchCommand
         var franchiseCarryoverIds = new List<int>();
         foreach (var cardName in options.FranchiseCardNames)
         {
-            if (!TryResolveUnlockByName(repo, cardName, "franchise card", options.Tier, out var card))
+            if (!TryResolveUnlockByName(repo, cardName, "franchise card", out var card))
             {
                 return 1;
             }
@@ -104,11 +104,12 @@ public static class SearchCommand
             franchiseCarryoverIds.Add(card.Id);
         }
 
-        // Same Requires/BlockedBy/tier consistency check the web UI's franchise-candidate dropdown
-        // and its own StartSearch backstop use - the CLI has no interactive dropdown to filter this
-        // during typing, so it needs this explicit check here instead. See
+        // Same Requires/BlockedBy/cumulative-copy consistency check the web UI's franchise-candidate
+        // dropdown and its own StartSearch backstop use - the CLI has no interactive dropdown to
+        // filter this during typing, so it needs this explicit check here instead. See
         // UnlockPackEvaluator.IsValidCarryoverPick's doc comment for what "valid" means, including
-        // the cumulative lower-tier prerequisite for tier-laddered cards like "Variety".
+        // the cumulative lower-copy prerequisite for repeatable cards like "Variety" (independent of
+        // --tier - a repeatable card's numbered suffix is an occurrence count, not a franchise tier).
         var franchiseIdSet = new HashSet<int>(franchiseCarryoverIds);
         foreach (var id in franchiseCarryoverIds)
         {
@@ -117,13 +118,13 @@ public static class SearchCommand
             var candidate = repo.GetUnlock(id);
             if (!UnlockPackEvaluator.IsValidCarryoverPick(repo, candidate, otherIds, options.Tier))
             {
-                var missingLowerTiers = UnlockNameResolver.GetTierLadderSiblings(repo, candidate)
+                var missingLowerCopies = UnlockNameResolver.GetRepeatableCardSiblings(repo, candidate)
                     .Where(s => s.MinimumFranchiseTier < candidate.MinimumFranchiseTier && !otherIds.Contains(s.Id))
                     .OrderBy(s => s.MinimumFranchiseTier)
-                    .Select(s => $"{s.Name} (Tier {s.MinimumFranchiseTier})")
+                    .Select(s => $"{s.Name} (copy {s.MinimumFranchiseTier + 1})")
                     .ToList();
-                Console.WriteLine(missingLowerTiers.Count > 0
-                    ? $"'{candidate.Name} (Tier {candidate.MinimumFranchiseTier})' also needs its lower tiers listed: {string.Join(", ", missingLowerTiers)}."
+                Console.WriteLine(missingLowerCopies.Count > 0
+                    ? $"'{candidate.Name} (copy {candidate.MinimumFranchiseTier + 1})' also needs its earlier copies listed: {string.Join(", ", missingLowerCopies)}."
                     : $"'{candidate.Name}' isn't a valid franchise-carryover pick given the rest of the selection and tier {options.Tier}.");
                 return 1;
             }
@@ -204,9 +205,9 @@ public static class SearchCommand
         return 0;
     }
 
-    private static bool TryResolveUnlockByName(GameDataRepository repo, string name, string label, int tier, out UnlockData unlock)
+    private static bool TryResolveUnlockByName(GameDataRepository repo, string name, string label, out UnlockData unlock)
     {
-        var lookup = UnlockNameResolver.TryResolveByName(repo, name, tier);
+        var lookup = UnlockNameResolver.TryResolveByName(repo, name);
         if (lookup.Unlock is not null)
         {
             unlock = lookup.Unlock;
@@ -354,11 +355,11 @@ public static class SearchCommand
             Console.WriteLine("franchise tier of that prior save (0 for a fresh, non-franchise run), and each");
             Console.WriteLine("--franchise-card names one card already owned from it. See");
             Console.WriteLine("CardDrawSimulatorGroundTruthTests.MatchesRealFranchiseCapture for a real example.");
-            Console.WriteLine("Some franchise cards are granted once per tier reached (e.g. \"Variety\", one record per");
-            Console.WriteLine("tier 0-5) and share a name across tiers - qualify which one with \"Name (Tier N)\", e.g.");
-            Console.WriteLine("--franchise-card \"Variety (Tier 2)\"; an unqualified name resolves to the highest tier");
-            Console.WriteLine("<= --tier when that's unambiguous. Each tier also requires every lower tier of the same");
-            Console.WriteLine("card to be listed too (franchise tiers are reached in order).");
+            Console.WriteLine("Some franchise cards can be taken more than once across separate franchise cycles (e.g.");
+            Console.WriteLine("\"Variety\") - qualify which occurrence with \"Name (copy N)\", e.g. --franchise-card");
+            Console.WriteLine("\"Variety (copy 2)\"; the copy number is unrelated to --tier (it's just the Nth time you've");
+            Console.WriteLine("taken that specific card). Each copy also requires every earlier copy of the same card to");
+            Console.WriteLine("be listed too (copies are taken in order).");
             Console.WriteLine("--exclude-seed <seed> (repeatable) / --exclude-seeds-file <path> skip already-found seeds");
             Console.WriteLine("so a rerun surfaces new matches instead of the same ones. --matches-only prints just the");
             Console.WriteLine("MATCH seed strings (no header/summary lines), suitable for piping into a future");

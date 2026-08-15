@@ -4,112 +4,122 @@ using Xunit;
 namespace PlateUpSeedTools.Engine.Tests;
 
 /// <summary>
-/// Exercises UnlockNameResolver.TryResolveByName's tier-aware/tier-ladder-qualifier handling, added
-/// for the real bug report that plain "Variety" (a franchise reward granted once per tier reached,
-/// 0-5, all 9 records sharing the literal Name "Variety" - 6 live + 3 inert extraction-artifact
-/// duplicates) was irreducibly ambiguous. Uses the real extracted data (not a synthetic fixture) so
-/// these tests double as a guard against the underlying data ever changing shape.
+/// Exercises UnlockNameResolver.TryResolveByName's repeatable-card/occurrence-qualifier handling,
+/// added for the real bug report that plain "Variety" (a franchise-carryover card takeable more than
+/// once across separate franchise cycles - 6 live records + 3 inert extraction-artifact duplicates,
+/// all sharing the literal Name "Variety") was irreducibly ambiguous. CORRECTED after a follow-up
+/// user report: the numbered suffix distinguishing the 6 live records (MinimumFranchiseTier 0-5) is
+/// an occurrence COUNT ("the Nth time you've taken this card"), not the franchise tier you were on
+/// when you took it - those are unrelated, so resolution must never depend on a declared tier value.
+/// Uses the real extracted data (not a synthetic fixture) so these tests double as a guard against
+/// the underlying data ever changing shape.
 /// </summary>
 public class UnlockNameResolverTests
 {
-    // Live (IsUnlockable: true) "Variety" records, one per franchise tier 0-5 - see
-    // data/settings/cards/unlocks.json.
-    private const int VarietyTier0 = 409052852;
-    private const int VarietyTier1 = -1690048134;
-    private const int VarietyTier2 = 2026578658;
-    private const int VarietyTier3 = -437866401;
-    private const int VarietyTier4 = -1122993754;
-    private const int VarietyTier5 = -1189327033;
+    // Live (IsUnlockable: true) "Variety" records, one per occurrence (copy) 1-6 - see
+    // data/settings/cards/unlocks.json. MinimumFranchiseTier is 0-indexed; "copy N" display is 1-indexed.
+    private const int VarietyCopy1 = 409052852;
+    private const int VarietyCopy6 = -1189327033;
 
     // The 3 inert IsUnlockable: false duplicate "Variety" rows - must never surface as a resolved
-    // match or an ambiguous-match candidate at any tier.
+    // match or an ambiguous-match candidate.
     private static readonly int[] InertVarietyIds = [-1586319402, -771711089, 1366303950];
 
     // "Advertising" - 2 records, both IsSpecificFranchiseTier: false, identical except raw Id - a
-    // genuinely irreducible duplicate (no tier signal), out of scope for this fix.
+    // genuinely irreducible duplicate (no occurrence signal), out of scope for this fix.
     private const string AdvertisingName = "Advertising";
 
     private static GameDataRepository LoadRepo() => new(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
 
     [Fact]
-    public void BareName_LowTier_ResolvesToLiveRecordAtThatTier()
+    public void BareRepeatableCardName_IsAlwaysAmbiguous()
     {
         var repo = LoadRepo();
-        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety", tier: 0);
-        Assert.Equal(VarietyTier0, lookup.Unlock?.Id);
+        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety");
+        Assert.Null(lookup.Unlock);
+        Assert.Equal(6, lookup.AmbiguousMatches.Count);
     }
 
     [Fact]
-    public void BareName_HigherTier_FloorResolvesToHighestRungAtOrBelowTier()
+    public void QualifiedCopyNumber_ResolvesToTheCorrectRecord()
     {
         var repo = LoadRepo();
-        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety", tier: 3);
-        Assert.Equal(VarietyTier3, lookup.Unlock?.Id);
+        Assert.Equal(VarietyCopy1, UnlockNameResolver.TryResolveByName(repo, "Variety (copy 1)").Unlock?.Id);
+        Assert.Equal(VarietyCopy6, UnlockNameResolver.TryResolveByName(repo, "Variety (copy 6)").Unlock?.Id);
     }
 
     [Fact]
-    public void QualifiedTierSuffix_ResolvesRegardlessOfAmbientTier()
+    public void QualifiedCopyNumber_IsUnaffectedByAnyDeclaredTierConcept()
     {
+        // No tier parameter exists on TryResolveByName at all anymore - this test exists to pin that
+        // down explicitly, since a prior (reverted) version of this fix wrongly floor-resolved a bare
+        // name against a declared tier value. Resolving the same qualified name repeatedly must
+        // always give the same answer.
         var repo = LoadRepo();
-        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety (Tier 2)", tier: 0);
-        Assert.Equal(VarietyTier2, lookup.Unlock?.Id);
+        var first = UnlockNameResolver.TryResolveByName(repo, "Variety (copy 3)");
+        var second = UnlockNameResolver.TryResolveByName(repo, "Variety (copy 3)");
+        Assert.Equal(first.Unlock?.Id, second.Unlock?.Id);
+        Assert.NotNull(first.Unlock);
     }
 
     [Fact]
-    public void QualifiedTierSuffix_UnknownTier_IsAmbiguousNotSilentlyWrong()
+    public void QualifiedCopyNumber_OutOfRange_IsAmbiguousNotSilentlyWrong()
     {
         var repo = LoadRepo();
-        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety (Tier 9)", tier: 5);
+        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety (copy 9)");
         Assert.Null(lookup.Unlock);
         Assert.NotEmpty(lookup.AmbiguousMatches);
     }
 
     [Fact]
-    public void InertDuplicateRecords_NeverSurfaceAtAnyTier()
+    public void InertDuplicateRecords_NeverSurface()
     {
         var repo = LoadRepo();
-        for (var tier = 0; tier <= 5; tier++)
+        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety");
+        Assert.DoesNotContain(lookup.AmbiguousMatches, m => InertVarietyIds.Contains(m.Id));
+
+        foreach (var id in InertVarietyIds)
         {
-            var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety", tier);
-            Assert.DoesNotContain(InertVarietyIds, id => lookup.Unlock?.Id == id);
-            Assert.DoesNotContain(lookup.AmbiguousMatches, m => InertVarietyIds.Contains(m.Id));
+            var byId = repo.GetUnlock(id);
+            var qualifiedLookup = UnlockNameResolver.TryResolveByName(repo, $"Variety (copy {byId.MinimumFranchiseTier + 1})");
+            Assert.NotEqual(id, qualifiedLookup.Unlock?.Id);
         }
     }
 
     [Fact]
-    public void GenuinelyAmbiguousNonTierDuplicate_StillReportsAmbiguous()
+    public void GenuinelyAmbiguousNonRepeatableDuplicate_StillReportsAmbiguous()
     {
         var repo = LoadRepo();
-        var lookup = UnlockNameResolver.TryResolveByName(repo, AdvertisingName, tier: 0);
+        var lookup = UnlockNameResolver.TryResolveByName(repo, AdvertisingName);
         Assert.Null(lookup.Unlock);
         Assert.Equal(2, lookup.AmbiguousMatches.Count);
     }
 
     [Fact]
-    public void GetTierLadderSiblings_ReturnsAllSixLiveTiers()
+    public void GetRepeatableCardSiblings_ReturnsAllSixLiveCopies()
     {
         var repo = LoadRepo();
-        var variety = repo.GetUnlock(VarietyTier3);
-        var siblings = UnlockNameResolver.GetTierLadderSiblings(repo, variety);
-        var expected = new HashSet<int> { VarietyTier0, VarietyTier1, VarietyTier2, VarietyTier3, VarietyTier4, VarietyTier5 };
-        Assert.Equal(expected, siblings.Select(s => s.Id).ToHashSet());
+        var variety = repo.GetUnlock(VarietyCopy1);
+        var siblings = UnlockNameResolver.GetRepeatableCardSiblings(repo, variety);
+        Assert.Equal(6, siblings.Count);
+        Assert.DoesNotContain(siblings, s => InertVarietyIds.Contains(s.Id));
     }
 
     [Fact]
-    public void GetTierLadderSiblings_NonLadderCard_ReturnsEmpty()
+    public void GetRepeatableCardSiblings_NonRepeatableCard_ReturnsEmpty()
     {
         var repo = LoadRepo();
         var advertising = repo.AllUnlocksOrderedById.First(u => u.Name == AdvertisingName);
-        Assert.Empty(UnlockNameResolver.GetTierLadderSiblings(repo, advertising));
+        Assert.Empty(UnlockNameResolver.GetRepeatableCardSiblings(repo, advertising));
     }
 
     [Fact]
-    public void BuildAmbiguousOrUnknownErrorMessage_TierLadder_SuggestsQualifierSyntax()
+    public void BuildAmbiguousOrUnknownErrorMessage_RepeatableCard_SuggestsCopyQualifierSyntax()
     {
         var repo = LoadRepo();
-        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety (Tier 9)", tier: 5);
-        var message = UnlockNameResolver.BuildAmbiguousOrUnknownErrorMessage("card", "Variety (Tier 9)", lookup);
-        Assert.Contains("Tier 0", message);
-        Assert.Contains("Tier 5", message);
+        var lookup = UnlockNameResolver.TryResolveByName(repo, "Variety");
+        var message = UnlockNameResolver.BuildAmbiguousOrUnknownErrorMessage("card", "Variety", lookup);
+        Assert.Contains("copy 1", message);
+        Assert.Contains("copy 6", message);
     }
 }

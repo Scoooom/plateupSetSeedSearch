@@ -61,7 +61,7 @@ public static partial class ExplorerEndpoints
             return Results.BadRequest(new { error = "day must be between 0 and 15." });
         }
 
-        if (!TryResolveUnlock(repo, request.DishName, "dish", request.Tier, out var dish, out var dishError))
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
         {
             return Results.BadRequest(new { error = dishError });
         }
@@ -69,7 +69,7 @@ public static partial class ExplorerEndpoints
         var franchiseCarryoverIds = new List<int>();
         foreach (var cardName in request.FranchiseCardNames ?? [])
         {
-            if (!TryResolveUnlock(repo, cardName, "franchise card", request.Tier, out var card, out var cardError))
+            if (!TryResolveUnlock(repo, cardName, "franchise card", out var card, out var cardError))
             {
                 return Results.BadRequest(new { error = cardError });
             }
@@ -170,9 +170,9 @@ public static partial class ExplorerEndpoints
         return new ExplorerCardOptionDto(unlock.Id, unlock.Name, unlock.Kind, unlock.UnlockGroup);
     }
 
-    private static bool TryResolveUnlock(GameDataRepository repo, string name, string label, int tier, out UnlockData unlock, out string? error)
+    private static bool TryResolveUnlock(GameDataRepository repo, string name, string label, out UnlockData unlock, out string? error)
     {
-        var lookup = UnlockNameResolver.TryResolveByName(repo, name, tier);
+        var lookup = UnlockNameResolver.TryResolveByName(repo, name);
         if (lookup.Unlock is not null)
         {
             unlock = lookup.Unlock;

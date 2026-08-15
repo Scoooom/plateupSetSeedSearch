@@ -84,7 +84,7 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = $"Unknown setting '{request.Setting}'." });
         }
 
-        if (!TryResolveUnlock(repo, request.DishName, "dish", request.Tier, out var dish, out var dishError))
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
         {
             return Results.BadRequest(new { error = dishError });
         }
@@ -103,7 +103,7 @@ public static class SearchEndpoints
         var ownedIds = new HashSet<int>(setup.InitiallyOwnedIds);
         foreach (var name in request.OtherSelectedCardNames ?? [])
         {
-            if (string.IsNullOrEmpty(name) || !TryResolveUnlock(repo, name, "card", request.Tier, out var other, out _))
+            if (string.IsNullOrEmpty(name) || !TryResolveUnlock(repo, name, "card", out var other, out _))
             {
                 continue;
             }
@@ -144,7 +144,7 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = $"Unknown setting '{request.Setting}'." });
         }
 
-        if (!TryResolveUnlock(repo, request.DishName, "dish", request.Tier, out var dish, out var dishError))
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
         {
             return Results.BadRequest(new { error = dishError });
         }
@@ -152,7 +152,7 @@ public static class SearchEndpoints
         var franchiseCarryoverIds = new List<int>();
         foreach (var cardName in request.FranchiseCardNames ?? [])
         {
-            if (!TryResolveUnlock(repo, cardName, "franchise card", request.Tier, out var card, out var cardError))
+            if (!TryResolveUnlock(repo, cardName, "franchise card", out var card, out var cardError))
             {
                 return Results.BadRequest(new { error = cardError });
             }
@@ -187,7 +187,7 @@ public static class SearchEndpoints
                 continue;
             }
 
-            if (!TryResolveUnlock(repo, prior.CardName, "card", request.Tier, out var card, out var cardError))
+            if (!TryResolveUnlock(repo, prior.CardName, "card", out var card, out var cardError))
             {
                 return Results.BadRequest(new { error = cardError });
             }
@@ -229,7 +229,7 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = $"Unknown setting '{request.Setting}'." });
         }
 
-        if (!TryResolveUnlock(repo, request.DishName, "dish", request.Tier, out var dish, out var dishError))
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
         {
             return Results.BadRequest(new { error = dishError });
         }
@@ -250,7 +250,7 @@ public static class SearchEndpoints
         var flexibleTargetIds = new HashSet<int>();
         foreach (var target in request.DayTargets)
         {
-            if (!TryResolveUnlock(repo, target.CardName, "card", request.Tier, out var card, out var cardError))
+            if (!TryResolveUnlock(repo, target.CardName, "card", out var card, out var cardError))
             {
                 return Results.BadRequest(new { error = cardError });
             }
@@ -273,7 +273,7 @@ public static class SearchEndpoints
         var franchiseCarryoverIds = new List<int>();
         foreach (var cardName in request.FranchiseCardNames ?? [])
         {
-            if (!TryResolveUnlock(repo, cardName, "franchise card", request.Tier, out var card, out var cardError))
+            if (!TryResolveUnlock(repo, cardName, "franchise card", out var card, out var cardError))
             {
                 return Results.BadRequest(new { error = cardError });
             }
@@ -293,17 +293,17 @@ public static class SearchEndpoints
             var candidate = repo.GetUnlock(id);
             if (!UnlockPackEvaluator.IsValidCarryoverPick(repo, candidate, otherIds, request.Tier))
             {
-                // A tier-laddered card (e.g. "Variety") specifically needs every lower tier's
-                // sibling also listed - franchise tiers are reached in order, see
-                // IsValidCarryoverPick's doc comment - so name the missing ones directly rather than
-                // the generic message below, which wouldn't tell the user what to add.
-                var missingLowerTiers = UnlockNameResolver.GetTierLadderSiblings(repo, candidate)
+                // A repeatable card (e.g. "Variety") specifically needs every earlier copy of the
+                // same card also listed - copies are taken in order (unrelated to the declared Tier
+                // field - see IsValidCarryoverPick's doc comment) - so name the missing ones directly
+                // rather than the generic message below, which wouldn't tell the user what to add.
+                var missingLowerCopies = UnlockNameResolver.GetRepeatableCardSiblings(repo, candidate)
                     .Where(s => s.MinimumFranchiseTier < candidate.MinimumFranchiseTier && !otherIds.Contains(s.Id))
                     .OrderBy(s => s.MinimumFranchiseTier)
-                    .Select(s => $"{s.Name} (Tier {s.MinimumFranchiseTier})")
+                    .Select(s => $"{s.Name} (copy {s.MinimumFranchiseTier + 1})")
                     .ToList();
-                var error = missingLowerTiers.Count > 0
-                    ? $"'{candidate.Name} (Tier {candidate.MinimumFranchiseTier})' also needs its lower tiers listed: {string.Join(", ", missingLowerTiers)}."
+                var error = missingLowerCopies.Count > 0
+                    ? $"'{candidate.Name} (copy {candidate.MinimumFranchiseTier + 1})' also needs its earlier copies listed: {string.Join(", ", missingLowerCopies)}."
                     : $"'{candidate.Name}' isn't a valid franchise-carryover pick given the rest of the selection and tier {request.Tier}.";
                 return Results.BadRequest(new { error });
             }
@@ -390,7 +390,7 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = $"Unknown setting '{request.Setting}'." });
         }
 
-        if (!TryResolveUnlock(repo, request.DishName, "dish", request.Tier, out var dish, out var dishError))
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
         {
             return Results.BadRequest(new { error = dishError });
         }
@@ -399,7 +399,7 @@ public static class SearchEndpoints
         var flexibleTargetIds = new HashSet<int>();
         foreach (var target in request.DayTargets)
         {
-            if (!TryResolveUnlock(repo, target.CardName, "card", request.Tier, out var card, out var cardError))
+            if (!TryResolveUnlock(repo, target.CardName, "card", out var card, out var cardError))
             {
                 return Results.BadRequest(new { error = cardError });
             }
@@ -417,7 +417,7 @@ public static class SearchEndpoints
         var franchiseCarryoverIds = new List<int>();
         foreach (var cardName in request.FranchiseCardNames ?? [])
         {
-            if (!TryResolveUnlock(repo, cardName, "franchise card", request.Tier, out var card, out var cardError))
+            if (!TryResolveUnlock(repo, cardName, "franchise card", out var card, out var cardError))
             {
                 return Results.BadRequest(new { error = cardError });
             }
@@ -510,9 +510,9 @@ public static class SearchEndpoints
         }
     }
 
-    private static bool TryResolveUnlock(GameDataRepository repo, string name, string label, int tier, out UnlockData unlock, out string? error)
+    private static bool TryResolveUnlock(GameDataRepository repo, string name, string label, out UnlockData unlock, out string? error)
     {
-        var lookup = UnlockNameResolver.TryResolveByName(repo, name, tier);
+        var lookup = UnlockNameResolver.TryResolveByName(repo, name);
         if (lookup.Unlock is not null)
         {
             unlock = lookup.Unlock;
@@ -526,23 +526,23 @@ public static class SearchEndpoints
     }
 
     /// <summary>
-    /// Turns a filtered candidate list into display/lookup names, qualifying every tier-laddered
-    /// candidate (e.g. "Variety" - one record per franchise tier reached, see
-    /// UnlockNameResolver.GetTierLadderSiblings) as "Name (Tier N)" - ALWAYS, not just when 2+ rungs
-    /// happen to be simultaneously valid in this particular call's result. This matters because
-    /// IsValidCarryoverPick's cumulative lower-tier check (see its doc comment) means at most one
-    /// rung of a given ladder is ever addable at once for a fixed owned-set - so two different
-    /// &lt;datalist&gt; rows built one after another would otherwise both suggest the exact same bare
-    /// "Variety" string (row 2's dropdown reflecting row 1's pick as already-owned), and submitting
-    /// two identical bare names would collide during resolution (both floor-resolve to the same id)
-    /// instead of representing the two distinct tiers the user actually picked. Non-ladder duplicate
-    /// names (Advertising/Fish Selection-style - out of scope, see project plan) pass through
-    /// unqualified, same as today.
+    /// Turns a filtered candidate list into display/lookup names, qualifying every repeatable-card
+    /// candidate (e.g. "Variety" - one record per time it's been taken across separate franchise
+    /// cycles, see UnlockNameResolver.GetRepeatableCardSiblings) as "Name (copy N)" - ALWAYS, not just
+    /// when 2+ copies happen to be simultaneously valid in this particular call's result. This
+    /// matters because IsValidCarryoverPick's cumulative lower-copy check (see its doc comment) means
+    /// at most one copy of a given card is ever addable at once for a fixed owned-set - so two
+    /// different &lt;datalist&gt; rows built one after another would otherwise both suggest the exact
+    /// same bare "Variety" string (row 2's dropdown reflecting row 1's pick as already-owned), and
+    /// submitting two identical bare names would collide during resolution instead of representing
+    /// the two distinct copies the user actually picked. Non-repeatable duplicate names
+    /// (Advertising/Fish Selection-style - out of scope, see project plan) pass through unqualified,
+    /// same as today.
     /// </summary>
     private static List<string> BuildDisplayNames(GameDataRepository repo, IEnumerable<UnlockData> candidates) =>
         candidates
-            .Select(c => UnlockNameResolver.GetTierLadderSiblings(repo, c).Count > 0
-                ? $"{c.Name} (Tier {c.MinimumFranchiseTier})"
+            .Select(c => UnlockNameResolver.GetRepeatableCardSiblings(repo, c).Count > 0
+                ? $"{c.Name} (copy {c.MinimumFranchiseTier + 1})"
                 : c.Name)
             .ToList();
 }

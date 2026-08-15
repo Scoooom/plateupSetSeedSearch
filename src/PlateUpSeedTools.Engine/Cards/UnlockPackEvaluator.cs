@@ -204,24 +204,31 @@ public static class UnlockPackEvaluator
     /// was wrong - offer-eligibility flags like unlockability/blocks-other-food/has-a-main are about
     /// the DRAW mechanism, irrelevant to whether a card could already be owned from a prior run).
     /// What DOES matter for "already owned" - and is real, data-verified, not an invented
-    /// restriction (e.g. every tier of the "Variety" franchise bonus is genuinely `BlockedBy`
+    /// restriction (e.g. every occurrence of the "Variety" franchise bonus is genuinely `BlockedBy`
     /// ["Community", "Coffee"] in the extracted data) - is internal consistency: Requires/BlockedBy
-    /// chains against the rest of the selection, no exact duplicates, and franchise-tier eligibility
-    /// (can't already own something from a tier this run hasn't reached). Day is irrelevant to every
+    /// chains against the rest of the selection, no exact duplicates, and (for cards that aren't part
+    /// of a repeatable family - see below) franchise-tier eligibility. Day is irrelevant to every
     /// check `ShouldBlockCard` performs (only Tier is consulted), so 0 is a safe placeholder.
     ///
-    /// One more DRAW-timing rule doesn't apply here either, for the same reason `IgnoreUnlockability`
-    /// is set: `ShouldBlockCard`'s exact-tier-equality check for `IsSpecificFranchiseTier` candidates
-    /// is correct for FRESH DRAWS (a tier-N reward is only ever freshly *offered* the exact night a
-    /// player ranks up to tier N) but wrong for "could this already be owned" - a player who reached
-    /// tier 5 has, over their franchise history, actually been granted the tier-0 through tier-5
-    /// reward cards cumulatively, not just tier 5's. `CarryoverFilter` sets `TierIsFloorNotExact` so
-    /// this uses the same `MinimumFranchiseTier &lt;= tier` floor as non-specific-tier cards instead.
+    /// CORRECTED after a real user report: a REPEATABLE franchise-carryover card's
+    /// `MinimumFranchiseTier` (e.g. "Variety" has 6 live records, `MinimumFranchiseTier` 0-5) is NOT
+    /// the franchise tier you were on when you took it - every franchise cycle you take exactly one
+    /// card, and a repeatable card's distinct records just count "the Nth time you've taken this
+    /// specific card," fully decoupled from the overall franchise-tier counter (you could take your
+    /// FIRST "Variety" on your fifth franchise cycle, having taken five other different cards on the
+    /// four before it). `ShouldBlockCard`'s exact-tier-equality check for `IsSpecificFranchiseTier`
+    /// candidates is real and correct - but only for FRESH DRAWS during actual gameplay (ground-truth
+    /// ­verified: ShouldBlockCard mirrors the real `FilterBasic.ShouldBlockCard`, ­decompiled source
+    /// confirmed), a mechanic this method was never simulating in the first place. `CarryoverFilter`
+    /// sets `SkipSpecificFranchiseTierCheck` so repeatable cards skip the franchise-tier comparison
+    /// entirely here - no floor, no exact match, no relationship to `tier` at all. Non-repeatable
+    /// franchise-gated cards (`IsSpecificFranchiseTier: false` but a nonzero `MinimumFranchiseTier`)
+    /// are a separate, unaffected case - the floor check still applies to those (a genuine constraint:
+    /// you couldn't already own a card gated behind overall franchise progress you haven't reached).
     ///
-    /// Floor eligibility alone isn't sufficient for a tier-laddered card though: it would happily
-    /// accept "Variety" at tier 4 as an isolated pick without also requiring tiers 0-3's records to
-    /// be present, even though franchise tiers are reached in order (owning a higher tier's reward
-    /// implies owning every lower tier's too). The cumulative check below enforces that explicitly.
+    /// The one thing repeatable cards genuinely DO need, independent of `tier` entirely: you can't
+    /// claim your 3rd "Variety" without also having your 1st and 2nd (copies are taken in order,
+    /// unrelated to which franchise cycle each happened on). The cumulative check below enforces that.
     /// </summary>
     public static bool IsValidCarryoverPick(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier)
     {
@@ -230,10 +237,11 @@ public static class UnlockPackEvaluator
             return false;
         }
 
-        // Cumulative lower-tier prerequisite: every live sibling of a tier-laddered card with a
-        // strictly lower MinimumFranchiseTier must already be in currentCards - order-independent
-        // (checks final-set membership, not the order rows were added in).
-        foreach (var sibling in UnlockNameResolver.GetTierLadderSiblings(repo, candidate))
+        // Cumulative lower-copy prerequisite: every live sibling of a repeatable card with a
+        // strictly lower MinimumFranchiseTier (occurrence index, not franchise tier - see this
+        // method's doc comment) must already be in currentCards - order-independent (checks
+        // final-set membership, not the order rows were added in).
+        foreach (var sibling in UnlockNameResolver.GetRepeatableCardSiblings(repo, candidate))
         {
             if (sibling.MinimumFranchiseTier < candidate.MinimumFranchiseTier && !currentCards.Contains(sibling.Id))
             {
@@ -289,7 +297,7 @@ public static class UnlockPackEvaluator
         AllowBaseDishes = true,
         IgnoreBlocksOtherFood = true,
         IgnoreFilterByHasMain = true,
-        TierIsFloorNotExact = true,
+        SkipSpecificFranchiseTierCheck = true,
     };
 
     // --- FilterBasic.ShouldBlockCard ---
@@ -301,8 +309,14 @@ public static class UnlockPackEvaluator
             return true;
         }
 
-        var franchiseBlock = !filter.IgnoreFranchiseTier && candidate.IsSpecificFranchiseTier && !filter.TierIsFloorNotExact
-            ? candidate.MinimumFranchiseTier != request.Tier
+        // IsSpecificFranchiseTier candidates: exact-match against the declared tier (ground-truth-
+        // verified correct for FRESH DRAWS - see IsValidCarryoverPick's doc comment) UNLESS
+        // SkipSpecificFranchiseTierCheck is set (CarryoverFilter only), in which case a repeatable
+        // card's occurrence index has no relationship to the declared tier at all and is never
+        // blocked here - the cumulative same-name check in IsValidCarryoverPick handles ordering
+        // instead. Non-specific-tier candidates always use a floor, unrelated to this flag.
+        var franchiseBlock = candidate.IsSpecificFranchiseTier
+            ? !filter.IgnoreFranchiseTier && !filter.SkipSpecificFranchiseTierCheck && candidate.MinimumFranchiseTier != request.Tier
             : candidate.MinimumFranchiseTier > request.Tier;
         if (franchiseBlock)
         {

@@ -105,13 +105,15 @@ public sealed class FilterData
     public required bool IgnoreFilterByHasMain { get; init; }
 
     /// <summary>
-    /// True: the franchise-tier check always uses a floor (MinimumFranchiseTier &lt;= tier), even for
-    /// IsSpecificFranchiseTier candidates - default false (unset) so the exact-equality check the
-    /// fresh-draw path relies on is preserved for every pack deserialized from packs.json. Not
-    /// `required` for exactly that reason: adding a required field here would break deserializing
-    /// every existing pack's Filter blob, which never sets this. Only UnlockPackEvaluator's
-    /// CarryoverFilter (hand-constructed in code, not JSON) sets this true - see IsValidCarryoverPick's
-    /// doc comment for why exact-match is a draw-TIMING rule that doesn't apply to ownership history.
+    /// True: an IsSpecificFranchiseTier candidate's franchise-tier check is skipped entirely (never
+    /// blocks on tier) - default false (unset) so the exact-equality check the fresh-draw path relies
+    /// on is preserved for every pack deserialized from packs.json. Not `required` for exactly that
+    /// reason: adding a required field here would break deserializing every existing pack's Filter
+    /// blob, which never sets this. Only UnlockPackEvaluator's CarryoverFilter (hand-constructed in
+    /// code, not JSON) sets this true - a repeatable franchise-carryover card's MinimumFranchiseTier
+    /// is an occurrence index ("the Nth time you've taken this card"), not the franchise tier you
+    /// were on when you took it, so it has no relationship to the declared tier to compare against -
+    /// see IsValidCarryoverPick's doc comment for the full explanation.
     /// </summary>
-    public bool TierIsFloorNotExact { get; init; }
+    public bool SkipSpecificFranchiseTierCheck { get; init; }
 }

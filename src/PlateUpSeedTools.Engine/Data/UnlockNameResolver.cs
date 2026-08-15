@@ -14,29 +14,28 @@ public readonly record struct UnlockNameLookup(UnlockData? Unlock, IReadOnlyList
 /// both need identical unknown/ambiguous-name handling, just formatted differently (CLI prints to
 /// stdout, the web endpoint turns it into a JSON error).
 ///
-/// Tier-laddered franchise cards (e.g. "Variety" - a distinct reward Unlock per franchise tier
-/// reached, 0-5, all sharing the literal Name "Variety") need extra handling: a bare name match
-/// against every Unlock in the game hits every tier's record at once. See <see
-/// cref="GetTierLadderSiblings"/> for the shared "is this actually a tier ladder" detection (also
-/// used by UnlockPackEvaluator.IsValidCarryoverPick's cumulative lower-tier check) and the `" (Tier
-/// N)"` qualifier syntax below that lets a caller pick a specific rung explicitly.
+/// Repeatable franchise-carryover cards (e.g. "Variety" - a distinct Unlock record per time you've
+/// taken it across separate franchise cycles, 6 live records total) need extra handling: a bare name
+/// match against every Unlock in the game hits every occurrence at once. See <see
+/// cref="GetRepeatableCardSiblings"/> for the shared "is this actually a repeatable-card family"
+/// detection (also used by UnlockPackEvaluator.IsValidCarryoverPick's cumulative lower-copy check)
+/// and the `" (copy N)"` qualifier syntax below that lets a caller pick a specific occurrence
+/// explicitly. IMPORTANT, learned the hard way (a real user-reported bug): the numeric suffix here is
+/// an occurrence COUNT ("this is your Nth time taking this card"), NOT the franchise tier you were on
+/// when you took it - those are unrelated numbers. Don't reintroduce a comparison against a declared
+/// franchise-tier value anywhere in this class.
 /// </summary>
 public static class UnlockNameResolver
 {
-    private static readonly Regex TierQualifierPattern = new(@"^(?<base>.+) \(Tier (?<tier>\d+)\)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex CopyQualifierPattern = new(@"^(?<base>.+) \(copy (?<copy>\d+)\)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <param name="tier">
-    /// The caller's currently-declared franchise tier - used only to disambiguate a bare (unqualified)
-    /// tier-laddered name, by floor-resolving to the highest rung whose MinimumFranchiseTier is &lt;=
-    /// this value (same floor semantics as UnlockPackEvaluator's carryover-context tier check). Has no
-    /// effect on non-ambiguous names or on an explicitly `" (Tier N)"`-qualified name.
-    /// </param>
-    public static UnlockNameLookup TryResolveByName(GameDataRepository repo, string name, int tier)
+    public static UnlockNameLookup TryResolveByName(GameDataRepository repo, string name)
     {
         var all = repo.AllUnlocksOrderedById;
-        var qualifierMatch = TierQualifierPattern.Match(name);
+        var qualifierMatch = CopyQualifierPattern.Match(name);
         var baseName = qualifierMatch.Success ? qualifierMatch.Groups["base"].Value : name;
-        int? qualifiedTier = qualifierMatch.Success ? int.Parse(qualifierMatch.Groups["tier"].Value) : null;
+        // "copy N" is 1-indexed for display; the underlying MinimumFranchiseTier field is 0-indexed.
+        int? qualifiedCopyIndex = qualifierMatch.Success ? int.Parse(qualifierMatch.Groups["copy"].Value) - 1 : null;
 
         var matches = all.Where(u => string.Equals(u.Name, baseName, StringComparison.OrdinalIgnoreCase)).ToList();
         if (matches.Count == 1)
@@ -46,15 +45,14 @@ public static class UnlockNameResolver
 
         if (matches.Count > 1)
         {
-            return ResolveAmbiguous(all, baseName, matches, qualifiedTier, tier);
+            return ResolveAmbiguous(matches, qualifiedCopyIndex);
         }
 
         var close = all.Where(u => u.Name.Contains(name, StringComparison.OrdinalIgnoreCase)).Take(5).Select(u => u.Name).ToList();
         return new UnlockNameLookup(null, [], close);
     }
 
-    private static UnlockNameLookup ResolveAmbiguous(
-        IReadOnlyList<UnlockData> all, string baseName, List<UnlockData> matches, int? qualifiedTier, int tier)
+    private static UnlockNameLookup ResolveAmbiguous(List<UnlockData> matches, int? qualifiedCopyIndex)
     {
         // The dead-duplicate rows (see DropInertDuplicateNames' doc comment) are never a legitimate
         // answer - drop them from consideration whenever at least one live record shares the name,
@@ -66,41 +64,40 @@ public static class UnlockNameResolver
             return new UnlockNameLookup(matches[0], [], []);
         }
 
-        if (IsTierLadder(matches))
+        if (IsRepeatableCardFamily(matches))
         {
-            if (qualifiedTier is int qt)
+            if (qualifiedCopyIndex is int copyIndex)
             {
-                var exact = matches.SingleOrDefault(m => m.MinimumFranchiseTier == qt);
+                var exact = matches.SingleOrDefault(m => m.MinimumFranchiseTier == copyIndex);
                 return exact is not null
                     ? new UnlockNameLookup(exact, [], [])
                     : new UnlockNameLookup(null, matches, []);
             }
 
-            var floorMatch = matches
-                .Where(m => m.MinimumFranchiseTier <= tier)
-                .OrderByDescending(m => m.MinimumFranchiseTier)
-                .FirstOrDefault();
-            if (floorMatch is not null)
-            {
-                return new UnlockNameLookup(floorMatch, [], []);
-            }
+            // No qualifier and no declared-tier signal to lean on (there never was a valid one - see
+            // this class's doc comment) - a bare repeatable-card name is genuinely ambiguous among
+            // its occurrences. Report it via AmbiguousMatches so BuildAmbiguousOrUnknownErrorMessage
+            // can suggest the "(copy N)" qualifier. A normal web user never hits this in practice -
+            // GetFranchiseCandidates always emits already-qualified names (see SearchEndpoints.cs) -
+            // this only bites CLI/curl callers typing a bare name freehand.
         }
 
         return new UnlockNameLookup(null, matches, []);
     }
 
     /// <summary>
-    /// True if every record in <paramref name="candidates"/> is part of the same "tier ladder" - a
-    /// franchise reward granted once per tier reached, extracted as a separate Unlock record per
-    /// tier (e.g. "Variety" has one live record per tier 0-5) all sharing the same literal Name.
-    /// Deliberately narrow: requires every record to be IsSpecificFranchiseTier AND agree on every
-    /// other disambiguating field (Kind/UnlockGroup/CardType), differing ONLY by
-    /// MinimumFranchiseTier - so this can't misfire on same-name duplicates that differ for other
-    /// reasons (e.g. "Simplicity"/"Flower Pots", which differ by UnlockGroup/CardType, not tier; or
-    /// "Advertising"/"Fish Selection", which are genuinely identical except for raw Id - no tier
-    /// signal at all, correctly NOT treated as a ladder here).
+    /// True if every record in <paramref name="candidates"/> is part of the same "repeatable card
+    /// family" - a franchise-carryover card you can take more than once across separate franchise
+    /// cycles, extracted as a separate Unlock record per occurrence (e.g. "Variety" has 6 live
+    /// records, one per time you've taken it) all sharing the same literal Name. Deliberately narrow:
+    /// requires every record to be IsSpecificFranchiseTier AND agree on every other disambiguating
+    /// field (Kind/UnlockGroup/CardType), differing ONLY by MinimumFranchiseTier (the occurrence
+    /// index) - so this can't misfire on same-name duplicates that differ for other reasons (e.g.
+    /// "Simplicity"/"Flower Pots", which differ by UnlockGroup/CardType; or "Advertising"/
+    /// "Fish Selection", which are genuinely identical except for raw Id - no occurrence signal at
+    /// all, correctly NOT treated as a family here).
     /// </summary>
-    public static bool IsTierLadder(IReadOnlyList<UnlockData> candidates) =>
+    public static bool IsRepeatableCardFamily(IReadOnlyList<UnlockData> candidates) =>
         candidates.Count > 1 &&
         candidates.All(c => c.IsSpecificFranchiseTier) &&
         candidates.Select(c => (c.Kind, c.UnlockGroup, c.CardType)).Distinct().Count() == 1 &&
@@ -127,20 +124,21 @@ public static class UnlockNameResolver
 
     /// <summary>
     /// Builds a human-readable error for a failed <see cref="TryResolveByName"/> lookup - shared by
-    /// the CLI and every web endpoint that resolves a dish/card name, so the "it's a tier ladder,
-    /// here's how to qualify it" hint (see <see cref="IsTierLadder"/>) only needs to be written once.
+    /// the CLI and every web endpoint that resolves a dish/card name, so the "it's a repeatable card,
+    /// here's how to qualify it" hint (see <see cref="IsRepeatableCardFamily"/>) only needs to be
+    /// written once.
     /// </summary>
     public static string BuildAmbiguousOrUnknownErrorMessage(string label, string name, UnlockNameLookup lookup)
     {
         if (lookup.AmbiguousMatches.Count > 0)
         {
-            if (IsTierLadder(lookup.AmbiguousMatches))
+            if (IsRepeatableCardFamily(lookup.AmbiguousMatches))
             {
                 var qualified = lookup.AmbiguousMatches
                     .OrderBy(m => m.MinimumFranchiseTier)
-                    .Select(m => $"{m.Name} (Tier {m.MinimumFranchiseTier})")
+                    .Select(m => $"{m.Name} (copy {m.MinimumFranchiseTier + 1})")
                     .ToList();
-                return $"'{name}' is granted once per franchise tier reached - specify which one, e.g. \"{qualified[0]}\". Available: {string.Join(", ", qualified)}.";
+                return $"'{name}' can be taken more than once across separate franchise cycles - specify which copy, e.g. \"{qualified[0]}\". Available: {string.Join(", ", qualified)}.";
             }
 
             return $"Ambiguous {label} name '{name}' - {lookup.AmbiguousMatches.Count} matches (IDs: {string.Join(", ", lookup.AmbiguousMatches.Select(m => m.Id))}).";
@@ -153,17 +151,17 @@ public static class UnlockNameResolver
 
     /// <summary>
     /// Every live (IsUnlockable) sibling of <paramref name="candidate"/> sharing its Name and part of
-    /// the same tier ladder (see <see cref="IsTierLadder"/>) - empty if <paramref name="candidate"/>
-    /// isn't part of a ladder at all (including the single-record case). Used by
-    /// UnlockPackEvaluator.IsValidCarryoverPick's cumulative lower-tier prerequisite check (owning a
-    /// higher tier's reward implies owning every lower tier's too - franchise tiers are reached in
-    /// order) and by SearchEndpoints' qualified-display-name builder.
+    /// the same repeatable-card family (see <see cref="IsRepeatableCardFamily"/>) - empty if
+    /// <paramref name="candidate"/> isn't part of a family at all (including the single-record case).
+    /// Used by UnlockPackEvaluator.IsValidCarryoverPick's cumulative lower-copy prerequisite check
+    /// (owning your Nth copy implies owning copies 1..N-1 too - copies are taken in order) and by
+    /// SearchEndpoints' qualified-display-name builder.
     /// </summary>
-    public static IReadOnlyList<UnlockData> GetTierLadderSiblings(GameDataRepository repo, UnlockData candidate)
+    public static IReadOnlyList<UnlockData> GetRepeatableCardSiblings(GameDataRepository repo, UnlockData candidate)
     {
         var sameName = repo.AllUnlocksOrderedById
             .Where(u => u.IsUnlockable && string.Equals(u.Name, candidate.Name, StringComparison.OrdinalIgnoreCase))
             .ToList();
-        return IsTierLadder(sameName) ? sameName : [];
+        return IsRepeatableCardFamily(sameName) ? sameName : [];
     }
 }
