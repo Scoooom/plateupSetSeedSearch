@@ -99,7 +99,7 @@ public static class UnlockPackEvaluator
         var filter = pack.Filter ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Filter");
         var selector = pack.Selector ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Selector");
         var candidates = CandidateSource(repo, selector)
-            .Where(c => !ShouldBlockCard(repo, c, currentCards, request, filter))
+            .Where(c => !ShouldBlockCard(repo, c, currentCards, request, AsCumulativeCopyFilter(filter)))
             .ToList();
 
         foreach (var id in GetReachableIds(selector, candidates))
@@ -107,6 +107,24 @@ public static class UnlockPackEvaluator
             result.Add(id);
         }
     }
+
+    /// <summary>
+    /// Wraps a pack's real Filter (from packs.json) with TreatSpecificFranchiseTierAsCumulativeCopy
+    /// forced true, for this "possible cards" reachability preview only - see that flag's doc comment
+    /// on FilterData for why it can't be the pack's own default and can't be applied to the actual
+    /// GetModularOptions draw path.
+    /// </summary>
+    private static FilterData AsCumulativeCopyFilter(FilterData filter) => new()
+    {
+        IgnoreUnlockability = filter.IgnoreUnlockability,
+        IgnoreFranchiseTier = filter.IgnoreFranchiseTier,
+        IgnoreDuplicateFilter = filter.IgnoreDuplicateFilter,
+        IgnoreRequirements = filter.IgnoreRequirements,
+        AllowBaseDishes = filter.AllowBaseDishes,
+        IgnoreBlocksOtherFood = filter.IgnoreBlocksOtherFood,
+        IgnoreFilterByHasMain = filter.IgnoreFilterByHasMain,
+        TreatSpecificFranchiseTierAsCumulativeCopy = true,
+    };
 
     /// <summary>
     /// Every currently-decoded pack except "forcedCard" ones draws from every Unlock (filtered by
@@ -210,47 +228,19 @@ public static class UnlockPackEvaluator
     /// of a repeatable family - see below) franchise-tier eligibility. Day is irrelevant to every
     /// check `ShouldBlockCard` performs (only Tier is consulted), so 0 is a safe placeholder.
     ///
-    /// CORRECTED after a real user report: a REPEATABLE franchise-carryover card's
-    /// `MinimumFranchiseTier` (e.g. "Variety" has 6 live records, `MinimumFranchiseTier` 0-5) is NOT
-    /// the franchise tier you were on when you took it - every franchise cycle you take exactly one
-    /// card, and a repeatable card's distinct records just count "the Nth time you've taken this
-    /// specific card," fully decoupled from the overall franchise-tier counter (you could take your
-    /// FIRST "Variety" on your fifth franchise cycle, having taken five other different cards on the
-    /// four before it). `ShouldBlockCard`'s exact-tier-equality check for `IsSpecificFranchiseTier`
-    /// candidates is real and correct - but only for FRESH DRAWS during actual gameplay (ground-truth
-    /// ­verified: ShouldBlockCard mirrors the real `FilterBasic.ShouldBlockCard`, ­decompiled source
-    /// confirmed), a mechanic this method was never simulating in the first place. `CarryoverFilter`
-    /// sets `SkipSpecificFranchiseTierCheck` so repeatable cards skip the franchise-tier comparison
-    /// entirely here - no floor, no exact match, no relationship to `tier` at all. Non-repeatable
-    /// franchise-gated cards (`IsSpecificFranchiseTier: false` but a nonzero `MinimumFranchiseTier`)
-    /// are a separate, unaffected case - the floor check still applies to those (a genuine constraint:
-    /// you couldn't already own a card gated behind overall franchise progress you haven't reached).
-    ///
-    /// The one thing repeatable cards genuinely DO need, independent of `tier` entirely: you can't
-    /// claim your 3rd "Variety" without also having your 1st and 2nd (copies are taken in order,
-    /// unrelated to which franchise cycle each happened on). The cumulative check below enforces that.
+    /// For a REPEATABLE franchise-carryover card (e.g. "Variety" - 6 live records,
+    /// `MinimumFranchiseTier` 0-5), `ShouldBlockCard` enforces cumulative same-name ownership only
+    /// (you can't claim copy 3 without copies 1 and 2) - the declared `tier` is never consulted for
+    /// these, since a repeatable card's `MinimumFranchiseTier` is an occurrence index ("the Nth time
+    /// you've taken this card"), not the franchise tier you were on when you took it - see
+    /// `ShouldBlockCard`'s own doc comment for the full explanation and why this is enforced there
+    /// (shared by carryover validation, the day-target dropdown, and the actual simulated draw
+    /// alike, not just here). Non-repeatable franchise-gated cards still respect the tier floor (a
+    /// genuine constraint: you couldn't already own a card gated behind franchise progress you
+    /// haven't reached).
     /// </summary>
-    public static bool IsValidCarryoverPick(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier)
-    {
-        if (ShouldBlockCard(repo, candidate, currentCards, new UnlockRequest(Day: 0, tier), CarryoverFilter))
-        {
-            return false;
-        }
-
-        // Cumulative lower-copy prerequisite: every live sibling of a repeatable card with a
-        // strictly lower MinimumFranchiseTier (occurrence index, not franchise tier - see this
-        // method's doc comment) must already be in currentCards - order-independent (checks
-        // final-set membership, not the order rows were added in).
-        foreach (var sibling in UnlockNameResolver.GetRepeatableCardSiblings(repo, candidate))
-        {
-            if (sibling.MinimumFranchiseTier < candidate.MinimumFranchiseTier && !currentCards.Contains(sibling.Id))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    public static bool IsValidCarryoverPick(GameDataRepository repo, UnlockData candidate, HashSet<int> currentCards, int tier) =>
+        !ShouldBlockCard(repo, candidate, currentCards, new UnlockRequest(Day: 0, tier), CarryoverFilter);
 
     /// <summary>
     /// True if <paramref name="targetIds"/> contains two cards that can never coexist because owning
@@ -297,7 +287,7 @@ public static class UnlockPackEvaluator
         AllowBaseDishes = true,
         IgnoreBlocksOtherFood = true,
         IgnoreFilterByHasMain = true,
-        SkipSpecificFranchiseTierCheck = true,
+        TreatSpecificFranchiseTierAsCumulativeCopy = true,
     };
 
     // --- FilterBasic.ShouldBlockCard ---
@@ -309,16 +299,33 @@ public static class UnlockPackEvaluator
             return true;
         }
 
-        // IsSpecificFranchiseTier candidates: exact-match against the declared tier (ground-truth-
-        // verified correct for FRESH DRAWS - see IsValidCarryoverPick's doc comment) UNLESS
-        // SkipSpecificFranchiseTierCheck is set (CarryoverFilter only), in which case a repeatable
-        // card's occurrence index has no relationship to the declared tier at all and is never
-        // blocked here - the cumulative same-name check in IsValidCarryoverPick handles ordering
-        // instead. Non-specific-tier candidates always use a floor, unrelated to this flag.
-        var franchiseBlock = candidate.IsSpecificFranchiseTier
-            ? !filter.IgnoreFranchiseTier && !filter.SkipSpecificFranchiseTierCheck && candidate.MinimumFranchiseTier != request.Tier
-            : candidate.MinimumFranchiseTier > request.Tier;
-        if (franchiseBlock)
+        // CORRECTED after a real, repeated user report: an IsSpecificFranchiseTier candidate's
+        // MinimumFranchiseTier is - for every such card that actually exists in the game's data - a
+        // same-name OCCURRENCE index ("the Nth time you've taken this specific repeatable card
+        // across separate franchise cycles," e.g. "Variety" has 6 live records), NOT the franchise
+        // tier you were on when you took it. Those are unrelated numbers, and the declared
+        // request.Tier must NEVER be consulted to decide eligibility for these - not exact-match, not
+        // a floor, nothing (see this class's CumulativeCopyFilter/AsCumulativeCopyFilter doc comments
+        // for exactly which callers this applies to and why NOT all of them - it can't be every
+        // caller: the exact-tier-match rule is real and ground-truth-verified for the ACTUAL
+        // simulated card draw, changing it there measurably altered a real captured 16-day sequence,
+        // since which candidates are IN the pool at all affects the RNG shuffle order for every other
+        // candidate that night too, not just repeatable cards themselves).
+        if (candidate.IsSpecificFranchiseTier)
+        {
+            if (!filter.IgnoreFranchiseTier)
+            {
+                var franchiseBlockedRepeatable = filter.TreatSpecificFranchiseTierAsCumulativeCopy
+                    ? UnlockNameResolver.GetRepeatableCardSiblings(repo, candidate)
+                        .Any(s => s.MinimumFranchiseTier < candidate.MinimumFranchiseTier && !currentCards.Contains(s.Id))
+                    : candidate.MinimumFranchiseTier != request.Tier;
+                if (franchiseBlockedRepeatable)
+                {
+                    return true;
+                }
+            }
+        }
+        else if (candidate.MinimumFranchiseTier > request.Tier)
         {
             return true;
         }

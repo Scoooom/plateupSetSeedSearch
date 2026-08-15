@@ -105,15 +105,20 @@ public sealed class FilterData
     public required bool IgnoreFilterByHasMain { get; init; }
 
     /// <summary>
-    /// True: an IsSpecificFranchiseTier candidate's franchise-tier check is skipped entirely (never
-    /// blocks on tier) - default false (unset) so the exact-equality check the fresh-draw path relies
-    /// on is preserved for every pack deserialized from packs.json. Not `required` for exactly that
-    /// reason: adding a required field here would break deserializing every existing pack's Filter
-    /// blob, which never sets this. Only UnlockPackEvaluator's CarryoverFilter (hand-constructed in
-    /// code, not JSON) sets this true - a repeatable franchise-carryover card's MinimumFranchiseTier
-    /// is an occurrence index ("the Nth time you've taken this card"), not the franchise tier you
-    /// were on when you took it, so it has no relationship to the declared tier to compare against -
-    /// see IsValidCarryoverPick's doc comment for the full explanation.
+    /// True: an IsSpecificFranchiseTier candidate (a repeatable franchise-carryover card, e.g.
+    /// "Variety" - one record per time it's been taken across separate franchise cycles) is
+    /// eligible based on cumulative same-name ownership only (owns every earlier copy), never on the
+    /// declared tier - default false (unset) so every pack deserialized from packs.json keeps the
+    /// original exact-tier-match rule, which is real and ground-truth-verified for the ACTUAL
+    /// simulated card draw (changing it there was tried and measurably broke a real captured 16-day
+    /// sequence - which candidates are even IN the pool affects the RNG shuffle for every other
+    /// candidate offered that same night, not just repeatable cards). Not `required` for exactly that
+    /// reason: adding a required field would break deserializing every existing pack's Filter blob.
+    /// Set true by UnlockPackEvaluator's CarryoverFilter (hand-constructed, not JSON - carryover
+    /// validation is a self-report, never a simulated draw) and by the day-target/"possible cards"
+    /// dropdown's reachability query (a UI convenience preview, also never a simulated draw - see
+    /// GetPossibleCardIds's doc comment) - NOT by anything feeding the real GetModularOptions draw
+    /// path, which must keep the exact-match rule to stay ground-truth-correct.
     /// </summary>
-    public bool SkipSpecificFranchiseTierCheck { get; init; }
+    public bool TreatSpecificFranchiseTierAsCumulativeCopy { get; init; }
 }

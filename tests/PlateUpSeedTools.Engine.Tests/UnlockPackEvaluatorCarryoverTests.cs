@@ -14,10 +14,10 @@ namespace PlateUpSeedTools.Engine.Tests;
 /// occurrence index ("the Nth time you've taken this card"), completely decoupled from which overall
 /// franchise cycle you were on when you took it (you could take your first "Variety" on your fifth
 /// franchise cycle, having taken five different cards on the four before it). Fixed via
-/// FilterData.SkipSpecificFranchiseTierCheck (skips the tier comparison entirely for repeatable
-/// cards, carryover-context only - no floor, no exact match, no relationship to declared tier at
-/// all) plus the cumulative lower-copy prerequisite check (can't list copy 3 without copies 1 and 2
-/// already listed - independent of declared tier, unaffected by this correction).
+/// FilterData.TreatSpecificFranchiseTierAsCumulativeCopy (replaces the tier comparison with a
+/// cumulative same-name check for repeatable cards - carryover-context and the day-target/"possible
+/// cards" dropdown only, NOT the real simulated card draw, which keeps the ground-truth-verified
+/// exact-match rule - see ShouldBlockCard's own doc comment for why that split is necessary).
 /// </summary>
 public class UnlockPackEvaluatorCarryoverTests
 {
@@ -92,5 +92,52 @@ public class UnlockPackEvaluatorCarryoverTests
             otherIds.Remove(id);
             Assert.True(UnlockPackEvaluator.IsValidCarryoverPick(repo, candidate, otherIds, tier: 0));
         }
+    }
+
+    // --- Day-target/"possible cards" dropdown reachability - real regression coverage for the
+    // second follow-up report: the dropdown itself was still suggesting a copy determined by the
+    // declared Tier field (e.g. suggesting "copy 3" when Tier=2 and no franchise cards were listed at
+    // all). GetPossibleCardIds must show the same cumulative-ownership-only behavior as
+    // IsValidCarryoverPick, completely independent of the tier argument. ---
+
+    private const int PiesId = -133939790;
+
+    [Fact]
+    public void PossibleCards_WithNoVarietyOwned_OnlyIncludesCopy1_RegardlessOfDeclaredTier()
+    {
+        var repo = LoadRepo();
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        List<int> activePackIds = [settingPackId, .. setup.BonusPackIds];
+
+        var atTierZero = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, setup.InitiallyOwnedIds, day: 15, tier: 0);
+        var atTierFive = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, setup.InitiallyOwnedIds, day: 15, tier: 5);
+
+        Assert.Contains(VarietyCopy1, atTierZero);
+        Assert.DoesNotContain(VarietyCopy2, atTierZero);
+
+        // The declared tier must not change the answer at all.
+        Assert.Contains(VarietyCopy1, atTierFive);
+        Assert.DoesNotContain(VarietyCopy2, atTierFive);
+    }
+
+    [Fact]
+    public void PossibleCards_WithCopy1And2Owned_OnlyIncludesCopy3_RegardlessOfDeclaredTier()
+    {
+        var repo = LoadRepo();
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        List<int> activePackIds = [settingPackId, .. setup.BonusPackIds];
+        var owned = new HashSet<int>(setup.InitiallyOwnedIds) { VarietyCopy1, VarietyCopy2 };
+
+        var atTierZero = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, owned, day: 15, tier: 0);
+        var atTierNine = UnlockPackEvaluator.GetPossibleCardIds(repo, activePackIds, owned, day: 15, tier: 9);
+
+        Assert.Contains(VarietyCopy3, atTierZero);
+        Assert.DoesNotContain(VarietyCopy1, atTierZero);
+        Assert.DoesNotContain(VarietyCopy4, atTierZero);
+
+        Assert.Contains(VarietyCopy3, atTierNine);
+        Assert.DoesNotContain(VarietyCopy4, atTierNine);
     }
 }
