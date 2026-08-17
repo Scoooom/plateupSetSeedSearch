@@ -17,6 +17,8 @@ public sealed class GameDataRepository
     private readonly HeatLevelsData _heatLevels;
     private readonly Dictionary<int, UnlockPackData> _packsById;
     private readonly Dictionary<string, CardScheduleData> _cardSchedulesBySlug;
+    private readonly Dictionary<int, ShopApplianceData> _shopAppliancesById;
+    private readonly List<ShopApplianceData> _shopAppliancesInGameDataOrder;
 
     public GameDataRepository(string dataRoot)
     {
@@ -39,6 +41,15 @@ public sealed class GameDataRepository
 
         var schedules = JsonSerializer.Deserialize<List<CardScheduleData>>(File.ReadAllText(Path.Combine(cardsDir, "card-schedules.json")), JsonOptions) ?? [];
         _cardSchedulesBySlug = schedules.ToDictionary(s => s.Slug);
+
+        var shopDir = Path.Combine(_root, "shop");
+        var shopAppliances = JsonSerializer.Deserialize<List<ShopApplianceData>>(File.ReadAllText(Path.Combine(shopDir, "appliances.json")), JsonOptions) ?? [];
+        _shopAppliancesById = shopAppliances.ToDictionary(a => a.Id);
+        // Deliberately a separate ordered List, not _shopAppliancesById.Values.ToList() - Dictionary
+        // enumeration order isn't a documented guarantee, and this order is load-bearing (see
+        // AllShopAppliances' doc comment): it must exactly match shop/appliances.json's own array
+        // order, which ApplianceExtractor writes in GameData.asset's GameDataObjects order.
+        _shopAppliancesInGameDataOrder = shopAppliances;
     }
 
     /// <summary>
@@ -118,4 +129,21 @@ public sealed class GameDataRepository
         string.IsNullOrEmpty(scheduleSlug) ? null
         : _cardSchedulesBySlug.TryGetValue(scheduleSlug, out var schedule) ? schedule.PackId
         : throw new KeyNotFoundException($"Unknown card schedule '{scheduleSlug}'");
+
+    /// <summary>
+    /// Every Appliance asset (data/settings/shop/appliances.json) - includes non-purchasable ones,
+    /// matching CreateShopOptions' own IsPurchasable/IsPurchasableAsUpgrade filter happening at
+    /// candidate-build time, not at extraction time. ORDER MATTERS: this must match GameData.asset's
+    /// GameDataObjects registration order, since CreateShopOptions.CreateOptions has no explicit sort
+    /// (unlike Unlocks, see AllUnlocksOrderedById) - ShopDaySimulator's per-slot Fisher-Yates shuffle
+    /// permutes this list's positions deterministically given the RNG stream, so a different starting
+    /// order produces different final picks even with byte-correct shuffle logic (ground-truth-caught,
+    /// see ApplianceExtractor.ExtractShopAppliances' doc comment).
+    /// </summary>
+    public IReadOnlyList<ShopApplianceData> AllShopAppliances => _shopAppliancesInGameDataOrder;
+
+    public ShopApplianceData GetShopAppliance(int id) =>
+        _shopAppliancesById.TryGetValue(id, out var appliance) ? appliance : throw new KeyNotFoundException($"Unknown shop appliance ID {id}");
+
+    public bool TryGetShopAppliance(int id, out ShopApplianceData appliance) => _shopAppliancesById.TryGetValue(id, out appliance!);
 }

@@ -57,6 +57,9 @@ CardExtractor.ExtractUnlocks(resolver, assetsRoot, outputRoot);
 CardExtractor.ExtractHeatLevels(resolver, assetsRoot, outputRoot);
 CardExtractor.WritePacksFile(resolver, assetsRoot, outputRoot);
 
+Console.WriteLine("Extracting shop/appliance purchase data...");
+ApplianceExtractor.ExtractShopAppliances(resolver, assetsRoot, outputRoot);
+
 Console.WriteLine($"Done. Wrote index with {indexEntries.Count} setting(s) to {indexPath}");
 Console.WriteLine($"Wrote {SettingExtractor.KnownAppliances.Count} known appliance(s) to {Path.Combine(outputRoot, "appliances.json")}");
 return 0;

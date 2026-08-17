@@ -100,6 +100,22 @@ public sealed class AssetYamlReader
     }
 
     /// <summary>
+    /// Reads a plain list of scalar ints/enum values (e.g. Appliance.RequiresPhaseForShop, a
+    /// List&lt;MenuPhase&gt;) - unlike <see cref="ScalarListField"/>, each entry here is the scalar
+    /// itself, not a mapping with a named sub-field. An unset/empty field serializes as either `Key:`
+    /// (no children) or `Key: []` depending on Unity's emitter - both read back as an empty list.
+    /// </summary>
+    public List<int> IntList(string key)
+    {
+        if (!_root.Children.TryGetValue(new YamlScalarNode(key), out var node) || node is not YamlSequenceNode seq)
+        {
+            return [];
+        }
+
+        return seq.Children.Cast<YamlScalarNode>().Select(s => int.Parse(s.Value!)).ToList();
+    }
+
+    /// <summary>
     /// Reads a list-of-mappings field (e.g. Dish.ResultingMenuItems) and pulls a named int sub-field
     /// out of each entry - e.g. ResultingMenuItems[].Phase, to determine which MenuPhase values a
     /// dish provides (needed for FilterBasic/UnlockSelectorMenuPhase card-draw filtering).
