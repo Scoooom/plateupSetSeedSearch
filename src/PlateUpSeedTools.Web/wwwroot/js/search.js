@@ -14,6 +14,7 @@ const addDayTargetButton = document.getElementById("add-day-target");
 const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
 const addFranchiseCardButton = document.getElementById("add-franchise-card");
 const stopAfterFirstMatchInput = document.getElementById("stop-after-first-match");
+const otFriendlyInput = document.getElementById("ot-friendly");
 const excludeSeedsInput = document.getElementById("exclude-seeds-input");
 const form = document.getElementById("search-form");
 const statusEl = document.getElementById("status");
@@ -311,6 +312,32 @@ function addFranchiseCardRow() {
 addDayTargetButton.addEventListener("click", () => {
   addDayTargetRow();
   setDayTargetsEnabled(Boolean(dishSelect.value));
+});
+
+// A fresh page load always seeds one empty day-target row (see loadInit) - its day/card inputs are
+// `required` so a genuine card-target search can't be submitted half-filled-in. But that same
+// `required` blocks the native submit event entirely (before any JS validation runs) for an
+// OT-Friendly-only search, where the user never touches that row at all. Checking OT Friendly
+// relaxes `required` on any row that's still completely empty at that moment - a row the user has
+// actually started filling in keeps being validated normally either way, since a non-empty field
+// satisfies `required` regardless of its boolean value.
+otFriendlyInput.addEventListener("change", () => {
+  if (!otFriendlyInput.checked) {
+    return;
+  }
+
+  for (const row of getAllDayTargetRows()) {
+    const dayInput = row.querySelector(".day-target-day");
+    const cardInput = row.querySelector(".day-target-card");
+    if (!dayInput.value && !cardInput.value) {
+      dayInput.required = false;
+      cardInput.required = false;
+      // validateCardInput may have already run while cardInput was still required, leaving a
+      // stale setCustomValidity("Choose a card.") message - required alone doesn't clear that,
+      // re-run it now so an untouched row's card field is genuinely valid, not just not-required.
+      validateCardInput(cardInput);
+    }
+  }
 });
 addFranchiseCardButton.addEventListener("click", () => {
   addFranchiseCardRow();
@@ -637,6 +664,7 @@ async function prefillFormFromPayload(request) {
   lengthInput.value = String(request.length);
   limitInput.value = request.limit != null ? String(request.limit) : "";
   stopAfterFirstMatchInput.checked = Boolean(request.stopAfterFirstMatch);
+  otFriendlyInput.checked = Boolean(request.otFriendly);
   excludeSeedsInput.value = (request.excludedSeeds ?? []).join(", ");
 
   franchiseCardRowsEl.innerHTML = "";
@@ -923,13 +951,20 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
-  const dayTargets = getAllDayTargetRows().map((row) => ({
-    day: isRowFlexible(row) ? null : Number(row.querySelector(".day-target-day").value),
-    cardName: row.querySelector(".day-target-card").value,
-  }));
+  // A row with neither a day nor a card entered (the always-present default row from loadInit,
+  // possibly left untouched for an OT-Friendly-only search) isn't a real target - skip it rather
+  // than sending an empty cardName the server would reject as an unknown card. Checks the raw
+  // .value string, not getRowDay (Number("") is 0, a valid day, so that alone can't tell "empty"
+  // apart from "day 0" - see the Christmas/February day-0 mechanic elsewhere in this file).
+  const dayTargets = getAllDayTargetRows()
+    .filter((row) => row.querySelector(".day-target-day").value || row.querySelector(".day-target-card").value)
+    .map((row) => ({
+      day: isRowFlexible(row) ? null : Number(row.querySelector(".day-target-day").value),
+      cardName: row.querySelector(".day-target-card").value,
+    }));
 
-  if (dayTargets.length === 0) {
-    setStatus("Add at least one day target.", true);
+  if (dayTargets.length === 0 && !otFriendlyInput.checked) {
+    setStatus("Add at least one day target (or check OT Friendly).", true);
     return;
   }
 
@@ -950,6 +985,7 @@ form.addEventListener("submit", async (event) => {
     stopAfterFirstMatch: stopAfterFirstMatchInput.checked,
     excludedSeeds: parseExcludedSeeds(),
     cardPack: cardPackSelect.value || null,
+    otFriendly: otFriendlyInput.checked,
   };
 
   try {
@@ -1035,6 +1071,9 @@ async function openPreviewDialog(seed) {
     previewDialogStatus.textContent = "";
     const tableCount = layout.appliances.filter((a) => a.applianceId === layout.tableApplianceId).length;
     previewDialogStats.textContent = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)`;
+    if (currentSearchPayload?.otFriendly) {
+      previewDialogStats.textContent += " · OT Friendly ✓";
+    }
   } catch {
     previewDialogStatus.textContent = "Failed to reach the server.";
     previewDialogStatus.classList.add("error");

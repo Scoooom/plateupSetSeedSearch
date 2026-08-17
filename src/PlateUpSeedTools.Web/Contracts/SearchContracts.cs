@@ -16,7 +16,9 @@ public sealed record SearchStartRequest(
     long? Limit,
     bool? StopAfterFirstMatch,
     List<string>? ExcludedSeeds = null,
-    string? CardPack = null);
+    string? CardPack = null,
+    // Additional AND-condition layered onto DayTargets - see Engine.Shop.OtFriendlyChecker.
+    bool? OtFriendly = null);
 
 public sealed record SearchStartResponse(string JobId, long TotalToCheck, string SpaceSize);
 

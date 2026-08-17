@@ -251,6 +251,36 @@ public class SeedSearcherTests
         Assert.Equal(TargetDay, targetEntry.Day);
     }
 
+    /// <summary>
+    /// Proves OtFriendly is a real AND-condition, not silently ignored - a search with no day
+    /// targets and OtFriendly:false trivially matches every seed in the space (same as
+    /// DoesNotReportMatchCapReachedWhenTheCapIsNeverHit), while the exact same space with
+    /// OtFriendly:true narrows to a strict subset that still includes the one seed
+    /// (OtFriendlyCheckerTests confirms "vqrj" is ground-truth-confirmed OtFriendly) known to satisfy it.
+    /// </summary>
+    [Fact]
+    public void OtFriendlyNarrowsMatchesToASubsetIncludingAKnownGoodSeed()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "vqrj";
+        const int length = 4;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length); // 256, includes "vqrj" itself
+
+        var withoutFilter = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck);
+        var withFilter = withoutFilter with { OtFriendly = true, SettingSlug = "normal" };
+
+        var allMatches = RunSearch(repo, withoutFilter);
+        var otFriendlyMatches = RunSearch(repo, withFilter);
+
+        Assert.Equal(totalToCheck, allMatches.Count); // no day targets - everyone matches trivially
+        Assert.True(otFriendlyMatches.Count < allMatches.Count);
+        Assert.Subset(allMatches, otFriendlyMatches);
+        Assert.Contains("vqrj", otFriendlyMatches);
+    }
+
     private static HashSet<string> RunSearch(GameDataRepository repo, SeedSearchRequest request)
     {
         var actualMatches = new HashSet<string>();

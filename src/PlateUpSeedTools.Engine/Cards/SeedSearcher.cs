@@ -1,5 +1,6 @@
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Seeding;
+using PlateUpSeedTools.Engine.Shop;
 
 namespace PlateUpSeedTools.Engine.Cards;
 
@@ -17,7 +18,14 @@ public sealed record SeedSearchRequest(
     // with DayTargets in the same search (e.g. "Ice Cream on day 3, Individual Dining any day").
     // Empty/null means "fixed-day targets only", reproducing pre-existing behavior exactly.
     IReadOnlySet<int>? FlexibleTargetIds = null,
-    int FlexibleHorizon = 15);
+    int FlexibleHorizon = 15,
+    // Restaurant-setting slug (NOT SettingPackId, the card-draw pack - can differ, see the "card
+    // schedule" override feature) - only needed to resolve a layout when OtFriendly is set, since
+    // OtFriendlyChecker needs the setting's RequiredApplianceIds for its starting-kitchen state.
+    string? SettingSlug = null,
+    // Additional AND-condition, layered onto whatever DayTargets/FlexibleTargetIds are already
+    // configured - see OtFriendlyChecker. Requires SettingSlug to be set (Search throws otherwise).
+    bool OtFriendly = false);
 
 /// <summary>Result of a <see cref="SeedSearcher.Search"/> call - <see cref="MatchCapReached"/> distinguishes "stopped early because matchCap was hit" from a genuine full-space completion, since both otherwise look like the loop just finishing.</summary>
 public readonly record struct SeedSearchResult(bool MatchCapReached);
@@ -57,6 +65,11 @@ public static class SeedSearcher
         Action<long> onProgress,
         CancellationToken cancellationToken)
     {
+        if (request.OtFriendly && string.IsNullOrEmpty(request.SettingSlug))
+        {
+            throw new ArgumentException("SettingSlug is required when OtFriendly is set - OtFriendlyChecker needs it to resolve the starting-kitchen layout.", nameof(request));
+        }
+
         var hasFlexibleTargets = request.FlexibleTargetIds is { Count: > 0 };
         var maxDay = Math.Max(
             request.DayTargets.Count == 0 ? 0 : request.DayTargets.Keys.Max(),
@@ -83,7 +96,7 @@ public static class SeedSearcher
             {
                 var seedString = IndexToSeedString(i, request.Alphabet, request.Length);
                 if (request.ExcludedSeeds?.Contains(seedString) != true &&
-                    Matches(repo, new Seed(seedString), request.SettingPackId, request.Setup, request.DayTargets, flexibleTargetIds, maxDay, request.Tier))
+                    Matches(repo, new Seed(seedString), request.SettingPackId, request.Setup, request.DayTargets, flexibleTargetIds, maxDay, request.Tier, request.OtFriendly, request.SettingSlug))
                 {
                     onMatch(seedString);
                     if (Interlocked.Increment(ref matchCount) >= matchCap)
@@ -117,7 +130,8 @@ public static class SeedSearcher
 
     private static bool Matches(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, IReadOnlySet<int> flexibleTargetIds, int maxDay, int tier)
+        IReadOnlyDictionary<int, int> dayTargets, IReadOnlySet<int> flexibleTargetIds, int maxDay, int tier,
+        bool otFriendly, string? settingSlug)
     {
         // Mutated in place by Walk as flexible targets get picked up - a strict subset check at the
         // end (rather than a running "found day X" flag) since order among flexible targets doesn't
@@ -131,7 +145,15 @@ public static class SeedSearcher
             }
         }
 
-        return remainingFlexible.Count == 0;
+        if (remainingFlexible.Count != 0)
+        {
+            return false;
+        }
+
+        // Checked last - cards-target rejection above is cheap and rejects most seeds fast; the shop
+        // check does real work (a KitchenApplianceState + up to 3 ShopDaySimulator.SimulateDay calls),
+        // only worth paying once a seed has already survived the cheaper filter.
+        return !otFriendly || OtFriendlyChecker.Matches(repo, seed, settingSlug!);
     }
 
     // Safety valve for ResolveCardPaths' backtracking search - bounds worst-case work (many filler

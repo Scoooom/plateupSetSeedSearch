@@ -161,7 +161,9 @@ public static class SearchCommand
             Console.WriteLine($"Searching {options.Alphabet.Length}^{options.Length} = {spaceSize:N0} seed(s) (checking {totalToCheck:N0})...");
         }
 
-        var request = new SeedSearchRequest(settingPackId, setup, targetIds, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds, flexibleTargetIds);
+        var request = new SeedSearchRequest(
+            settingPackId, setup, targetIds, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds, flexibleTargetIds,
+            SettingSlug: options.SettingSlug, OtFriendly: options.OtFriendly);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var matchCount = 0;
@@ -236,6 +238,7 @@ public static class SearchCommand
         public required IReadOnlySet<string> ExcludedSeeds { get; init; }
         public bool MatchesOnly { get; init; }
         public string? CardPack { get; init; }
+        public bool OtFriendly { get; init; }
     }
 
     // Same hard default the web UI uses (SearchEndpoints.DefaultMatchCap) - a genuine engine-level
@@ -261,6 +264,7 @@ public static class SearchCommand
         var excludedSeeds = new HashSet<string>(StringComparer.Ordinal);
         var matchesOnly = false;
         string? cardPack = null;
+        var otFriendly = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -332,22 +336,27 @@ public static class SearchCommand
                 case "--card-pack" when i + 1 < args.Length:
                     cardPack = args[++i];
                     break;
+                case "--ot-friendly":
+                    otFriendly = true;
+                    break;
                 default:
                     Console.WriteLine($"Unknown or incomplete argument '{args[i]}'");
                     return null;
             }
         }
 
-        if (settingSlug is null || dishName is null || (dayTargets.Count == 0 && anyDayCardNames.Count == 0))
+        if (settingSlug is null || dishName is null || (dayTargets.Count == 0 && anyDayCardNames.Count == 0 && !otFriendly))
         {
             Console.WriteLine("Usage: search --setting <slug> --dish <name> [--sub-option 1|2] [--heat <n>]");
             Console.WriteLine("              [--tier <n>] [--franchise-card <name> ...]");
-            Console.WriteLine("              [--day <n>=<card name> ...] [--any-day-card <card name> ...]");
+            Console.WriteLine("              [--day <n>=<card name> ...] [--any-day-card <card name> ...] [--ot-friendly]");
             Console.WriteLine("              [--alphabet <chars>] [--length <n>] [--limit <n>] [--max-results <n>]");
             Console.WriteLine();
             Console.WriteLine("--day pins a card to an exact day; --any-day-card (repeatable) only requires the card be");
             Console.WriteLine("obtained by day 15, in any order - combine both freely in the same search. At least one of");
-            Console.WriteLine("--day/--any-day-card is required.");
+            Console.WriteLine("--day/--any-day-card/--ot-friendly is required.");
+            Console.WriteLine("--ot-friendly restricts to seeds where days 1, 2, and 4 offer Research Desks - an");
+            Console.WriteLine("additional AND-condition layered onto any --day/--any-day-card targets, or usable alone.");
             Console.WriteLine($"--max-results caps how many matches are found before stopping early (default {DefaultMaxResults},");
             Console.WriteLine("same as the web UI's hard cap) - pass 0 or a negative number to search without a cap.");
             Console.WriteLine("--tier/--franchise-card model continuing an existing franchise save into this run");
@@ -387,6 +396,7 @@ public static class SearchCommand
             ExcludedSeeds = excludedSeeds,
             MatchesOnly = matchesOnly,
             CardPack = cardPack,
+            OtFriendly = otFriendly,
         };
     }
 }

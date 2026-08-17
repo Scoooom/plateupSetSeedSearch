@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using PlateUpSeedTools.Engine.Layouts;
 using PlateUpSeedTools.Engine.Layouts.Decorators;
@@ -19,6 +20,7 @@ public sealed class GameDataRepository
     private readonly Dictionary<string, CardScheduleData> _cardSchedulesBySlug;
     private readonly Dictionary<int, ShopApplianceData> _shopAppliancesById;
     private readonly List<ShopApplianceData> _shopAppliancesInGameDataOrder;
+    private readonly ConcurrentDictionary<string, LayoutProfileInfo> _layoutProfileCache = new();
 
     public GameDataRepository(string dataRoot)
     {
@@ -74,23 +76,41 @@ public sealed class GameDataRepository
     /// </summary>
     public (LayoutProfileInfo Profile, LayoutGraphDefinition Graph) ResolveLayout(string settingSlug, Seed seed)
     {
+        var dir = ResolveLayoutDirectory(settingSlug, seed);
+        var graphData = JsonSerializer.Deserialize<LayoutGraphData>(File.ReadAllText(Path.Combine(dir, "graph.json")), JsonOptions)!;
+        return (ResolveLayoutProfile(settingSlug, seed), LayoutGraphFactory.Create(graphData));
+    }
+
+    /// <summary>
+    /// Same resolution as <see cref="ResolveLayout"/> but only loads profile.json, not graph.json -
+    /// for callers that only need e.g. RequiredApplianceIds (the shop simulator's starting-kitchen
+    /// state, see Engine.Shop.OtFriendlyChecker) and don't need the layout graph at all. Cached
+    /// (ConcurrentDictionary - called once per candidate seed from SeedSearcher's parallel brute-force
+    /// loop, so must be cheap and thread-safe) - only a handful of distinct shared-layout/ForceLayoutId
+    /// directories exist across the whole game, so no eviction is needed.
+    /// </summary>
+    public LayoutProfileInfo ResolveLayoutProfile(string settingSlug, Seed seed)
+    {
+        var dir = ResolveLayoutDirectory(settingSlug, seed);
+        return _layoutProfileCache.GetOrAdd(dir, static (d, jsonOptions) =>
+        {
+            var profileData = JsonSerializer.Deserialize<LayoutProfileData>(File.ReadAllText(Path.Combine(d, "profile.json")), jsonOptions)!;
+            return new LayoutProfileInfo
+            {
+                TableApplianceId = profileData.TableApplianceId,
+                CounterApplianceId = profileData.CounterApplianceId,
+                MaximumTables = profileData.MaximumTables,
+                RequiredApplianceIds = profileData.RequiredApplianceIds,
+            };
+        }, JsonOptions);
+    }
+
+    private string ResolveLayoutDirectory(string settingSlug, Seed seed)
+    {
         var setting = GetSetting(settingSlug);
-        var dir = setting.ForceLayoutId is not null
+        return setting.ForceLayoutId is not null
             ? Path.Combine(_root, settingSlug)
             : Path.Combine(_root, "_shared-layouts", LayoutSeed.LayoutIdFromSeed(seed).ToString());
-
-        var profileData = JsonSerializer.Deserialize<LayoutProfileData>(File.ReadAllText(Path.Combine(dir, "profile.json")), JsonOptions)!;
-        var graphData = JsonSerializer.Deserialize<LayoutGraphData>(File.ReadAllText(Path.Combine(dir, "graph.json")), JsonOptions)!;
-
-        var profile = new LayoutProfileInfo
-        {
-            TableApplianceId = profileData.TableApplianceId,
-            CounterApplianceId = profileData.CounterApplianceId,
-            MaximumTables = profileData.MaximumTables,
-            RequiredApplianceIds = profileData.RequiredApplianceIds,
-        };
-
-        return (profile, LayoutGraphFactory.Create(graphData));
     }
 
     /// <summary>Every Unlock-derived asset (Dish + UnlockCard), ordered by ID - matches UnlockSetAutomatic.GetCardSet's OrderBy(u => u.ID).</summary>

@@ -241,9 +241,9 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = $"'{dish.Name}' has sub-options - subOptionChoice must be 1 or 2. 1) {opt1}   2) {opt2}" });
         }
 
-        if (request.DayTargets is not { Count: > 0 })
+        if (request.DayTargets is not { Count: > 0 } && request.OtFriendly != true)
         {
-            return Results.BadRequest(new { error = "At least one card target is required." });
+            return Results.BadRequest(new { error = "At least one card target is required (or check OT Friendly)." });
         }
 
         var targetIds = new Dictionary<int, int>();
@@ -344,7 +344,9 @@ public static class SearchEndpoints
         var excludedSeeds = request.ExcludedSeeds is { Count: > 0 }
             ? new HashSet<string>(request.ExcludedSeeds.Select(s => s.ToLowerInvariant()), StringComparer.Ordinal)
             : null;
-        var searchRequest = new SeedSearchRequest(settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds, flexibleTargetIds);
+        var searchRequest = new SeedSearchRequest(
+            settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds, flexibleTargetIds,
+            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true);
         var matchCap = request.StopAfterFirstMatch == true ? 1L : DefaultMatchCap;
         var job = jobs.StartSearch(searchRequest, matchCap);
 
