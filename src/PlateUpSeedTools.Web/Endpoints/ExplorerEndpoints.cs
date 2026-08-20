@@ -116,13 +116,17 @@ public static partial class ExplorerEndpoints
         var seed = new Seed(request.Seed.ToLowerInvariant());
         var sim = new CardDrawSimulator(repo, seed, settingPackId, setup, request.Tier);
 
-        var pathById = orderedPath.ToDictionary(p => p.Day, p => p.CardId);
+        var pathByDay = orderedPath.ToDictionary(p => p.Day, p => p);
         CardDayResult result = null!; // always assigned - day floor is 0, loop always runs at least once
         // Day 0 is the prep day before the first real night - see SeedSearcher's Walk for why this
         // floor is 0 rather than 1 now (santa-workshop's Christmas Special Card fires there).
         for (var day = 0; day <= request.Day; day++)
         {
-            var targetId = pathById.TryGetValue(day, out var id) ? id : (int?)null;
+            var pathEntry = pathByDay.TryGetValue(day, out var entry) ? entry : null;
+            var targetId = pathEntry?.CardId;
+            // An already-committed day replays with its own stored reroll bit; the frontier day
+            // (request.Day, never in Path) uses the live Reroll flag from this request instead.
+            var skipChoices = day == request.Day ? (request.Reroll ? 1 : 0) : (pathEntry?.Rerolled == true ? 1 : 0);
             var thisDay = day;
             try
             {
@@ -139,7 +143,7 @@ public static partial class ExplorerEndpoints
                     }
 
                     return targetId;
-                });
+                }, skipChoices);
             }
             catch (InvalidOperationException ex)
             {

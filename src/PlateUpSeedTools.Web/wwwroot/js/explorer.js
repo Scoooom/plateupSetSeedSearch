@@ -37,7 +37,7 @@ let currentNode = null;
 // night - only relevant for packs with a Day=0 UnlockConditionOnce (santa-workshop's Christmas
 // Special Card) but harmless otherwise, same as the day-0 floor added engine/API-side.
 function makeRootNode() {
-  return { id: "root", day: -1, cardId: null, label: null, sourcePackName: null, parent: null, children: new Map() };
+  return { id: "root", day: -1, cardId: null, label: null, sourcePackName: null, rerolled: false, parent: null, children: new Map() };
 }
 
 function setStatus(message, isError) {
@@ -284,7 +284,7 @@ function pathToNode(node) {
   const entries = [];
   for (let n = node; n && n.parent; n = n.parent) {
     if (n.cardId !== null) {
-      entries.push({ day: n.day, cardId: n.cardId });
+      entries.push({ day: n.day, cardId: n.cardId, rerolled: n.rerolled });
     }
   }
   entries.reverse();
@@ -305,12 +305,12 @@ function currentSetupPayload() {
   };
 }
 
-async function fetchExplorerDay(node, day) {
+async function fetchExplorerDay(node, day, reroll = false) {
   try {
     const response = await fetch("/api/explorer/day", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...currentSetupPayload(), path: pathToNode(node), day }),
+      body: JSON.stringify({ ...currentSetupPayload(), path: pathToNode(node), day, reroll }),
     });
     const body = await response.json();
     if (!response.ok) {
@@ -325,7 +325,7 @@ async function fetchExplorerDay(node, day) {
 }
 
 function nodeLabel(node) {
-  return `Day ${node.day}: ${node.label}`;
+  return `Day ${node.day}: ${node.rerolled ? "🔄 " : ""}${node.label}`;
 }
 
 function renderTree() {
@@ -398,7 +398,7 @@ function renderTreeNode(node) {
 // clobbering whatever the user navigated to in the meantime.
 let explorationGeneration = 0;
 
-function getOrCreateChild(parentNode, day, option, sourcePackName) {
+function getOrCreateChild(parentNode, day, option, sourcePackName, rerolled = false) {
   const key = option ? option.id : "skip";
   let child = parentNode.children.get(key);
   if (!child) {
@@ -408,6 +408,7 @@ function getOrCreateChild(parentNode, day, option, sourcePackName) {
       cardId: option ? option.id : null,
       label: option ? option.name : null,
       sourcePackName,
+      rerolled: option ? rerolled : false, // a skip is never "rerolled" - nothing was picked
       parent: parentNode,
       children: new Map(),
     };
@@ -470,7 +471,7 @@ async function renderFrontier(walkStart, myGeneration) {
   }
 }
 
-function renderDayPanel(node, day, response) {
+function renderDayPanel(node, day, response, rerollView = false) {
   dayPanelEl.innerHTML = "";
 
   const heading = document.createElement("h2");
@@ -484,6 +485,13 @@ function renderDayPanel(node, day, response) {
     dayPanelEl.appendChild(tag);
   }
 
+  if (rerollView) {
+    const note = document.createElement("p");
+    note.className = "pack-tag";
+    note.textContent = "🔄 Viewing the reroll offer (Bay Leaves)";
+    dayPanelEl.appendChild(note);
+  }
+
   const optionsEl = document.createElement("div");
   optionsEl.className = "day-options";
   for (const option of response.options) {
@@ -494,21 +502,38 @@ function renderDayPanel(node, day, response) {
     if (node.children.has(option.id)) {
       button.classList.add("already-explored");
     }
-    button.addEventListener("click", () => choose(node, day, option, response.sourcePackName));
+    button.addEventListener("click", () => choose(node, day, option, response.sourcePackName, rerollView));
     optionsEl.appendChild(button);
   }
   dayPanelEl.appendChild(optionsEl);
+
+  // Models the Bay Leaves plant's 1-reroll-per-night mechanic - same skipChoices: 1 re-index into
+  // the same pre-shuffled pool as the search feature's "Allow 1 reroll per day" flag, just viewed
+  // interactively here instead of brute-forced. Toggles the CURRENT day's view only - never chains
+  // (no Sage lifetime-cap rerolling-the-reroll).
+  const rerollButton = document.createElement("button");
+  rerollButton.type = "button";
+  rerollButton.className = "link-button";
+  rerollButton.textContent = rerollView ? "↩ Back to original offer" : "🔄 Reroll (Bay Leaves)";
+  rerollButton.addEventListener("click", () => toggleReroll(node, day, !rerollView));
+  dayPanelEl.appendChild(rerollButton);
 
   const skipButton = document.createElement("button");
   skipButton.type = "button";
   skipButton.className = "link-button";
   skipButton.textContent = node.children.has("skip") ? "Skip (already explored)" : "Skip this offer";
-  skipButton.addEventListener("click", () => choose(node, day, null, null));
+  skipButton.addEventListener("click", () => choose(node, day, null, null, false));
   dayPanelEl.appendChild(skipButton);
 }
 
-async function choose(parentNode, day, option, sourcePackName) {
-  const child = getOrCreateChild(parentNode, day, option, sourcePackName);
+async function toggleReroll(node, day, reroll) {
+  const response = await fetchExplorerDay(node, day, reroll);
+  if (!response) return;
+  renderDayPanel(node, day, response, reroll);
+}
+
+async function choose(parentNode, day, option, sourcePackName, rerolled = false) {
+  const child = getOrCreateChild(parentNode, day, option, sourcePackName, rerolled);
   await viewNode(child, child);
 }
 
@@ -631,11 +656,12 @@ async function applyPreload(preload) {
 
   let node = rootNode;
   for (const step of preload.path ?? []) {
-    const response = await fetchExplorerDay(node, step.day);
+    const rerolled = Boolean(step.rerolled);
+    const response = await fetchExplorerDay(node, step.day, rerolled);
     if (!response) break;
     const option = response.options.find((o) => o.id === step.cardId);
     if (!option) break;
-    node = getOrCreateChild(node, step.day, option, response.sourcePackName);
+    node = getOrCreateChild(node, step.day, option, response.sourcePackName, rerolled);
   }
 
   await viewNode(node, node);

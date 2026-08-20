@@ -52,7 +52,7 @@ public class SeedSearcherTests
             request,
             maxDegreeOfParallelism: -1,
             matchCap: long.MaxValue,
-            onMatch: seed =>
+            onMatch: (seed, _) =>
             {
                 lock (matchLock)
                 {
@@ -102,7 +102,7 @@ public class SeedSearcherTests
             request,
             maxDegreeOfParallelism: 1,
             matchCap: matchCap,
-            onMatch: _ => matchCount++,
+            onMatch: (_, _) => matchCount++,
             onProgress: count => finalCheckedCount = count,
             cancellationToken: CancellationToken.None);
 
@@ -132,7 +132,7 @@ public class SeedSearcherTests
             request,
             maxDegreeOfParallelism: 1,
             matchCap: 1000, // above totalToCheck, so every trivially-matching seed fits under it
-            onMatch: _ => matchCount++,
+            onMatch: (_, _) => matchCount++,
             onProgress: count => finalCheckedCount = count,
             cancellationToken: CancellationToken.None);
 
@@ -243,7 +243,8 @@ public class SeedSearcherTests
         // Pies/Health and Safety (CardDrawSimulatorGroundTruthTests.CapturedOffers), so a flexible
         // search for Vegetable Pies with a day-3 horizon must resolve to exactly day 3.
         var paths = SeedSearcher.ResolveCardPaths(
-            repo, new Seed("bdghjmqr"), settingPackId, setup, new Dictionary<int, int>(), flexibleTargetIds, horizon, tier: 0, maxPaths: 3);
+            repo, new Seed("bdghjmqr"), settingPackId, setup, new Dictionary<int, int>(), flexibleTargetIds, horizon,
+            tier: 0, allowRerollPerDay: false, maxPaths: 3);
 
         Assert.NotEmpty(paths);
         var path = paths[0];
@@ -281,9 +282,90 @@ public class SeedSearcherTests
         Assert.Contains("vqrj", otFriendlyMatches);
     }
 
-    private static HashSet<string> RunSearch(GameDataRepository repo, SeedSearchRequest request)
+    /// <summary>
+    /// Proves OtFriendly is tagged on every match regardless of gating, not just when the search
+    /// itself was OtFriendly-gated (OtFriendlyNarrowsMatchesToASubsetIncludingAKnownGoodSeed proves
+    /// the gating side separately) - same "vqrj"-alphabet ground truth (OtFriendlyCheckerTests
+    /// confirms "vqrj" is OtFriendly, "gggg" is not, both members of this alphabet).
+    /// </summary>
+    [Fact]
+    public void OtFriendlyIsTaggedOnEveryMatchRegardlessOfGating()
     {
-        var actualMatches = new HashSet<string>();
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "vqrjg";
+        const int length = 4;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length);
+
+        // No OtFriendly gating - every seed in the space matches trivially (no day targets).
+        var request = new SeedSearchRequest(
+            settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck,
+            SettingSlug: "normal", OtFriendly: false);
+
+        var tags = RunSearchWithOtFriendlyTags(repo, request);
+
+        Assert.Equal(totalToCheck, tags.Count);
+        Assert.True(tags["vqrj"]);
+        Assert.False(tags["gggg"]);
+    }
+
+    /// <summary>
+    /// Proves AllowRerollPerDay is a real superset-widening AND-condition: seed "bbbb" only offers
+    /// "Roast Potato" on day 3 via a reroll (PeekOffer(day: 3, skipChoices: 1)), not the base offer -
+    /// discovered by brute-force probing PeekOffer against this exact Normal/Pies/Heat 0 setup, not
+    /// hand-picked. Without the flag it must NOT match; with it, it must.
+    /// </summary>
+    [Fact]
+    public void AllowRerollPerDayFindsAMatchOnlyReachableByRerolling()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        const int rerollDay = 3;
+        const int rerollOnlyCardId = -1289628495; // "Roast Potato"
+
+        var requestNoReroll = new SeedSearchRequest(
+            settingPackId, setup, new Dictionary<int, int> { [rerollDay] = rerollOnlyCardId }, Tier: 0,
+            Alphabet: "b", Length: 4, TotalToCheck: 1);
+        var requestWithReroll = requestNoReroll with { AllowRerollPerDay = true };
+
+        Assert.Empty(RunSearch(repo, requestNoReroll));
+        Assert.Equal(new HashSet<string> { "bbbb" }, RunSearch(repo, requestWithReroll));
+    }
+
+    /// <summary>
+    /// ResolveCardPaths' equivalent of the test above - the reroll day comes back Rerolled: true and
+    /// every other day in the path Rerolled: false.
+    /// </summary>
+    [Fact]
+    public void ResolveCardPathsReportsWhichDayWasRerolled()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        const int rerollDay = 3;
+        const int rerollOnlyCardId = -1289628495; // "Roast Potato"
+
+        var paths = SeedSearcher.ResolveCardPaths(
+            repo, new Seed("bbbb"), settingPackId, setup, new Dictionary<int, int> { [rerollDay] = rerollOnlyCardId },
+            new HashSet<int>(), rerollDay, tier: 0, allowRerollPerDay: true, maxPaths: 3);
+
+        Assert.NotEmpty(paths);
+        var path = paths[0];
+        var rerollEntry = Assert.Single(path, entry => entry.CardId == rerollOnlyCardId);
+        Assert.Equal(rerollDay, rerollEntry.Day);
+        Assert.True(rerollEntry.Rerolled);
+        Assert.All(path.Where(e => e.Day != rerollDay), entry => Assert.False(entry.Rerolled));
+    }
+
+    private static HashSet<string> RunSearch(GameDataRepository repo, SeedSearchRequest request) =>
+        RunSearchWithOtFriendlyTags(repo, request).Keys.ToHashSet();
+
+    private static Dictionary<string, bool> RunSearchWithOtFriendlyTags(GameDataRepository repo, SeedSearchRequest request)
+    {
+        var actualMatches = new Dictionary<string, bool>();
         var matchLock = new object();
 
         SeedSearcher.Search(
@@ -291,11 +373,11 @@ public class SeedSearcherTests
             request,
             maxDegreeOfParallelism: -1,
             matchCap: long.MaxValue,
-            onMatch: seed =>
+            onMatch: (seed, otFriendly) =>
             {
                 lock (matchLock)
                 {
-                    actualMatches.Add(seed);
+                    actualMatches[seed] = otFriendly;
                 }
             },
             onProgress: _ => { },

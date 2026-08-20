@@ -1,7 +1,10 @@
 namespace PlateUpSeedTools.Web.Contracts;
 
-/// <summary>One already-committed pick along the path being replayed - see ExplorerEndpoints.SimulateDay.</summary>
-public sealed record ExplorerPathEntryDto(int Day, int CardId);
+/// <summary>One already-committed pick along the path being replayed - see ExplorerEndpoints.SimulateDay.
+/// Rerolled models the Bay Leaves plant's 1-reroll-per-night mechanic (same meaning as
+/// CardPathEntryDto.Rerolled in SearchContracts.cs) - replaying this day uses skipChoices: 1 instead
+/// of the base offer.</summary>
+public sealed record ExplorerPathEntryDto(int Day, int CardId, bool Rerolled = false);
 
 /// <summary>
 /// Stateless "what does this seed offer on day N, given these earlier picks" query - the server
@@ -21,7 +24,12 @@ public sealed record ExplorerDayRequest(
     List<string>? FranchiseCardNames,
     List<ExplorerPathEntryDto> Path,
     int Day,
-    string? CardPack = null);
+    string? CardPack = null,
+    // View the frontier day (Day, never covered by Path - see the "path must only cover days
+    // strictly before the requested day" validation) with skipChoices: 1 instead of the base offer.
+    // Distinct from ExplorerPathEntryDto.Rerolled, which is the stored bit for an already-committed
+    // day being replayed.
+    bool Reroll = false);
 
 public sealed record ExplorerCardOptionDto(int Id, string Name, string Kind, int UnlockGroup);
 

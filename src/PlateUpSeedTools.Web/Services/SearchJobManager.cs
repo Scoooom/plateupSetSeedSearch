@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
+using PlateUpSeedTools.Web.Contracts;
 
 namespace PlateUpSeedTools.Web.Services;
 
@@ -21,7 +22,7 @@ public sealed class SearchJob
     public long CheckedCount => Interlocked.Read(ref _checkedCount);
     public void SetCheckedCount(long value) => Interlocked.Exchange(ref _checkedCount, value);
     public required long TotalToCheck { get; init; }
-    public readonly ConcurrentQueue<string> Matches = new();
+    public readonly ConcurrentQueue<SearchMatchDto> Matches = new();
     public required DateTimeOffset StartedAt { get; init; }
     public DateTimeOffset? FinishedAt { get; set; }
     public string? Error { get; set; }
@@ -160,7 +161,7 @@ public sealed class SearchJobManager
                 request,
                 _maxDegreeOfParallelismPerJob,
                 matchCap,
-                onMatch: job.Matches.Enqueue,
+                onMatch: (seed, otFriendly) => job.Matches.Enqueue(new SearchMatchDto(seed, otFriendly)),
                 onProgress: job.SetCheckedCount,
                 cancellationToken: job.Cts.Token);
 

@@ -18,9 +18,15 @@ public sealed record SearchStartRequest(
     List<string>? ExcludedSeeds = null,
     string? CardPack = null,
     // Additional AND-condition layered onto DayTargets - see Engine.Shop.OtFriendlyChecker.
-    bool? OtFriendly = null);
+    bool? OtFriendly = null,
+    // Models the Bay Leaves plant's "1 reroll per night" mechanic - see SeedSearchRequest.AllowRerollPerDay.
+    bool? AllowRerollPerDay = null);
 
 public sealed record SearchStartResponse(string JobId, long TotalToCheck, string SpaceSize);
+
+/// <summary>One matched seed, tagged with its OtFriendly status - computed for every match regardless
+/// of whether the search itself was OtFriendly-gated, see SeedSearcher's private Matches method.</summary>
+public sealed record SearchMatchDto(string Seed, bool OtFriendly);
 
 public sealed record SearchStatusResponse(
     string JobId,
@@ -29,7 +35,7 @@ public sealed record SearchStatusResponse(
     long TotalToCheck,
     double SeedsPerSecond,
     double ElapsedSeconds,
-    IReadOnlyList<string> Matches,
+    IReadOnlyList<SearchMatchDto> Matches,
     string? Error,
     bool MatchCapReached);
 
@@ -114,9 +120,10 @@ public sealed record SearchPathRequest(
     List<string>? FranchiseCardNames,
     List<DayTargetDto> DayTargets,
     string Seed,
-    string? CardPack = null);
+    string? CardPack = null,
+    bool? AllowRerollPerDay = null);
 
-public sealed record CardPathEntryDto(int Day, string CardName);
+public sealed record CardPathEntryDto(int Day, string CardName, bool Rerolled);
 
 /// <summary>One complete, self-consistent day-by-day pick sequence - see SeedSearcher.ResolveCardPaths.</summary>
 public sealed record CardPathDto(IReadOnlyList<CardPathEntryDto> Days);
@@ -138,7 +145,7 @@ public sealed record SearchPathResponse(IReadOnlyList<CardPathDto> Paths);
 /// </summary>
 public sealed record CachedSearchResult(
     SearchStartRequest Request,
-    IReadOnlyList<string> Matches,
+    IReadOnlyList<SearchMatchDto> Matches,
     long TotalToCheck,
     long CheckedCount,
     bool MatchCapReached);

@@ -48,27 +48,13 @@ public sealed class CardDrawSimulator
     /// game-domain-knowledge.md point 6, "current_cards = only accepted unlocks"). Pass a policy that
     /// returns null to simulate declining (no trace left, matching the real game).
     /// Days must be simulated in increasing order (each night's owned-set mutation feeds the next).
+    /// <paramref name="skipChoices"/> models a Bay Leaves reroll (candidates[skipChoices %
+    /// candidates.Count] - a deterministic re-index into the same pre-shuffled pool, not fresh RNG,
+    /// see UnlockSelector.GetOffsetChoice) - defaults to 0, the normal non-rerolled offer.
     /// </summary>
-    public CardDayResult SimulateDay(int day, Func<UnlockOptions, int?> selectPolicy)
+    public CardDayResult SimulateDay(int day, Func<UnlockOptions, int?> selectPolicy, int skipChoices = 0)
     {
-        var request = new UnlockRequest(day, _tier);
-        var offered = default(UnlockOptions);
-        int? sourcePackId = null;
-
-        foreach (var packId in _activePackIds)
-        {
-            // Fresh UnityRandom per pack try - the real game reseeds fresh per top-level pack entity
-            // via FixedSeedContext(seed, 84902921*1231231+day).UseSubcontext(1), not once per night;
-            // see game-domain-knowledge.md point 4-5 for why trying multiple packs is RNG-safe.
-            var rng = new FixedSeedContext(_seed, unchecked(CardDrawCategorySeed * 1231231 + day)).UseSubcontext(1).CreateRandom();
-            var result = UnlockPackEvaluator.GetOptionsWithSource(_repo, packId, _ownedIds, request, rng);
-            if (result.Options.Unlock1Id is not null)
-            {
-                offered = result.Options;
-                sourcePackId = result.SourcePackId;
-                break;
-            }
-        }
+        var (offered, sourcePackId) = ComputeOffer(day, skipChoices);
 
         var selectedId = offered.Unlock1Id is not null ? selectPolicy(offered) : null;
         if (selectedId is int id)
@@ -77,5 +63,33 @@ public sealed class CardDrawSimulator
         }
 
         return new CardDayResult(day, offered.Unlock1Id, offered.Unlock2Id, selectedId, sourcePackId);
+    }
+
+    /// <summary>
+    /// Read-only peek at what a given night's offer would be - never mutates the owned set, never
+    /// commits a pick. Used by search to probe "would a reroll (skipChoices: 1) land a wanted card
+    /// this night" without disturbing the real day-by-day simulation.
+    /// </summary>
+    public (UnlockOptions Options, int? SourcePackId) PeekOffer(int day, int skipChoices = 0) =>
+        ComputeOffer(day, skipChoices);
+
+    private (UnlockOptions Options, int? SourcePackId) ComputeOffer(int day, int skipChoices)
+    {
+        var request = new UnlockRequest(day, _tier);
+
+        foreach (var packId in _activePackIds)
+        {
+            // Fresh UnityRandom per pack try - the real game reseeds fresh per top-level pack entity
+            // via FixedSeedContext(seed, 84902921*1231231+day).UseSubcontext(1), not once per night;
+            // see game-domain-knowledge.md point 4-5 for why trying multiple packs is RNG-safe.
+            var rng = new FixedSeedContext(_seed, unchecked(CardDrawCategorySeed * 1231231 + day)).UseSubcontext(1).CreateRandom();
+            var result = UnlockPackEvaluator.GetOptionsWithSource(_repo, packId, _ownedIds, request, rng, skipChoices);
+            if (result.Options.Unlock1Id is not null)
+            {
+                return result;
+            }
+        }
+
+        return (default, null);
     }
 }

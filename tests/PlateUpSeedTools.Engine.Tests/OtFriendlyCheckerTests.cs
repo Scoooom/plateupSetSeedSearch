@@ -39,6 +39,6 @@ public class OtFriendlyCheckerTests
 
         Assert.Throws<ArgumentException>(() => SeedSearcher.Search(
             repo, request, maxDegreeOfParallelism: 1, matchCap: 1,
-            onMatch: _ => { }, onProgress: _ => { }, cancellationToken: CancellationToken.None));
+            onMatch: (_, _) => { }, onProgress: _ => { }, cancellationToken: CancellationToken.None));
     }
 }

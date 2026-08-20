@@ -145,4 +145,64 @@ public class CardDrawSimulatorTests
 
         Assert.Equal(day3.Unlock1Id, day3.SelectedId);
     }
+
+    // Real IDs for the Normal/Pies/Heat 0 setup - same ground truth SeedSearcherTests pins for its
+    // AllowRerollPerDay tests: seed "bbbb" day 3's base offer differs from its skipChoices: 1
+    // (reroll) offer, discovered by brute-force probing PeekOffer, not hand-picked.
+    private const int PiesId = -133939790;
+
+    private static CardDrawSimulator CreatePiesSimulator(GameDataRepository repo, Seed seed) =>
+        new(repo, seed, repo.ResolveUnlockPackId("normal"),
+            RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null));
+
+    [Fact]
+    public void PeekOfferDoesNotMutateOwnedState()
+    {
+        var repo = CreateRepository();
+        var seed = new Seed("bbbb");
+
+        var peekedSim = CreatePiesSimulator(repo, seed);
+        var untouchedSim = CreatePiesSimulator(repo, seed);
+
+        // Peek repeatedly, including skipChoices: 1, across several days - none of this should
+        // affect the owned set that later real SimulateDay calls see.
+        for (var day = 0; day <= 3; day++)
+        {
+            peekedSim.PeekOffer(day, skipChoices: 0);
+            peekedSim.PeekOffer(day, skipChoices: 1);
+            peekedSim.PeekOffer(day, skipChoices: 5);
+        }
+
+        for (var day = 0; day <= 3; day++)
+        {
+            var fromPeeked = peekedSim.SimulateDay(day, o => o.Unlock1Id);
+            var fromUntouched = untouchedSim.SimulateDay(day, o => o.Unlock1Id);
+            Assert.Equal(fromUntouched, fromPeeked);
+        }
+    }
+
+    [Fact]
+    public void SimulateDayWithSkipChoicesMatchesPeekOfferForTheSameSkipChoices()
+    {
+        var repo = CreateRepository();
+        var seed = new Seed("bbbb");
+        const int rerollDay = 3;
+
+        var peekSim = CreatePiesSimulator(repo, seed);
+        var simDay1 = CreatePiesSimulator(repo, seed);
+        simDay1.SimulateDay(0, _ => null);
+        simDay1.SimulateDay(1, _ => null);
+        simDay1.SimulateDay(2, _ => null);
+
+        var peeked = peekSim.PeekOffer(rerollDay, skipChoices: 1).Options;
+        var simulated = simDay1.SimulateDay(rerollDay, _ => null, skipChoices: 1);
+
+        Assert.Equal(peeked.Unlock1Id, simulated.Unlock1Id);
+        Assert.Equal(peeked.Unlock2Id, simulated.Unlock2Id);
+
+        // And this reroll offer really is different from the base (skipChoices: 0) offer - otherwise
+        // this test wouldn't actually be exercising the reroll path.
+        var baseOffer = peekSim.PeekOffer(rerollDay, skipChoices: 0).Options;
+        Assert.NotEqual((baseOffer.Unlock1Id, baseOffer.Unlock2Id), (peeked.Unlock1Id, peeked.Unlock2Id));
+    }
 }

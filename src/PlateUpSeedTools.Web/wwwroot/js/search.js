@@ -15,6 +15,7 @@ const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
 const addFranchiseCardButton = document.getElementById("add-franchise-card");
 const stopAfterFirstMatchInput = document.getElementById("stop-after-first-match");
 const otFriendlyInput = document.getElementById("ot-friendly");
+const allowRerollInput = document.getElementById("allow-reroll");
 const excludeSeedsInput = document.getElementById("exclude-seeds-input");
 const form = document.getElementById("search-form");
 const statusEl = document.getElementById("status");
@@ -665,6 +666,7 @@ async function prefillFormFromPayload(request) {
   limitInput.value = request.limit != null ? String(request.limit) : "";
   stopAfterFirstMatchInput.checked = Boolean(request.stopAfterFirstMatch);
   otFriendlyInput.checked = Boolean(request.otFriendly);
+  allowRerollInput.checked = Boolean(request.allowRerollPerDay);
   excludeSeedsInput.value = (request.excludedSeeds ?? []).join(", ");
 
   franchiseCardRowsEl.innerHTML = "";
@@ -788,15 +790,22 @@ function renderJobStatus(job) {
   // search itself already runs server-side for the same reason - see the page intro).
   const MAX_RENDERED_MATCHES = 500;
   matchesList.innerHTML = "";
-  for (const seed of job.matches.slice(0, MAX_RENDERED_MATCHES)) {
+  for (const match of job.matches.slice(0, MAX_RENDERED_MATCHES)) {
     const li = document.createElement("li");
-    li.textContent = seed;
+    li.append(match.seed);
+    if (match.otFriendly) {
+      const badge = document.createElement("span");
+      badge.className = "ot-badge";
+      badge.textContent = "OT";
+      badge.title = "OT Friendly - Research Desk offered days 1, 2, and 4";
+      li.append(" ", badge);
+    }
     li.tabIndex = 0;
-    li.addEventListener("click", () => openPreviewDialog(seed));
+    li.addEventListener("click", () => openPreviewDialog(match.seed, match.otFriendly));
     li.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        openPreviewDialog(seed);
+        openPreviewDialog(match.seed, match.otFriendly);
       }
     });
     matchesList.appendChild(li);
@@ -840,7 +849,7 @@ cancelButton.addEventListener("click", async () => {
 
 copyMatchesButton?.addEventListener("click", async () => {
   try {
-    await navigator.clipboard.writeText(currentMatches.join("\n"));
+    await navigator.clipboard.writeText(currentMatches.map((m) => m.seed).join("\n"));
     setStatus(`Copied ${currentMatches.length} seed(s) to the clipboard.`, false);
   } catch {
     setStatus("Failed to copy - your browser may not allow clipboard access here.", true);
@@ -986,6 +995,7 @@ form.addEventListener("submit", async (event) => {
     excludedSeeds: parseExcludedSeeds(),
     cardPack: cardPackSelect.value || null,
     otFriendly: otFriendlyInput.checked,
+    allowRerollPerDay: allowRerollInput.checked,
   };
 
   try {
@@ -1020,7 +1030,7 @@ form.addEventListener("submit", async (event) => {
 // /preview/....png) already built for the Seed Previewer page - no new backend beyond exposing
 // tableApplianceId on LayoutResponse. The image is only ever fetched here, on an explicit open -
 // never prefetched for the whole match list, which matters with up to 500 badges on screen.
-async function openPreviewDialog(seed) {
+async function openPreviewDialog(seed, otFriendly) {
   if (!currentSearchSetting) {
     return;
   }
@@ -1071,7 +1081,7 @@ async function openPreviewDialog(seed) {
     previewDialogStatus.textContent = "";
     const tableCount = layout.appliances.filter((a) => a.applianceId === layout.tableApplianceId).length;
     previewDialogStats.textContent = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)`;
-    if (currentSearchPayload?.otFriendly) {
+    if (otFriendly) {
       previewDialogStats.textContent += " · OT Friendly ✓";
     }
   } catch {
@@ -1137,9 +1147,9 @@ function renderPathTabs(seed, paths) {
 
 function renderPathDays(seed, path) {
   previewDialogPath.innerHTML = "";
-  for (const { day, cardName } of path.days) {
+  for (const { day, cardName, rerolled } of path.days) {
     const li = document.createElement("li");
-    li.textContent = `Day ${day}: ${cardName}`;
+    li.textContent = rerolled ? `Day ${day}: 🔄 reroll → ${cardName}` : `Day ${day}: ${cardName}`;
     previewDialogPath.appendChild(li);
   }
   wireExplorerLink(seed, path);
@@ -1161,9 +1171,9 @@ function wireExplorerLink(seed, path) {
     try {
       if (!path._explorerHash) {
         const steps = path.days
-          .map(({ day, cardName }) => {
+          .map(({ day, cardName, rerolled }) => {
             const unlock = unlocksForSetting.find((u) => u.name === cardName);
-            return unlock ? { day, cardId: unlock.id } : null;
+            return unlock ? { day, cardId: unlock.id, rerolled: Boolean(rerolled) } : null;
           })
           .filter(Boolean);
 

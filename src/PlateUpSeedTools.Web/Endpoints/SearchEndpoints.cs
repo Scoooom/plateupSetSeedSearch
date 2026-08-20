@@ -346,7 +346,7 @@ public static class SearchEndpoints
             : null;
         var searchRequest = new SeedSearchRequest(
             settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds, flexibleTargetIds,
-            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true);
+            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true, AllowRerollPerDay: request.AllowRerollPerDay == true);
         var matchCap = request.StopAfterFirstMatch == true ? 1L : DefaultMatchCap;
         var job = jobs.StartSearch(searchRequest, matchCap);
 
@@ -444,12 +444,14 @@ public static class SearchEndpoints
         }
 
         var maxDay = Math.Max(targetIds.Count == 0 ? 0 : targetIds.Keys.Max(), flexibleTargetIds.Count > 0 ? FlexibleHorizon : 0);
-        var paths = SeedSearcher.ResolveCardPaths(repo, new Seed(request.Seed), settingPackId, setup, targetIds, flexibleTargetIds, maxDay, request.Tier, MaxCardPaths);
+        var paths = SeedSearcher.ResolveCardPaths(
+            repo, new Seed(request.Seed), settingPackId, setup, targetIds, flexibleTargetIds, maxDay, request.Tier,
+            request.AllowRerollPerDay == true, MaxCardPaths);
 
         var pathDtos = paths
             .Select(path => new CardPathDto(path
                 .Where(entry => entry.CardId is not null)
-                .Select(entry => new CardPathEntryDto(entry.Day, repo.GetUnlock(entry.CardId!.Value).Name))
+                .Select(entry => new CardPathEntryDto(entry.Day, repo.GetUnlock(entry.CardId!.Value).Name, entry.Rerolled))
                 .ToList()))
             .ToList();
 
