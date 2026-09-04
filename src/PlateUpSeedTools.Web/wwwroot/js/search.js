@@ -57,6 +57,14 @@ let currentPreviewIndex = -1;
 // Bumped on every populatePreviewDialog call; a stale in-flight populate (slow /api/layout or a
 // cold PNG render) checks this after each await and bails rather than clobbering a newer selection.
 let previewRequestToken = 0;
+// seed -> resolved preview entry (image URL/alt/stats + retained decoded Image + card paths), so
+// paging back to an already-viewed match is instant and the match on each side is warmed ahead of
+// time. Scoped to the current search: cleared + generation bumped whenever currentSearchPayload
+// changes. LRU-capped so a long page-through of a big result set can't grow it without bound.
+const previewCache = new Map();
+const previewInFlight = new Map(); // seed -> Promise<entry>, dedupes concurrent resolves
+let previewCacheGeneration = 0;
+const PREVIEW_CACHE_MAX = 60;
 // Cached per currentJobId - repeated Copy Link clicks for the same job's results must reuse the
 // same hash/DB row rather than minting a new one every click (a real bug: clicking rapidly used to
 // duplicate a cache row per click). Reset to null anywhere currentJobId itself changes.
@@ -721,6 +729,7 @@ async function loadCachedResult(hash) {
     currentSearchPayload = cached.request;
     currentJobId = null; // no live job behind this view - Cancel/Copy Link stay hidden
     currentShareHash = null;
+    resetPreviewCache();
 
     renderJobStatus({
       status: "Completed",
@@ -1032,6 +1041,7 @@ form.addEventListener("submit", async (event) => {
     currentSearchPayload = payload;
     currentJobId = body.jobId;
     currentShareHash = null;
+    resetPreviewCache(); // a new search - prior seeds' cached previews no longer belong to it
     jobEl.hidden = false;
     matchesList.innerHTML = "";
     pollHandle = setInterval(() => pollJob(currentJobId), 1000);
@@ -1079,10 +1089,29 @@ function updatePreviewNav() {
 
 // Fills the (already-open) dialog for one seed. Never calls showModal - that's openPreviewDialog's
 // job. Guarded by previewRequestToken so a slow fetch/PNG-render from an earlier selection can't
-// land its results on top of a newer one when the user arrows through quickly.
+// land its results on top of a newer one when the user arrows through quickly. On a cache hit the
+// whole thing renders synchronously - no "Loading...", no re-fetch, no image/path flicker.
 async function populatePreviewDialog(seed, otFriendly) {
   const myToken = ++previewRequestToken;
+  const cached = previewCache.get(seed);
 
+  if (cached) {
+    touchPreviewLru(seed);
+    renderPreviewEntry(cached);
+    if (cached.paths) {
+      renderPathTabs(seed, cached.paths);
+    } else {
+      cached.pathsPromise?.then(() => {
+        if (myToken === previewRequestToken && cached.paths) {
+          renderPathTabs(seed, cached.paths);
+        }
+      });
+    }
+    prefetchNeighbours(currentPreviewIndex);
+    return;
+  }
+
+  // Cache miss - show the loading skeleton (image hidden by CSS #preview-dialog-image:not([src])).
   previewDialogTitle.textContent = `Seed "${seed}"`;
   previewDialogStatus.textContent = "Loading...";
   previewDialogStatus.classList.remove("error");
@@ -1095,63 +1124,80 @@ async function populatePreviewDialog(seed, otFriendly) {
   previewDialogPath.innerHTML = "";
   previewDialogExplorerLink.hidden = true;
 
-  try {
-    const response = await fetch(`/api/layout/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}`);
-    const layout = await response.json();
-    if (myToken !== previewRequestToken) {
-      return;
-    }
-    if (!response.ok) {
-      previewDialogStatus.textContent = layout.error ?? "Failed to load preview.";
-      previewDialogStatus.classList.add("error");
-      return;
-    }
-
-    const pngUrl = `/preview/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}.png`;
-    const alt = `${layout.settingName} — seed "${layout.seed}"`;
-
-    // Preload off-DOM so the visible <img> only ever receives a fully-decoded image - assigning
-    // src directly (the old approach) let the browser show the element mid-load, which is what
-    // produced a brief broken/empty-icon flash before the PNG finished loading. The visible <img>
-    // is also hidden by CSS (#preview-dialog-image:not([src])) until this src assignment.
-    await new Promise((resolve) => {
-      const preloadImg = new Image();
-      preloadImg.onload = () => {
-        if (myToken === previewRequestToken) {
-          previewDialogImage.src = pngUrl;
-          previewDialogImage.alt = alt;
-        }
-        resolve();
-      };
-      preloadImg.onerror = () => {
-        if (myToken === previewRequestToken) {
-          previewDialogStatus.textContent = "Failed to load the preview image.";
-          previewDialogStatus.classList.add("error");
-        }
-        resolve();
-      };
-      preloadImg.src = pngUrl;
-    });
-    if (myToken !== previewRequestToken) {
-      return;
-    }
-
-    previewDialogImageLink.href = `/preview/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}`;
-    previewDialogStatus.textContent = "";
-    const tableCount = layout.appliances.filter((a) => a.applianceId === layout.tableApplianceId).length;
-    previewDialogStats.textContent = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)`;
-    if (otFriendly) {
-      previewDialogStats.textContent += " · OT Friendly ✓";
-    }
-  } catch {
-    if (myToken === previewRequestToken) {
-      previewDialogStatus.textContent = "Failed to reach the server.";
-      previewDialogStatus.classList.add("error");
-    }
+  const entry = await resolvePreviewEntry(seed, otFriendly);
+  if (myToken !== previewRequestToken) {
     return;
   }
+  renderPreviewEntry(entry);
+  if (entry.paths) {
+    renderPathTabs(seed, entry.paths);
+  } else {
+    entry.pathsPromise?.then(() => {
+      if (myToken === previewRequestToken && entry.paths) {
+        renderPathTabs(seed, entry.paths);
+      }
+    });
+  }
+  prefetchNeighbours(currentPreviewIndex);
+}
 
-  await loadPreviewDialogPath(seed, myToken);
+// Fetches + preloads everything for one seed and stores it in previewCache. No dialog DOM side
+// effects, so it's safe to call speculatively (neighbour prefetch). Concurrent calls for the same
+// seed share one promise. The card-paths fetch runs detached as entry.pathsPromise so this resolves
+// as soon as the image is ready (preserving the "image first, paths fill in" feel).
+function resolvePreviewEntry(seed, otFriendly) {
+  const hit = previewCache.get(seed);
+  if (hit) {
+    return Promise.resolve(hit);
+  }
+  const pending = previewInFlight.get(seed);
+  if (pending) {
+    return pending;
+  }
+
+  // Snapshot - a new search could start (and bump the generation) mid-resolve.
+  const setting = currentSearchSetting;
+  const payload = currentSearchPayload;
+  const gen = previewCacheGeneration;
+
+  const promise = (async () => {
+    const entry = {
+      seed, otFriendly, pngUrl: null, alt: "", imageHref: null, statsText: "",
+      error: null, img: null, paths: null, pathsPromise: null,
+    };
+    try {
+      const response = await fetch(`/api/layout/${encodeURIComponent(setting)}/${encodeURIComponent(seed)}`);
+      const layout = await response.json();
+      if (!response.ok) {
+        entry.error = layout.error ?? "Failed to load preview.";
+      } else {
+        entry.pngUrl = `/preview/${encodeURIComponent(setting)}/${encodeURIComponent(seed)}.png`;
+        entry.imageHref = `/preview/${encodeURIComponent(setting)}/${encodeURIComponent(seed)}`;
+        entry.alt = `${layout.settingName} — seed "${layout.seed}"`;
+        const tableCount = layout.appliances.filter((a) => a.applianceId === layout.tableApplianceId).length;
+        entry.statsText = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)`;
+        if (otFriendly) {
+          entry.statsText += " · OT Friendly ✓";
+        }
+        // Preloaded (and retained on the entry) so the decoded PNG stays warm - a later revisit
+        // sets the visible <img> src from browser + memory cache with no load flash.
+        entry.img = await preloadImage(entry.pngUrl);
+        entry.pathsPromise = fetchPreviewPaths(seed, payload);
+        entry.pathsPromise.then((paths) => { entry.paths = paths; });
+      }
+    } catch {
+      entry.error = "Failed to reach the server.";
+    } finally {
+      previewInFlight.delete(seed);
+    }
+    if (gen === previewCacheGeneration) {
+      storePreviewEntry(seed, entry);
+    }
+    return entry;
+  })();
+
+  previewInFlight.set(seed, promise);
+  return promise;
 }
 
 // Shows the full card pick for every drawing day up to the last target, not just the days the
@@ -1159,31 +1205,102 @@ async function populatePreviewDialog(seed, otFriendly) {
 // sparse-target search (e.g. day 1 and day 10 only) left days 2-9 with no way to know what to
 // pick. There's often more than one valid way to fill those in-between days (either offered card
 // on a non-target day can be fine), so the server returns up to a few alternate complete paths
-// (see SeedSearcher.ResolveCardPaths) - rendered here as tabs when there's more than one.
-async function loadPreviewDialogPath(seed, token) {
-  if (!currentSearchPayload) {
-    return;
+// (see SeedSearcher.ResolveCardPaths) - rendered as tabs by renderPathTabs when there's more than one.
+async function fetchPreviewPaths(seed, payload) {
+  if (!payload) {
+    return null;
   }
-
   try {
     const response = await fetch("/api/search/path", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...currentSearchPayload, seed }),
+      body: JSON.stringify({ ...payload, seed }),
     });
     if (!response.ok) {
-      return;
+      return null;
     }
-
     const { paths } = await response.json();
-    if (token !== undefined && token !== previewRequestToken) {
-      return;
-    }
-    renderPathTabs(seed, paths);
+    return paths;
   } catch {
-    // Best-effort - the layout preview above is the primary content of this dialog, so a failed
-    // path fetch just leaves the list empty rather than surfacing a second error state.
+    // Best-effort - the layout preview is the primary content of the dialog, so a failed path
+    // fetch just leaves the list empty rather than surfacing a second error state.
+    return null;
   }
+}
+
+function preloadImage(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(img); // caller checks img.naturalWidth === 0 for failure
+    img.src = url;
+  });
+}
+
+// Pure DOM write for one resolved entry - no awaits, safe to call synchronously on a cache hit.
+function renderPreviewEntry(entry) {
+  previewDialogTitle.textContent = `Seed "${entry.seed}"`;
+  previewDialogStatus.classList.remove("error");
+  previewDialogPathTabs.innerHTML = "";
+  previewDialogPathTabs.hidden = true;
+  previewDialogPath.innerHTML = "";
+  previewDialogExplorerLink.hidden = true;
+
+  if (entry.error) {
+    previewDialogImage.removeAttribute("src");
+    previewDialogImage.removeAttribute("alt");
+    previewDialogImageLink.removeAttribute("href");
+    previewDialogStats.textContent = "";
+    previewDialogStatus.textContent = entry.error;
+    previewDialogStatus.classList.add("error");
+    return;
+  }
+
+  const imageFailed = entry.img && entry.img.naturalWidth === 0;
+  previewDialogStatus.textContent = imageFailed ? "Failed to load the preview image." : "";
+  previewDialogStatus.classList.toggle("error", Boolean(imageFailed));
+  // Assign src directly (no removeAttribute first) - the PNG is browser + memory cached, so it
+  // paints immediately with no display:none flash when paging back to a seen match.
+  previewDialogImage.src = entry.pngUrl;
+  previewDialogImage.alt = entry.alt;
+  previewDialogImageLink.href = entry.imageHref;
+  previewDialogStats.textContent = entry.statsText;
+}
+
+function storePreviewEntry(seed, entry) {
+  previewCache.delete(seed);
+  previewCache.set(seed, entry);
+  while (previewCache.size > PREVIEW_CACHE_MAX) {
+    previewCache.delete(previewCache.keys().next().value); // evict least-recently-used
+  }
+}
+
+function touchPreviewLru(seed) {
+  const entry = previewCache.get(seed);
+  if (entry) {
+    previewCache.delete(seed);
+    previewCache.set(seed, entry);
+  }
+}
+
+// Warms the match on each side of the current one so the first arrow-press that way is instant too.
+function prefetchNeighbours(index) {
+  for (const i of [index - 1, index + 1]) {
+    if (i < 0 || i >= currentMatches.length) {
+      continue;
+    }
+    const match = currentMatches[i];
+    if (previewCache.has(match.seed) || previewInFlight.has(match.seed)) {
+      continue;
+    }
+    resolvePreviewEntry(match.seed, match.otFriendly).catch(() => {}); // fire-and-forget
+  }
+}
+
+function resetPreviewCache() {
+  previewCache.clear();
+  previewInFlight.clear();
+  previewCacheGeneration++;
 }
 
 function renderPathTabs(seed, paths) {
@@ -1274,8 +1391,9 @@ function wireExplorerLink(seed, path) {
 
 function closePreviewDialog() {
   previewDialog.close();
-  // Clears the image so a stale/large decoded image isn't held onto between opens, and so
-  // reopening the same seed re-fetches rather than silently reusing browser image-decode state.
+  // Clears the visible <img> so a large decoded bitmap isn't retained by the on-screen element
+  // between opens. The previewCache entry (incl. its retained Image + card paths) survives, so
+  // reopening the same seed within this search still renders instantly from cache.
   previewDialogImage.removeAttribute("src");
   previewDialogImageLink.removeAttribute("href");
 }
