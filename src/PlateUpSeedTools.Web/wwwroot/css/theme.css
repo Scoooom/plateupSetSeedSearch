@@ -753,8 +753,33 @@ button[type="submit"]:hover {
   font-weight: 700;
 }
 
+.preview-dialog-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.preview-dialog-nav button[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#preview-dialog-position {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
 #preview-dialog-image {
   width: 100%;
+}
+
+/* Hidden until populatePreviewDialog assigns src (after the off-DOM preload) - otherwise the
+   persistent, already-in-DOM <img> paints a broken-image glyph during the load gap. */
+#preview-dialog-image:not([src]) {
+  display: none;
 }
 
 .explorer-result {

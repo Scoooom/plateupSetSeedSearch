@@ -342,7 +342,9 @@ public static class SearchCommand
                     otFriendly = true;
                     break;
                 case "--reroll-per-day":
-                    allowRerollPerDay = true;
+                    // Reroll temporarily disabled (known-buggy skipChoices mechanic) - see
+                    // SearchEndpoints. Accepted but inert so existing scripts don't hard-fail.
+                    Console.Error.WriteLine("--reroll-per-day is temporarily disabled (known-buggy) - ignoring.");
                     break;
                 default:
                     Console.WriteLine($"Unknown or incomplete argument '{args[i]}'");
@@ -355,7 +357,7 @@ public static class SearchCommand
             Console.WriteLine("Usage: search --setting <slug> --dish <name> [--sub-option 1|2] [--heat <n>]");
             Console.WriteLine("              [--tier <n>] [--franchise-card <name> ...]");
             Console.WriteLine("              [--day <n>=<card name> ...] [--any-day-card <card name> ...] [--ot-friendly]");
-            Console.WriteLine("              [--reroll-per-day]");
+            Console.WriteLine("              [--reroll-per-day (temporarily disabled)]");
             Console.WriteLine("              [--alphabet <chars>] [--length <n>] [--limit <n>] [--max-results <n>]");
             Console.WriteLine();
             Console.WriteLine("--day pins a card to an exact day; --any-day-card (repeatable) only requires the card be");
@@ -363,10 +365,10 @@ public static class SearchCommand
             Console.WriteLine("--day/--any-day-card/--ot-friendly is required.");
             Console.WriteLine("--ot-friendly restricts to seeds where days 1, 2, and 4 offer Research Desks - an");
             Console.WriteLine("additional AND-condition layered onto any --day/--any-day-card targets, or usable alone.");
-            Console.WriteLine("--reroll-per-day models the Bay Leaves plant's 1-reroll-per-night mechanic (not Sage's");
-            Console.WriteLine("lifetime-total cap): a seed also matches if a target card is only reachable by rerolling");
-            Console.WriteLine("the offered pair once that night. Matched seeds gain a [OT] suffix in MATCH output when");
-            Console.WriteLine("they're also OT-Friendly (tagged on every match, independent of --ot-friendly).");
+            Console.WriteLine("--reroll-per-day (Bay Leaves 1-reroll-per-night mechanic) is TEMPORARILY DISABLED - a");
+            Console.WriteLine("known-buggy skipChoices mechanic; the flag is accepted but ignored for now.");
+            Console.WriteLine("Matched seeds gain a [OT] suffix in MATCH output when they're also OT-Friendly");
+            Console.WriteLine("(tagged on every match, independent of --ot-friendly).");
             Console.WriteLine($"--max-results caps how many matches are found before stopping early (default {DefaultMaxResults},");
             Console.WriteLine("same as the web UI's hard cap) - pass 0 or a negative number to search without a cap.");
             Console.WriteLine("--tier/--franchise-card model continuing an existing franchise save into this run");

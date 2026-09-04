@@ -81,7 +81,9 @@
         </details>
       </div>
 
-      <div class="field-group full-width">
+      <!-- Reroll (Bay Leaves) search temporarily disabled - known-buggy skipChoices mechanic,
+           see SearchEndpoints.StartSearch. Remove `hidden` + revert the endpoint flags to re-enable. -->
+      <div class="field-group full-width" hidden>
         <label class="field checkbox-field">
           <input type="checkbox" id="allow-reroll" />
           <span>Allow 1 reroll per day</span>
@@ -159,6 +161,11 @@
       <div class="preview-dialog-header">
         <span id="preview-dialog-title"></span>
         <button type="button" id="preview-dialog-close" class="link-button">Close</button>
+      </div>
+      <div class="preview-dialog-nav">
+        <button type="button" id="preview-dialog-prev" class="link-button" aria-label="Previous match">‹ Prev</button>
+        <span id="preview-dialog-position" aria-live="polite"></span>
+        <button type="button" id="preview-dialog-next" class="link-button" aria-label="Next match">Next ›</button>
       </div>
       <p id="preview-dialog-status" class="status"></p>
       <a id="preview-dialog-image-link" target="_blank" rel="noopener">

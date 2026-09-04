@@ -118,6 +118,13 @@ public static partial class ExplorerEndpoints
 
         var pathByDay = orderedPath.ToDictionary(p => p.Day, p => p);
         CardDayResult result = null!; // always assigned - day floor is 0, loop always runs at least once
+        // RestaurantMode/Kitchen/FindBonusUnlocks.cs's skip_choices = SCardActionDetails.RerollIndex + 1
+        // - RerollIndex is a RUN-WIDE cumulative counter, NOT reset per night (ground-truth-confirmed
+        // 2026-08-20: a real capture with rerolls on both day 3 and day 5 showed day 3's reroll at
+        // skipChoices=1 but day 5's at skipChoices=2, not 1 - the day-3 reroll's usage carried over).
+        // So this must count every EARLIER rerolled day in the path, not just ask "was this day
+        // rerolled" in isolation.
+        var rerollsUsedSoFar = 0;
         // Day 0 is the prep day before the first real night - see SeedSearcher's Walk for why this
         // floor is 0 rather than 1 now (santa-workshop's Christmas Special Card fires there).
         for (var day = 0; day <= request.Day; day++)
@@ -126,7 +133,14 @@ public static partial class ExplorerEndpoints
             var targetId = pathEntry?.CardId;
             // An already-committed day replays with its own stored reroll bit; the frontier day
             // (request.Day, never in Path) uses the live Reroll flag from this request instead.
-            var skipChoices = day == request.Day ? (request.Reroll ? 1 : 0) : (pathEntry?.Rerolled == true ? 1 : 0);
+            // Reroll temporarily disabled (known-buggy skipChoices mechanic) - see SearchEndpoints.
+            // Restore `day == request.Day ? request.Reroll : pathEntry?.Rerolled == true` to re-enable.
+            var isRerolled = false;
+            var skipChoices = isRerolled ? rerollsUsedSoFar + 1 : 0;
+            if (isRerolled)
+            {
+                rerollsUsedSoFar++;
+            }
             var thisDay = day;
             try
             {

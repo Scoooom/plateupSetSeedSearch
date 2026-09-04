@@ -360,6 +360,39 @@ public class SeedSearcherTests
         Assert.All(path.Where(e => e.Day != rerollDay), entry => Assert.False(entry.Rerolled));
     }
 
+    /// <summary>
+    /// Regression test for the run-wide-cumulative-RerollIndex bug (see
+    /// CardDrawSimulatorGroundTruthTests.MatchesRealMultiRerollCapture and SeedSearchRequest's
+    /// AllowRerollPerDay doc comment): before the fix, Walk/Backtrack hardcoded skipChoices: 1 for
+    /// every reroll, so a search for a card only offered by the WRONG skip_choices=1 on day 5 (real
+    /// day-5 reroll is skip_choices=2, since seed "bbbbvw7" banquet-hall/Pies/Heat1 already used a
+    /// reroll on day 3) would have false-positive matched. "Exclusive" is exactly that card - real
+    /// skip_choices=2 offers Affordable/Charming (same as the base offer) on day 5, never Exclusive.
+    /// </summary>
+    [Fact]
+    public void MultiRerollDoesNotFalsePositiveOnStaleSkipChoices()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("banquet-hall");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 1, startingUnlockId: 1989028383);
+        const int allYouCanEatId = -347199069;
+        const int exclusiveId = -1323758054; // only offered by the WRONG (pre-fix) skip_choices=1
+        const int charmingId = 1293847744; // genuinely offered on day 5 (base offer, and real reroll)
+
+        var falsePositiveTargets = new Dictionary<int, int> { [3] = allYouCanEatId, [5] = exclusiveId };
+        var realTargets = new Dictionary<int, int> { [3] = allYouCanEatId, [5] = charmingId };
+
+        var falsePositivePaths = SeedSearcher.ResolveCardPaths(
+            repo, new Seed("bbbbvw7"), settingPackId, setup, falsePositiveTargets,
+            new HashSet<int>(), maxDay: 5, tier: 0, allowRerollPerDay: true, maxPaths: 3);
+        Assert.Empty(falsePositivePaths);
+
+        var realPaths = SeedSearcher.ResolveCardPaths(
+            repo, new Seed("bbbbvw7"), settingPackId, setup, realTargets,
+            new HashSet<int>(), maxDay: 5, tier: 0, allowRerollPerDay: true, maxPaths: 3);
+        Assert.NotEmpty(realPaths);
+    }
+
     private static HashSet<string> RunSearch(GameDataRepository repo, SeedSearchRequest request) =>
         RunSearchWithOtFriendlyTags(repo, request).Keys.ToHashSet();
 

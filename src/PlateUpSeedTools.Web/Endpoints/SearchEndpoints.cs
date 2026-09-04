@@ -346,7 +346,10 @@ public static class SearchEndpoints
             : null;
         var searchRequest = new SeedSearchRequest(
             settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds, flexibleTargetIds,
-            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true, AllowRerollPerDay: request.AllowRerollPerDay == true);
+            // Reroll temporarily disabled (known-buggy skipChoices mechanic) - re-enable by
+            // restoring `request.AllowRerollPerDay == true` here and in GetSearchPath, and
+            // un-hiding the checkbox in search.html.
+            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true, AllowRerollPerDay: false);
         var matchCap = request.StopAfterFirstMatch == true ? 1L : DefaultMatchCap;
         var job = jobs.StartSearch(searchRequest, matchCap);
 
@@ -446,7 +449,8 @@ public static class SearchEndpoints
         var maxDay = Math.Max(targetIds.Count == 0 ? 0 : targetIds.Keys.Max(), flexibleTargetIds.Count > 0 ? FlexibleHorizon : 0);
         var paths = SeedSearcher.ResolveCardPaths(
             repo, new Seed(request.Seed), settingPackId, setup, targetIds, flexibleTargetIds, maxDay, request.Tier,
-            request.AllowRerollPerDay == true, MaxCardPaths);
+            // Reroll temporarily disabled (known-buggy skipChoices mechanic) - see StartSearch.
+            false, MaxCardPaths);
 
         var pathDtos = paths
             .Select(path => new CardPathDto(path

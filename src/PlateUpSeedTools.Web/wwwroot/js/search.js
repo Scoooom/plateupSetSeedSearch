@@ -38,6 +38,9 @@ const previewDialogStats = document.getElementById("preview-dialog-stats");
 const previewDialogPathTabs = document.getElementById("preview-dialog-path-tabs");
 const previewDialogPath = document.getElementById("preview-dialog-path");
 const previewDialogExplorerLink = document.getElementById("preview-dialog-explorer-link");
+const previewDialogPrev = document.getElementById("preview-dialog-prev");
+const previewDialogNext = document.getElementById("preview-dialog-next");
+const previewDialogPosition = document.getElementById("preview-dialog-position");
 
 // VALID_SEED/fetchSettings/populateSettingSelect come from shared.js.
 
@@ -47,6 +50,13 @@ let currentJobId = null;
 let currentSearchSetting = null;
 let currentSearchPayload = null;
 let currentMatches = [];
+// Index into currentMatches (the FULL list, not the 500-capped DOM chips) of the seed currently
+// shown in the preview dialog - drives the prev/next navigation. -1 when the open seed isn't in
+// the list (shouldn't happen from a chip click, but guard anyway).
+let currentPreviewIndex = -1;
+// Bumped on every populatePreviewDialog call; a stale in-flight populate (slow /api/layout or a
+// cold PNG render) checks this after each await and bails rather than clobbering a newer selection.
+let previewRequestToken = 0;
 // Cached per currentJobId - repeated Copy Link clicks for the same job's results must reuse the
 // same hash/DB row rather than minting a new one every click (a real bug: clicking rapidly used to
 // duplicate a cache row per click). Reset to null anywhere currentJobId itself changes.
@@ -737,6 +747,11 @@ function stopPolling() {
 function renderJobStatus(job) {
   jobEl.hidden = false;
   currentMatches = job.matches;
+  // If the preview dialog is open while a search is still finding matches, keep its "N / M"
+  // counter and the prev/next disabled states in sync with the growing list.
+  if (previewDialog.open) {
+    updatePreviewNav();
+  }
 
   const percent = job.totalToCheck > 0 ? Math.min(100, (job.checkedCount / job.totalToCheck) * 100) : 0;
 
@@ -1030,26 +1045,62 @@ form.addEventListener("submit", async (event) => {
 // /preview/....png) already built for the Seed Previewer page - no new backend beyond exposing
 // tableApplianceId on LayoutResponse. The image is only ever fetched here, on an explicit open -
 // never prefetched for the whole match list, which matters with up to 500 badges on screen.
-async function openPreviewDialog(seed, otFriendly) {
+function openPreviewDialog(seed, otFriendly) {
   if (!currentSearchSetting) {
     return;
   }
+
+  currentPreviewIndex = currentMatches.findIndex((m) => m.seed === seed);
+  if (!previewDialog.open) {
+    previewDialog.showModal(); // showModal() throws if already open (e.g. a double-click)
+  }
+  updatePreviewNav();
+  populatePreviewDialog(seed, otFriendly);
+}
+
+// Steps to a different match without reopening the dialog (showModal() throws on an already-open
+// <dialog>). Bounds-checked; ends are also enforced by updatePreviewNav disabling the buttons.
+function showPreviewAt(index) {
+  if (index < 0 || index >= currentMatches.length) {
+    return;
+  }
+  currentPreviewIndex = index;
+  const match = currentMatches[index];
+  updatePreviewNav();
+  populatePreviewDialog(match.seed, match.otFriendly);
+}
+
+function updatePreviewNav() {
+  const total = currentMatches.length;
+  previewDialogPosition.textContent = total ? `${currentPreviewIndex + 1} / ${total}` : "";
+  previewDialogPrev.disabled = currentPreviewIndex <= 0;
+  previewDialogNext.disabled = currentPreviewIndex < 0 || currentPreviewIndex >= total - 1;
+}
+
+// Fills the (already-open) dialog for one seed. Never calls showModal - that's openPreviewDialog's
+// job. Guarded by previewRequestToken so a slow fetch/PNG-render from an earlier selection can't
+// land its results on top of a newer one when the user arrows through quickly.
+async function populatePreviewDialog(seed, otFriendly) {
+  const myToken = ++previewRequestToken;
 
   previewDialogTitle.textContent = `Seed "${seed}"`;
   previewDialogStatus.textContent = "Loading...";
   previewDialogStatus.classList.remove("error");
   previewDialogImage.removeAttribute("src");
+  previewDialogImage.removeAttribute("alt");
   previewDialogImageLink.removeAttribute("href");
   previewDialogStats.textContent = "";
   previewDialogPathTabs.innerHTML = "";
   previewDialogPathTabs.hidden = true;
   previewDialogPath.innerHTML = "";
   previewDialogExplorerLink.hidden = true;
-  previewDialog.showModal();
 
   try {
     const response = await fetch(`/api/layout/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}`);
     const layout = await response.json();
+    if (myToken !== previewRequestToken) {
+      return;
+    }
     if (!response.ok) {
       previewDialogStatus.textContent = layout.error ?? "Failed to load preview.";
       previewDialogStatus.classList.add("error");
@@ -1061,21 +1112,29 @@ async function openPreviewDialog(seed, otFriendly) {
 
     // Preload off-DOM so the visible <img> only ever receives a fully-decoded image - assigning
     // src directly (the old approach) let the browser show the element mid-load, which is what
-    // produced a brief broken/empty-icon flash before the PNG finished loading.
+    // produced a brief broken/empty-icon flash before the PNG finished loading. The visible <img>
+    // is also hidden by CSS (#preview-dialog-image:not([src])) until this src assignment.
     await new Promise((resolve) => {
       const preloadImg = new Image();
       preloadImg.onload = () => {
-        previewDialogImage.src = pngUrl;
-        previewDialogImage.alt = alt;
+        if (myToken === previewRequestToken) {
+          previewDialogImage.src = pngUrl;
+          previewDialogImage.alt = alt;
+        }
         resolve();
       };
       preloadImg.onerror = () => {
-        previewDialogStatus.textContent = "Failed to load the preview image.";
-        previewDialogStatus.classList.add("error");
+        if (myToken === previewRequestToken) {
+          previewDialogStatus.textContent = "Failed to load the preview image.";
+          previewDialogStatus.classList.add("error");
+        }
         resolve();
       };
       preloadImg.src = pngUrl;
     });
+    if (myToken !== previewRequestToken) {
+      return;
+    }
 
     previewDialogImageLink.href = `/preview/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}`;
     previewDialogStatus.textContent = "";
@@ -1085,12 +1144,14 @@ async function openPreviewDialog(seed, otFriendly) {
       previewDialogStats.textContent += " · OT Friendly ✓";
     }
   } catch {
-    previewDialogStatus.textContent = "Failed to reach the server.";
-    previewDialogStatus.classList.add("error");
+    if (myToken === previewRequestToken) {
+      previewDialogStatus.textContent = "Failed to reach the server.";
+      previewDialogStatus.classList.add("error");
+    }
     return;
   }
 
-  await loadPreviewDialogPath(seed);
+  await loadPreviewDialogPath(seed, myToken);
 }
 
 // Shows the full card pick for every drawing day up to the last target, not just the days the
@@ -1099,7 +1160,7 @@ async function openPreviewDialog(seed, otFriendly) {
 // pick. There's often more than one valid way to fill those in-between days (either offered card
 // on a non-target day can be fine), so the server returns up to a few alternate complete paths
 // (see SeedSearcher.ResolveCardPaths) - rendered here as tabs when there's more than one.
-async function loadPreviewDialogPath(seed) {
+async function loadPreviewDialogPath(seed, token) {
   if (!currentSearchPayload) {
     return;
   }
@@ -1115,6 +1176,9 @@ async function loadPreviewDialogPath(seed) {
     }
 
     const { paths } = await response.json();
+    if (token !== undefined && token !== previewRequestToken) {
+      return;
+    }
     renderPathTabs(seed, paths);
   } catch {
     // Best-effort - the layout preview above is the primary content of this dialog, so a failed
@@ -1227,6 +1291,21 @@ previewDialog.addEventListener("click", (event) => {
 previewDialog.addEventListener("close", () => {
   previewDialogImage.removeAttribute("src");
   previewDialogImageLink.removeAttribute("href");
+});
+
+// Prev/next navigation between matches - both clickable arrows and Left/Right arrow keys. The
+// keydown listener is on the dialog (not document) so it's only live while the modal is open;
+// native Escape-to-close is unaffected.
+previewDialogPrev.addEventListener("click", () => showPreviewAt(currentPreviewIndex - 1));
+previewDialogNext.addEventListener("click", () => showPreviewAt(currentPreviewIndex + 1));
+previewDialog.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    showPreviewAt(currentPreviewIndex - 1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    showPreviewAt(currentPreviewIndex + 1);
+  }
 });
 
 loadInit().catch(() => setStatus("Failed to load restaurant settings.", true));

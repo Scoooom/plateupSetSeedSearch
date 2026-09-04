@@ -113,4 +113,62 @@ public class CardDrawSimulatorGroundTruthTests
             Assert.Equal(expectedUnlock2, result.Unlock2Id);
         }
     }
+
+    /// <summary>
+    /// Pins PeekOffer's skip_choices semantics against a third real capture (2026-08-20,
+    /// GroundTruthLogger v1.15.0's skip_choices logging): banquet-hall, seed "bbbbvw7", starting dish
+    /// Pies, Heat 1, tier 0, a real reroll used on day 3 AND day 5 in the same run. The critical,
+    /// previously-unknown fact this proves: RestaurantMode/Kitchen/FindBonusUnlocks.cs's
+    /// skip_choices = SCardActionDetails.RerollIndex + 1 is a RUN-WIDE cumulative counter, not reset
+    /// per night - day 3's reroll really used skip_choices=1 (the day's own base offer differs from
+    /// its reroll), but day 5's reroll really used skip_choices=2, NOT 1, because day 3's reroll
+    /// usage carried forward. Day 5 happens to land back on the exact same pair as its base offer at
+    /// skip_choices=2 - NOT because its eligible pool is down to 2 candidates (banquet-hall has 4
+    /// live PrimaryTheme unlocks total - Affordable/Charming/Exclusive/Formal, all still eligible
+    /// here since Theme Cards Pack's UnlockConditionGuarantee is a one-shot-per-run draw, gone for
+    /// good the moment any PrimaryTheme card is owned, so there's no "claimed some already, pool
+    /// shrank" story on this pack). Rather, UnlockSelectorGroupChoice's Group1==Group2 branch picks
+    /// candidates[skip_choices*2 % N]/[skip_choices*2+1 % N] - with N=4 that's exactly 2 reachable
+    /// pairs total (indices 0,1 vs 2,3), toggling by skip_choices' parity forever, regardless of how
+    /// large skip_choices grows. skip_choices=1 gives the OTHER (genuinely different, and WRONG if
+    /// assumed to be what a single reroll always produces) pair. See SeedSearcher's AllowRerollPerDay
+    /// doc comment for the fix this pins.
+    /// </summary>
+    [Fact]
+    public void MatchesRealMultiRerollCapture()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        const int allYouCanEatId = -347199069;
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 1, startingUnlockId: 1989028383);
+        var sim = new CardDrawSimulator(repo, new Seed("bbbbvw7"), repo.ResolveUnlockPackId("banquet-hall"), setup);
+
+        // Days 0-2: no offer. Day 3: base offer differs from its (first, skip_choices=1) reroll -
+        // accept the reroll's Unlock2 ("All You Can Eat") to match the real capture's owned-set at
+        // day 5.
+        for (var day = 0; day <= 2; day++)
+        {
+            sim.SimulateDay(day, _ => null);
+        }
+
+        var day3Base = sim.PeekOffer(3, skipChoices: 0).Options;
+        Assert.Equal((-1992316049, -957080051), (day3Base.Unlock1Id, day3Base.Unlock2Id)); // Mushroom Pies / High Standards
+        var day3Reroll = sim.PeekOffer(3, skipChoices: 1).Options;
+        Assert.Equal((-1802123036, allYouCanEatId), (day3Reroll.Unlock1Id, day3Reroll.Unlock2Id)); // Vegetable Pies / All You Can Eat
+
+        sim.SimulateDay(3, _ => allYouCanEatId, skipChoices: 1);
+        sim.SimulateDay(4, _ => null);
+
+        var day5Base = sim.PeekOffer(5, skipChoices: 0).Options;
+        Assert.Equal((-1857686620, 1293847744), (day5Base.Unlock1Id, day5Base.Unlock2Id)); // Affordable / Charming
+
+        // The WRONG value a hardcoded skipChoices: 1 would have produced - genuinely different from
+        // the base offer, which is exactly what made this bug easy to miss without a real capture.
+        var day5WrongReroll = sim.PeekOffer(5, skipChoices: 1).Options;
+        Assert.Equal((-1323758054, -1641333859), (day5WrongReroll.Unlock1Id, day5WrongReroll.Unlock2Id)); // Exclusive / Formal
+
+        // The REAL, ground-truth-confirmed reroll (skip_choices=2, since one reroll was already used
+        // on day 3) - identical to the base offer.
+        var day5RealReroll = sim.PeekOffer(5, skipChoices: 2).Options;
+        Assert.Equal(day5Base, day5RealReroll);
+    }
 }

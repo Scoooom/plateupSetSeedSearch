@@ -26,12 +26,23 @@ public sealed record SeedSearchRequest(
     // Additional AND-condition, layered onto whatever DayTargets/FlexibleTargetIds are already
     // configured - see OtFriendlyChecker. Requires SettingSlug to be set (Search throws otherwise).
     bool OtFriendly = false,
-    // Models the Bay Leaves plant's "1 reroll per night" mechanic (not Sage's lifetime-total cap):
-    // on any day where the base offer doesn't contain something still wanted (a fixed DayTargets
-    // entry or a remaining FlexibleTargetIds card), also try the same night's single-reroll offer
-    // (CardDrawSimulator.PeekOffer's skipChoices: 1 - a deterministic re-index into the same
-    // pre-shuffled pool, not fresh RNG, see UnlockPackEvaluator/UnlockSelector.GetOffsetChoice) and
-    // credit a seed as matching if the reroll would have landed it.
+    // Models the Bay Leaves plant's "1 reroll per night" mechanic: on any day where the base offer
+    // doesn't contain something still wanted (a fixed DayTargets entry or a remaining
+    // FlexibleTargetIds card), also try that night's reroll offer (CardDrawSimulator.PeekOffer's
+    // skipChoices - a deterministic re-index into the same pre-shuffled pool, not fresh RNG, see
+    // UnlockPackEvaluator/UnlockSelector.GetOffsetChoice) and credit a seed as matching if the
+    // reroll would have landed it.
+    //
+    // CORRECTED after a real ground-truth capture (2026-08-20, GroundTruthLogger v1.15.0): the
+    // skip_choices value a reroll uses is NOT always 1. RestaurantMode/Kitchen/FindBonusUnlocks.cs's
+    // skip_choices = SCardActionDetails.RerollIndex + 1, and RerollIndex is a RUN-WIDE cumulative
+    // counter that does NOT reset per night - a real capture with rerolls on both day 3 and day 5
+    // showed day 3 at skipChoices=1 but day 5 at skipChoices=2 (not 1), because day 3's reroll usage
+    // carried forward. Walk/Backtrack both now thread a running rerollsUsedSoFar count through the
+    // day-by-day simulation and use rerollsUsedSoFar+1 for each successive reroll in the same run,
+    // not a hardcoded 1 - a search that only ever needs at most one reroll in the whole run is
+    // unaffected, but multi-reroll runs previously silently mispredicted every reroll after the
+    // first.
     bool AllowRerollPerDay = false);
 
 /// <summary>Result of a <see cref="SeedSearcher.Search"/> call - <see cref="MatchCapReached"/> distinguishes "stopped early because matchCap was hit" from a genuine full-space completion, since both otherwise look like the loop just finishing.</summary>
@@ -211,14 +222,14 @@ public static class SeedSearcher
         Backtrack(
             repo, seed, settingPackId, setup, dayTargets, maxDay, tier, allowRerollPerDay,
             day: 0, ownedIds: new HashSet<int>(setup.InitiallyOwnedIds), remainingFlexible: new HashSet<int>(flexibleTargetIds),
-            current, results, maxPaths, ref nodesVisited);
+            rerollsUsedSoFar: 0, current, results, maxPaths, ref nodesVisited);
         return results;
     }
 
     private static void Backtrack(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
         IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier, bool allowRerollPerDay, int day,
-        HashSet<int> ownedIds, HashSet<int> remainingFlexible,
+        HashSet<int> ownedIds, HashSet<int> remainingFlexible, int rerollsUsedSoFar,
         List<(int Day, int? CardId, bool Rerolled)> current, List<IReadOnlyList<(int Day, int? CardId, bool Rerolled)>> results,
         int maxPaths, ref int nodesVisited)
     {
@@ -251,20 +262,26 @@ public static class SeedSearcher
 
         var offered = sim.PeekOffer(day, skipChoices: 0).Options;
         var rerolled = false;
+        // See Walk's matching comment: RerollIndex is a run-wide cumulative counter, not reset per
+        // night - rerollsUsedSoFar carries forward through the recursion so a later day's reroll
+        // uses the correct (possibly >1) skip_choices if an earlier day in this same branch also
+        // rerolled.
+        var nextRerollsUsedSoFar = rerollsUsedSoFar;
         if (allowRerollPerDay && !OfferSatisfiesWanted(offered, targetId, remainingFlexible))
         {
-            var rerollOffer = sim.PeekOffer(day, skipChoices: 1).Options;
+            var rerollOffer = sim.PeekOffer(day, rerollsUsedSoFar + 1).Options;
             if (OfferSatisfiesWanted(rerollOffer, targetId, remainingFlexible))
             {
                 offered = rerollOffer;
                 rerolled = true;
+                nextRerollsUsedSoFar = rerollsUsedSoFar + 1;
             }
         }
 
         if (offered.Unlock1Id is null)
         {
             current.Add((day, null, rerolled));
-            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, allowRerollPerDay, day + 1, ownedIds, remainingFlexible, current, results, maxPaths, ref nodesVisited);
+            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, allowRerollPerDay, day + 1, ownedIds, remainingFlexible, nextRerollsUsedSoFar, current, results, maxPaths, ref nodesVisited);
             current.RemoveAt(current.Count - 1);
             return;
         }
@@ -305,7 +322,7 @@ public static class SeedSearcher
             var nextRemainingFlexible = remainingFlexible.Contains(candidate)
                 ? new HashSet<int>(remainingFlexible.Where(id => id != candidate))
                 : remainingFlexible;
-            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, allowRerollPerDay, day + 1, nextOwned, nextRemainingFlexible, current, results, maxPaths, ref nodesVisited);
+            Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, allowRerollPerDay, day + 1, nextOwned, nextRemainingFlexible, nextRerollsUsedSoFar, current, results, maxPaths, ref nodesVisited);
             current.RemoveAt(current.Count - 1);
         }
     }
@@ -334,6 +351,14 @@ public static class SeedSearcher
         var freshSetup = new ResolvedRunSetup(new HashSet<int>(setup.InitiallyOwnedIds), setup.BonusPackIds);
         var sim = new CardDrawSimulator(repo, seed, settingPackId, freshSetup, tier);
 
+        // RestaurantMode/Kitchen/FindBonusUnlocks.cs's skip_choices = SCardActionDetails.RerollIndex + 1
+        // - RerollIndex is a RUN-WIDE cumulative counter, NOT reset per night (ground-truth-confirmed
+        // 2026-08-20: a real capture with rerolls on both day 3 and day 5 showed day 3's reroll at
+        // skipChoices=1 but day 5's at skipChoices=2, not 1 - the day-3 reroll's usage carried over,
+        // and re-passing 1 every time was a real bug, not just a naming quirk). So every reroll used
+        // on an earlier day in this same walk must bump the value used on a later day's reroll.
+        var rerollsUsedSoFar = 0;
+
         // Day 0 is the prep day before the first real night - only relevant for packs with a
         // Day=0 UnlockConditionOnce (currently just santa-workshop's Christmas Special Card), but
         // harmless to always include: no other decoded condition can ever match day 0.
@@ -350,11 +375,13 @@ public static class SeedSearcher
                 var baseOffer = sim.PeekOffer(day, skipChoices: 0).Options;
                 if (!OfferSatisfiesWanted(baseOffer, targetId, remainingFlexible))
                 {
-                    var rerollOffer = sim.PeekOffer(day, skipChoices: 1).Options;
+                    var candidateSkipChoices = rerollsUsedSoFar + 1;
+                    var rerollOffer = sim.PeekOffer(day, candidateSkipChoices).Options;
                     if (OfferSatisfiesWanted(rerollOffer, targetId, remainingFlexible))
                     {
-                        skipChoices = 1;
+                        skipChoices = candidateSkipChoices;
                         rerolled = true;
+                        rerollsUsedSoFar++;
                     }
                 }
             }

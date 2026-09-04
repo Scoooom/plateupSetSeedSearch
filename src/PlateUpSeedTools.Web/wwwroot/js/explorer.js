@@ -516,6 +516,9 @@ function renderDayPanel(node, day, response, rerollView = false) {
   rerollButton.className = "link-button";
   rerollButton.textContent = rerollView ? "↩ Back to original offer" : "🔄 Reroll (Bay Leaves)";
   rerollButton.addEventListener("click", () => toggleReroll(node, day, !rerollView));
+  // Reroll temporarily disabled - known-buggy skipChoices mechanic, see SearchEndpoints.
+  // Un-hide (and drop the early return in toggleReroll) to re-enable.
+  rerollButton.hidden = true;
   dayPanelEl.appendChild(rerollButton);
 
   const skipButton = document.createElement("button");
@@ -527,9 +530,11 @@ function renderDayPanel(node, day, response, rerollView = false) {
 }
 
 async function toggleReroll(node, day, reroll) {
-  const response = await fetchExplorerDay(node, day, reroll);
-  if (!response) return;
-  renderDayPanel(node, day, response, reroll);
+  // Reroll temporarily disabled - known-buggy skipChoices mechanic, see SearchEndpoints. The
+  // reroll button is hidden (renderDayPanel), so nothing reaches this; kept as a defensive no-op.
+  void node;
+  void day;
+  void reroll;
 }
 
 async function choose(parentNode, day, option, sourcePackName, rerolled = false) {
