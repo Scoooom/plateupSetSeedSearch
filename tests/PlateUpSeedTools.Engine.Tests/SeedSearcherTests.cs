@@ -141,6 +141,93 @@ public class SeedSearcherTests
         Assert.Equal(totalToCheck, finalCheckedCount);
     }
 
+    // "v4" and "46" both hash to Seed.IntValue 5861743 - and every RNG stream derives solely from
+    // that 32-bit hash, so they are the byte-identical game. The searcher must report only one of
+    // them and record the other as an equivalent. Alphabet "v46" length 2 is 9 candidate strings,
+    // exactly one colliding pair, so 8 distinct games. maxDegreeOfParallelism: 1 makes the
+    // first-seen representative deterministic ("v4" is enumerated before "46").
+    [Fact]
+    public void CollapsesSeedStringsThatHashToTheSameValue()
+    {
+        Assert.Equal(new Seed("v4").IntValue, new Seed("46").IntValue); // guard: the collision this test relies on
+
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "v46";
+        const int length = 2;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length); // 9
+
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck);
+
+        var reported = new List<string>();
+        var result = SeedSearcher.Search(
+            repo, request, maxDegreeOfParallelism: 1, matchCap: long.MaxValue,
+            onMatch: (seed, _) => reported.Add(seed),
+            onProgress: _ => { },
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal(8, reported.Count);          // 9 strings, one colliding pair collapsed
+        Assert.Contains("v4", reported);          // first-seen wins
+        Assert.DoesNotContain("46", reported);
+
+        var equivalent = Assert.Single(result.EquivalentSeeds);
+        Assert.Equal("v4", equivalent.Key);
+        Assert.Equal(1, equivalent.Value.Count);
+        Assert.Equal(new[] { "46" }, equivalent.Value.Sample);
+    }
+
+    // With 9 candidate strings but 8 distinct games, a cap of 9 is never reached (proving the cap
+    // counts distinct matches, not raw matching strings), while a cap of 8 is reached exactly and a
+    // cap of 7 stops early.
+    [Theory]
+    [InlineData(9, false)]
+    [InlineData(8, true)]
+    [InlineData(7, true)]
+    public void MatchCapCountsDistinctSeeds(long matchCap, bool expectedCapReached)
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, "v46", 2, 9);
+
+        var matchCount = 0;
+        var result = SeedSearcher.Search(
+            repo, request, maxDegreeOfParallelism: 1, matchCap: matchCap,
+            onMatch: (_, _) => matchCount++,
+            onProgress: _ => { },
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal(expectedCapReached, result.MatchCapReached);
+        Assert.Equal(Math.Min(matchCap, 8), matchCount);
+    }
+
+    // Excluded seeds are matched by hash, so excluding "v4" also drops its identical twin "46".
+    [Fact]
+    public void ExcludedSeedIsMatchedByHash()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        var request = new SeedSearchRequest(
+            settingPackId, setup, new Dictionary<int, int>(), Tier: 0, "v46", 2, 9,
+            ExcludedSeeds: new HashSet<string> { "v4" });
+
+        var reported = new List<string>();
+        SeedSearcher.Search(
+            repo, request, maxDegreeOfParallelism: 1, matchCap: long.MaxValue,
+            onMatch: (seed, _) => reported.Add(seed),
+            onProgress: _ => { },
+            cancellationToken: CancellationToken.None);
+
+        Assert.DoesNotContain("v4", reported);
+        Assert.DoesNotContain("46", reported); // same hash as the excluded "v4"
+        Assert.Equal(7, reported.Count);        // 9 strings - 1 colliding pair (both excluded)
+    }
+
     [Fact]
     public void EmptyFlexibleTargetsReproducesFixedDayOnlyBehavior()
     {

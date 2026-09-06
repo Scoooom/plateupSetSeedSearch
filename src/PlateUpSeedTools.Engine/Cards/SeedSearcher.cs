@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Seeding;
 using PlateUpSeedTools.Engine.Shop;
@@ -45,8 +46,27 @@ public sealed record SeedSearchRequest(
     // first.
     bool AllowRerollPerDay = false);
 
-/// <summary>Result of a <see cref="SeedSearcher.Search"/> call - <see cref="MatchCapReached"/> distinguishes "stopped early because matchCap was hit" from a genuine full-space completion, since both otherwise look like the loop just finishing.</summary>
-public readonly record struct SeedSearchResult(bool MatchCapReached);
+/// <summary>
+/// Result of a <see cref="SeedSearcher.Search"/> call. <see cref="MatchCapReached"/> distinguishes
+/// "stopped early because matchCap was hit" from a genuine full-space completion, since both
+/// otherwise look like the loop just finishing. <see cref="EquivalentSeeds"/> maps a reported
+/// match's seed string to the OTHER seed strings the search found that hash to the same
+/// <see cref="Engine.Seeding.Seed.IntValue"/> - and are therefore byte-identical games (every
+/// simulation system consumes only the 32-bit seed hash, so a hash collision is total game-state
+/// identity, see FixedString32Hash). Only representatives with at least one such twin appear.
+/// Best-effort: a cancelled or match-cap-truncated search hasn't scanned the whole space, so the
+/// counts/samples are "found so far".
+/// </summary>
+public readonly record struct SeedSearchResult(
+    bool MatchCapReached,
+    IReadOnlyDictionary<string, SeedEquivalents> EquivalentSeeds);
+
+/// <summary>
+/// Other seed strings that produce a byte-identical game to a given match. <see cref="Count"/> is
+/// the true total found; <see cref="Sample"/> is capped (see SeedSearcher's MaxEquivalentSample) so
+/// a pathologically collision-dense search space can't grow the result without bound.
+/// </summary>
+public readonly record struct SeedEquivalents(int Count, IReadOnlyList<string> Sample);
 
 /// <summary>
 /// Brute-forces the seed space defined by <see cref="SeedSearchRequest.Alphabet"/>/<see
@@ -64,6 +84,20 @@ public static class SeedSearcher
     // second at the ~2,900 seeds/sec the CLI measured.
     private const long ProgressReportInterval = 2_000;
 
+    // Upper bound on how many equivalent seed strings we retain per match. Real collision groups are
+    // tiny (a handful), but the search alphabet has a structural collision family that grows with
+    // seed length, so cap the retained sample and just count the rest.
+    private const int MaxEquivalentSample = 64;
+
+    // One match "slot": the first seed string found for a given seed hash, plus any later strings
+    // that hash to the same value (identical game). DuplicateSample is guarded by locking on itself.
+    private sealed class SeedGroup
+    {
+        public required string Representative { get; init; }
+        public int DuplicateCount;
+        public readonly List<string> DuplicateSample = new();
+    }
+
     // Inclusive bounds for a user-supplied match cap - the web UI's "Max results" field and the CLI's
     // --max-results flag. A genuine product rule per the project plan, not a web-only limit, so it
     // lives here rather than being redefined in each caller. Enforcement differs by caller: the web
@@ -75,10 +109,12 @@ public static class SeedSearcher
     public const long DefaultMatchCap = MaxMatchCap;
 
     /// <param name="matchCap">
-    /// Stop once this many matches have been found (both the web UI's hard 500 cap and its
-    /// "stop after first match" option, which is just matchCap=1, and the CLI's --max-results
-    /// override all funnel through here - see SearchCommand.cs/SearchJobManager.cs). Required, not
-    /// optional, so every caller has to make a deliberate choice - pass long.MaxValue for
+    /// Stop once this many <em>distinct</em> matches have been found - matches are de-duplicated by
+    /// seed hash (see <see cref="SeedSearchResult.EquivalentSeeds"/>), so two seed strings that
+    /// resolve to the same game count as one and only the first fires <paramref name="onMatch"/> and
+    /// advances the cap. Both the web UI's 500 cap and its "stop after first match" option (matchCap=1)
+    /// and the CLI's --max-results override funnel through here - see SearchCommand.cs/SearchJobManager.cs.
+    /// Required, not optional, so every caller has to make a deliberate choice - pass long.MaxValue for
     /// effectively unbounded. Best-effort: a few in-flight parallel iterations may complete just
     /// after the cap is hit, so slightly more than matchCap onMatch calls are possible; callers
     /// that need a hard display limit (e.g. the web UI's match-list rendering) should still cap
@@ -107,6 +143,20 @@ public static class SeedSearcher
         long matchCount = 0;
         var matchCapReached = false;
 
+        // De-dup by seed hash: two seed strings with the same Seed.IntValue are the same game in
+        // every respect (every RNG stream derives solely from the 32-bit hash - see
+        // FixedString32Hash / FixedSeedContext), and the search alphabet has abundant collisions
+        // ("v4" and "46" both hash to 5861743). First string found for a hash is the reported
+        // representative; later collisions are recorded as its equivalents.
+        var groups = new ConcurrentDictionary<int, SeedGroup>();
+
+        // Excluded seeds are matched by hash too, for the same reason - excluding one string
+        // excludes every string that resolves to the same game, which is what "don't re-find seeds
+        // I've already seen" actually means.
+        var excludedHashes = request.ExcludedSeeds is { Count: > 0 }
+            ? new HashSet<int>(request.ExcludedSeeds.Select(s => new Seed(s).IntValue))
+            : null;
+
         // A linked CTS lets the cap trigger its own internal cancellation without disturbing the
         // caller's own token - Parallel.For can't distinguish "stop because the cap was hit" from
         // "stop because the caller cancelled" any other way, since both surface as the same
@@ -123,19 +173,35 @@ public static class SeedSearcher
             Parallel.For(0L, request.TotalToCheck, parallelOptions, i =>
             {
                 var seedString = IndexToSeedString(i, request.Alphabet, request.Length);
-                if (request.ExcludedSeeds?.Contains(seedString) != true)
+                var seed = new Seed(seedString);
+                if (excludedHashes?.Contains(seed.IntValue) != true)
                 {
                     var (isMatch, otFriendly) = Matches(
-                        repo, new Seed(seedString), request.SettingPackId, request.Setup, request.DayTargets,
+                        repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
                         flexibleTargetIds, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
                         request.AllowRerollPerDay);
                     if (isMatch)
                     {
-                        onMatch(seedString, otFriendly);
-                        if (Interlocked.Increment(ref matchCount) >= matchCap)
+                        if (groups.TryAdd(seed.IntValue, new SeedGroup { Representative = seedString }))
                         {
-                            matchCapReached = true;
-                            linkedCts.Cancel();
+                            onMatch(seedString, otFriendly);
+                            if (Interlocked.Increment(ref matchCount) >= matchCap)
+                            {
+                                matchCapReached = true;
+                                linkedCts.Cancel();
+                            }
+                        }
+                        else
+                        {
+                            var group = groups[seed.IntValue];
+                            lock (group.DuplicateSample)
+                            {
+                                group.DuplicateCount++;
+                                if (group.DuplicateSample.Count < MaxEquivalentSample)
+                                {
+                                    group.DuplicateSample.Add(seedString);
+                                }
+                            }
                         }
                     }
                 }
@@ -159,7 +225,21 @@ public static class SeedSearcher
             onProgress(Interlocked.Read(ref checkedCount));
         }
 
-        return new SeedSearchResult(matchCapReached);
+        var equivalents = new Dictionary<string, SeedEquivalents>();
+        foreach (var group in groups.Values)
+        {
+            if (group.DuplicateCount > 0)
+            {
+                lock (group.DuplicateSample)
+                {
+                    equivalents[group.Representative] = new SeedEquivalents(
+                        group.DuplicateCount,
+                        group.DuplicateSample.OrderBy(s => s, StringComparer.Ordinal).ToList());
+                }
+            }
+        }
+
+        return new SeedSearchResult(matchCapReached, equivalents);
     }
 
     /// <summary>

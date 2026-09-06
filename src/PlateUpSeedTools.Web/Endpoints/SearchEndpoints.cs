@@ -395,10 +395,23 @@ public static class SearchEndpoints
             job.TotalToCheck,
             seedsPerSecond,
             elapsed.TotalSeconds,
-            job.Matches.ToList(),
+            WithEquivalents(job),
             job.Error,
             job.MatchCapReached));
     }
+
+    /// <summary>
+    /// Folds a finished job's equivalent-seed groups (see SeedSearchResult.EquivalentSeeds) into its
+    /// match list. During the run job.Equivalents is empty, so this is a no-op passthrough; once the
+    /// search completes each representative match gains the other seed strings that resolve to the
+    /// same game.
+    /// </summary>
+    private static List<SearchMatchDto> WithEquivalents(SearchJob job) =>
+        job.Matches
+            .Select(m => job.Equivalents.TryGetValue(m.Seed, out var eq)
+                ? m with { EquivalentSeeds = eq.Sample, EquivalentCount = eq.Count }
+                : m)
+            .ToList();
 
     /// <summary>
     /// "Which card to pick each day to reproduce this seed's match" for the search results'
@@ -506,7 +519,7 @@ public static class SearchEndpoints
         }
 
         var hash = ShareHash.Generate();
-        var cached = new CachedSearchResult(request, job.Matches.ToList(), job.TotalToCheck, job.CheckedCount, job.MatchCapReached);
+        var cached = new CachedSearchResult(request, WithEquivalents(job), job.TotalToCheck, job.CheckedCount, job.MatchCapReached);
         await cache.SetAsync(hash, cached);
 
         return Results.Ok(new ShareSearchResultResponse(hash));

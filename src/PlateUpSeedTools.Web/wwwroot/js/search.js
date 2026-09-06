@@ -36,6 +36,7 @@ const previewDialogStatus = document.getElementById("preview-dialog-status");
 const previewDialogImageLink = document.getElementById("preview-dialog-image-link");
 const previewDialogImage = document.getElementById("preview-dialog-image");
 const previewDialogStats = document.getElementById("preview-dialog-stats");
+const previewDialogEquivalents = document.getElementById("preview-dialog-equivalents");
 const previewDialogPathTabs = document.getElementById("preview-dialog-path-tabs");
 const previewDialogPath = document.getElementById("preview-dialog-path");
 const previewDialogExplorerLink = document.getElementById("preview-dialog-explorer-link");
@@ -826,6 +827,13 @@ function renderJobStatus(job) {
       badge.title = "OT Friendly - Research Desk offered days 1, 2, and 4";
       li.append(" ", badge);
     }
+    if (match.equivalentCount > 0) {
+      const badge = document.createElement("span");
+      badge.className = "equiv-badge";
+      badge.textContent = `+${match.equivalentCount} ≡`;
+      badge.title = `${match.equivalentCount} other seed string(s) produce this exact game (same seed hash) - click to see them`;
+      li.append(" ", badge);
+    }
     li.tabIndex = 0;
     li.addEventListener("click", () => openPreviewDialog(match.seed, match.otFriendly));
     li.addEventListener("keydown", (event) => {
@@ -1122,6 +1130,8 @@ async function populatePreviewDialog(seed, otFriendly) {
   previewDialogImage.removeAttribute("alt");
   previewDialogImageLink.removeAttribute("href");
   previewDialogStats.textContent = "";
+  previewDialogEquivalents.hidden = true;
+  previewDialogEquivalents.textContent = "";
   previewDialogPathTabs.innerHTML = "";
   previewDialogPathTabs.hidden = true;
   previewDialogPath.innerHTML = "";
@@ -1240,6 +1250,38 @@ function preloadImage(url) {
   });
 }
 
+// Renders the "N other seed strings produce this identical game" line for the currently-shown seed.
+// The data lives on the match DTO (currentMatches), not the preview cache entry, since it comes from
+// the search result, not the layout endpoint. currentMatches is set for both live and cached-result
+// views, so this works in both.
+function renderEquivalents(seed) {
+  const match = currentMatches.find((m) => m.seed === seed);
+  const sample = match?.equivalentSeeds ?? [];
+  const count = match?.equivalentCount ?? 0;
+  if (!count) {
+    previewDialogEquivalents.hidden = true;
+    previewDialogEquivalents.textContent = "";
+    return;
+  }
+
+  previewDialogEquivalents.hidden = false;
+  previewDialogEquivalents.innerHTML = "";
+  previewDialogEquivalents.append(
+    `Identical game (same seed hash) - also produced by ${count} other seed string${count === 1 ? "" : "s"}: `
+  );
+  sample.forEach((s, i) => {
+    const code = document.createElement("code");
+    code.textContent = s;
+    previewDialogEquivalents.append(code);
+    if (i < sample.length - 1) {
+      previewDialogEquivalents.append(", ");
+    }
+  });
+  if (count > sample.length) {
+    previewDialogEquivalents.append(`, +${count - sample.length} more`);
+  }
+}
+
 // Pure DOM write for one resolved entry - no awaits, safe to call synchronously on a cache hit.
 function renderPreviewEntry(entry) {
   previewDialogTitle.textContent = `Seed "${entry.seed}"`;
@@ -1248,6 +1290,7 @@ function renderPreviewEntry(entry) {
   previewDialogPathTabs.hidden = true;
   previewDialogPath.innerHTML = "";
   previewDialogExplorerLink.hidden = true;
+  renderEquivalents(entry.seed);
 
   if (entry.error) {
     previewDialogImage.removeAttribute("src");

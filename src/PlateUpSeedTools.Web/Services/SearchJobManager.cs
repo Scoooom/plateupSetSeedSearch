@@ -29,6 +29,12 @@ public sealed class SearchJob
     public volatile bool MatchCapReached;
     public required CancellationTokenSource Cts { get; init; }
 
+    // Populated once the search finishes: representative match seed -> the other seed strings that
+    // hash to the same value (identical game). Empty during the run - GetStatus/ShareSearchResult
+    // fold this into the SearchMatchDto list at read time. See SeedSearchResult.EquivalentSeeds.
+    public IReadOnlyDictionary<string, SeedEquivalents> Equivalents { get; set; } =
+        new Dictionary<string, SeedEquivalents>();
+
     // Updated on every client status poll (SearchEndpoints.GetStatus) - this doubles as the
     // "browser is still watching this job" heartbeat SearchJobHeartbeatMonitor relies on to reap
     // jobs whose tab went away (closed/crashed/lost network) without ever telling the server.
@@ -166,6 +172,7 @@ public sealed class SearchJobManager
                 cancellationToken: job.Cts.Token);
 
             job.MatchCapReached = result.MatchCapReached;
+            job.Equivalents = result.EquivalentSeeds;
             job.Status = SearchJobStatus.Completed;
         }
         catch (OperationCanceledException)

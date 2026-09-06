@@ -29,9 +29,20 @@ public sealed record SearchStartRequest(
 
 public sealed record SearchStartResponse(string JobId, long TotalToCheck, string SpaceSize);
 
-/// <summary>One matched seed, tagged with its OtFriendly status - computed for every match regardless
-/// of whether the search itself was OtFriendly-gated, see SeedSearcher's private Matches method.</summary>
-public sealed record SearchMatchDto(string Seed, bool OtFriendly);
+/// <summary>
+/// One matched seed. <see cref="OtFriendly"/> is computed for every match regardless of whether the
+/// search itself was OtFriendly-gated (see SeedSearcher's private Matches method).
+/// <see cref="EquivalentSeeds"/> lists OTHER seed strings the search found that hash to the same
+/// value and are therefore the byte-identical game (see SeedSearchResult.EquivalentSeeds);
+/// <see cref="EquivalentCount"/> is the true total, which can exceed the sample when a
+/// collision-dense space truncated it. Both are empty/0 on the live in-progress snapshot and only
+/// populated once the search completes (see SearchEndpoints.GetStatus).
+/// </summary>
+public sealed record SearchMatchDto(
+    string Seed,
+    bool OtFriendly,
+    IReadOnlyList<string>? EquivalentSeeds = null,
+    int EquivalentCount = 0);
 
 public sealed record SearchStatusResponse(
     string JobId,

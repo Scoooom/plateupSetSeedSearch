@@ -198,13 +198,45 @@ public static class SearchCommand
         }
 
         var seedsPerSecond = checkedCount / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001);
-        Console.WriteLine($"Checked {checkedCount:N0} seed(s) in {stopwatch.Elapsed.TotalSeconds:N1}s ({seedsPerSecond:N0} seeds/sec) - {matchCount} match(es).");
+        Console.WriteLine($"Checked {checkedCount:N0} seed(s) in {stopwatch.Elapsed.TotalSeconds:N1}s ({seedsPerSecond:N0} seeds/sec) - {matchCount} distinct match(es).");
         if (result.MatchCapReached)
         {
             Console.WriteLine($"Stopped after reaching the {options.MaxResults:N0}-match cap - raise --max-results (up to {SeedSearcher.MaxMatchCap}), or --exclude-seed the known hits and rerun to find more.");
         }
 
+        PrintEquivalentSeeds(result.EquivalentSeeds);
+
         return 0;
+    }
+
+    // How many "<representative> = <equivalents>" lines to print before collapsing the rest into a
+    // single "... and N more" line - the full data is still in the search result, this is just to
+    // keep a collision-dense search's console output readable.
+    private const int MaxEquivalentSummaryLines = 20;
+
+    private static void PrintEquivalentSeeds(IReadOnlyDictionary<string, SeedEquivalents> equivalents)
+    {
+        if (equivalents.Count == 0)
+        {
+            return;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"Note: {equivalents.Count} matched seed(s) have equivalent seed strings that hash to the");
+        Console.WriteLine("same value (identical game - layout and cards). Only one per group is listed above.");
+        var shown = 0;
+        foreach (var (representative, eq) in equivalents.OrderBy(e => e.Key, StringComparer.Ordinal))
+        {
+            if (shown++ == MaxEquivalentSummaryLines)
+            {
+                Console.WriteLine($"  ... and {equivalents.Count - MaxEquivalentSummaryLines} more");
+                break;
+            }
+
+            var sample = string.Join(", ", eq.Sample);
+            var extra = eq.Count > eq.Sample.Count ? $", +{eq.Count - eq.Sample.Count} more" : "";
+            Console.WriteLine($"  {representative}  =  {sample}{extra}");
+        }
     }
 
     private static bool TryResolveUnlockByName(GameDataRepository repo, string name, string label, out UnlockData unlock)
@@ -381,9 +413,10 @@ public static class SearchCommand
             Console.WriteLine("taken that specific card). Each copy also requires every earlier copy of the same card to");
             Console.WriteLine("be listed too (copies are taken in order).");
             Console.WriteLine("--exclude-seed <seed> (repeatable) / --exclude-seeds-file <path> skip already-found seeds");
-            Console.WriteLine("so a rerun surfaces new matches instead of the same ones. --matches-only prints just the");
-            Console.WriteLine("MATCH seed strings (no header/summary lines), suitable for piping into a future");
-            Console.WriteLine("--exclude-seeds-file.");
+            Console.WriteLine("so a rerun surfaces new matches instead of the same ones. Exclusion is by seed hash, so");
+            Console.WriteLine("excluding any one seed also excludes every other seed string that resolves to the same");
+            Console.WriteLine("game. --matches-only prints just the MATCH seed strings (no header/summary lines, one per");
+            Console.WriteLine("distinct game), suitable for piping into a future --exclude-seeds-file.");
             Console.WriteLine("--card-pack <slug> overrides which pack drives card draws, independent of --setting (e.g.");
             Console.WriteLine("'turbo' for Turbo's every-day schedule) - see the 'card-packs' list below. Defaults to the");
             Console.WriteLine("chosen setting's own pack (normal schedule for every currently-extracted setting).");
