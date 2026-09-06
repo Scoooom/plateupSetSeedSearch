@@ -10,11 +10,12 @@ namespace PlateUpSeedTools.Web.Endpoints;
 
 public static class SearchEndpoints
 {
-    // Hard server-side cap: every web search stops after this many matches, no user override (the
-    // CLI has a --max-results override, the web UI intentionally doesn't - see SearchCommand.cs and
-    // the project plan's "Match cap + stop after first match" section). "Stop after first match"
-    // is just this same mechanism with a cap of 1.
-    private const long DefaultMatchCap = 500;
+    // Default server-side cap when the request doesn't specify one: every web search stops after this
+    // many matches. The user can lower it (or, in principle, raise it up to this same value) via the
+    // "Max results" field, validated into SeedSearcher.MinMatchCap..MaxMatchCap below - see
+    // SearchCommand.cs and the project plan's "Match cap + stop after first match" section. "Stop
+    // after first match" is just this same mechanism with a cap of 1.
+    private const long DefaultMatchCap = SeedSearcher.DefaultMatchCap;
 
     // How many alternate card-pick paths GetSearchPath surfaces per matched seed - see
     // SeedSearcher.ResolveCardPaths's doc comment for why "all of them" isn't offered.
@@ -350,7 +351,25 @@ public static class SearchEndpoints
             // restoring `request.AllowRerollPerDay == true` here and in GetSearchPath, and
             // un-hiding the checkbox in search.html.
             SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true, AllowRerollPerDay: false);
-        var matchCap = request.StopAfterFirstMatch == true ? 1L : DefaultMatchCap;
+        long matchCap;
+        if (request.StopAfterFirstMatch == true)
+        {
+            matchCap = 1L;
+        }
+        else if (request.MaxResults is int maxResults)
+        {
+            if (maxResults < SeedSearcher.MinMatchCap || maxResults > SeedSearcher.MaxMatchCap)
+            {
+                return Results.BadRequest(new { error = $"maxResults must be between {SeedSearcher.MinMatchCap} and {SeedSearcher.MaxMatchCap}." });
+            }
+
+            matchCap = maxResults;
+        }
+        else
+        {
+            matchCap = DefaultMatchCap;
+        }
+
         var job = jobs.StartSearch(searchRequest, matchCap);
 
         return Results.Accepted($"/api/search/{job.Id}", new SearchStartResponse(job.Id, totalToCheck, spaceSize.ToString()));

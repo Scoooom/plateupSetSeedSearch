@@ -9,6 +9,7 @@ const tierInput = document.getElementById("tier-input");
 const alphabetInput = document.getElementById("alphabet-input");
 const lengthInput = document.getElementById("length-input");
 const limitInput = document.getElementById("limit-input");
+const maxResultsInput = document.getElementById("max-results-input");
 const dayTargetRowsEl = document.getElementById("day-target-rows");
 const addDayTargetButton = document.getElementById("add-day-target");
 const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
@@ -682,6 +683,7 @@ async function prefillFormFromPayload(request) {
   alphabetInput.value = request.alphabet ?? alphabetInput.value;
   lengthInput.value = String(request.length);
   limitInput.value = request.limit != null ? String(request.limit) : "";
+  maxResultsInput.value = request.maxResults != null ? String(request.maxResults) : "500";
   stopAfterFirstMatchInput.checked = Boolean(request.stopAfterFirstMatch);
   otFriendlyInput.checked = Boolean(request.otFriendly);
   allowRerollInput.checked = Boolean(request.allowRerollPerDay);
@@ -786,10 +788,10 @@ function renderJobStatus(job) {
 
     if (job.status === "Completed" && job.matchCapReached) {
       jobStatusText.textContent =
-        `Stopped after finding ${job.matches.length} match(es) - every search on this site stops at ` +
-        "500 results (or 1, with \"Stop after first match\"). Don't like these? Adjust the seed " +
-        "length/alphabet in Advanced options to search a different space, or exclude these seeds " +
-        "and search again to find more.";
+        `Stopped after finding ${job.matches.length} match(es) - the search hit your "Max results" ` +
+        "limit (or 1, with \"Stop after first match\"). Don't like these? Raise Max results (up to " +
+        "500), adjust the seed length/alphabet in Advanced options to search a different space, or " +
+        "exclude these seeds and search again to find more.";
     } else if (job.status === "Completed") {
       jobStatusText.textContent = `Done - checked ${job.checkedCount.toLocaleString()} seed(s), found ${job.matches.length} match(es).`;
     } else if (job.status === "Cancelled") {
@@ -1015,6 +1017,7 @@ form.addEventListener("submit", async (event) => {
     alphabet: alphabetInput.value,
     length: Number(lengthInput.value),
     limit: limitInput.value ? Number(limitInput.value) : null,
+    maxResults: maxResultsInput.value ? Number(maxResultsInput.value) : null,
     stopAfterFirstMatch: stopAfterFirstMatchInput.checked,
     excludedSeeds: parseExcludedSeeds(),
     cardPack: cardPackSelect.value || null,

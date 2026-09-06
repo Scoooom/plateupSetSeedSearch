@@ -20,7 +20,12 @@ public sealed record SearchStartRequest(
     // Additional AND-condition layered onto DayTargets - see Engine.Shop.OtFriendlyChecker.
     bool? OtFriendly = null,
     // Models the Bay Leaves plant's "1 reroll per night" mechanic - see SeedSearchRequest.AllowRerollPerDay.
-    bool? AllowRerollPerDay = null);
+    bool? AllowRerollPerDay = null,
+    // Stop the search once this many matches are found. Null falls back to SeedSearcher.DefaultMatchCap;
+    // ignored when StopAfterFirstMatch is set (that's just a cap of 1). Must be within
+    // SeedSearcher.MinMatchCap..MaxMatchCap or StartSearch rejects the request (the UI enforces the
+    // same range loudly before submit).
+    int? MaxResults = null);
 
 public sealed record SearchStartResponse(string JobId, long TotalToCheck, string SpaceSize);
 

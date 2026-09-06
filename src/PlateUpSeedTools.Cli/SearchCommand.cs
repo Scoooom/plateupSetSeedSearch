@@ -201,7 +201,7 @@ public static class SearchCommand
         Console.WriteLine($"Checked {checkedCount:N0} seed(s) in {stopwatch.Elapsed.TotalSeconds:N1}s ({seedsPerSecond:N0} seeds/sec) - {matchCount} match(es).");
         if (result.MatchCapReached)
         {
-            Console.WriteLine($"Stopped after reaching the {options.MaxResults:N0}-match cap - pass --max-results <n> to raise it (0 or negative = unlimited).");
+            Console.WriteLine($"Stopped after reaching the {options.MaxResults:N0}-match cap - raise --max-results (up to {SeedSearcher.MaxMatchCap}), or --exclude-seed the known hits and rerun to find more.");
         }
 
         return 0;
@@ -242,11 +242,11 @@ public static class SearchCommand
         public bool AllowRerollPerDay { get; init; }
     }
 
-    // Same hard default the web UI uses (SearchEndpoints.DefaultMatchCap) - a genuine engine-level
-    // rule per the project plan, not a web-only limit. Unlike the web UI, the CLI can raise or
-    // disable it via --max-results, since it's a power-user/scripting tool where "find everything"
-    // is often the actual point.
-    private const long DefaultMaxResults = 500;
+    // Same default/bounds the web UI uses (see SeedSearcher.MinMatchCap/MaxMatchCap) - a genuine
+    // product rule per the project plan, not a web-only limit. Unlike the web UI, which rejects an
+    // out-of-range value, the CLI silently clamps --max-results into [1, 500]: it's a scripting tool
+    // where a stray `--max-results 999999` should just run capped, not hard-fail.
+    private const long DefaultMaxResults = SeedSearcher.DefaultMatchCap;
 
     private static Options? ParseOptions(string[] args)
     {
@@ -314,8 +314,7 @@ public static class SearchCommand
                     limit = long.Parse(args[++i]);
                     break;
                 case "--max-results" when i + 1 < args.Length:
-                    var parsedMaxResults = long.Parse(args[++i]);
-                    maxResults = parsedMaxResults <= 0 ? long.MaxValue : parsedMaxResults;
+                    maxResults = Math.Clamp(long.Parse(args[++i]), SeedSearcher.MinMatchCap, SeedSearcher.MaxMatchCap);
                     break;
                 case "--exclude-seed" when i + 1 < args.Length:
                     excludedSeeds.Add(args[++i].ToLowerInvariant());
@@ -370,7 +369,7 @@ public static class SearchCommand
             Console.WriteLine("Matched seeds gain a [OT] suffix in MATCH output when they're also OT-Friendly");
             Console.WriteLine("(tagged on every match, independent of --ot-friendly).");
             Console.WriteLine($"--max-results caps how many matches are found before stopping early (default {DefaultMaxResults},");
-            Console.WriteLine("same as the web UI's hard cap) - pass 0 or a negative number to search without a cap.");
+            Console.WriteLine($"same as the web UI's cap) - silently clamped into {SeedSearcher.MinMatchCap}..{SeedSearcher.MaxMatchCap}.");
             Console.WriteLine("--tier/--franchise-card model continuing an existing franchise save into this run");
             Console.WriteLine("(BeginRestaurant.cs copies the prior run's cards onto the new one) - --tier is the");
             Console.WriteLine("franchise tier of that prior save (0 for a fresh, non-franchise run), and each");

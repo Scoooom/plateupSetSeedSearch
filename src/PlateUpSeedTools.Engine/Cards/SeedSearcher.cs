@@ -64,6 +64,16 @@ public static class SeedSearcher
     // second at the ~2,900 seeds/sec the CLI measured.
     private const long ProgressReportInterval = 2_000;
 
+    // Inclusive bounds for a user-supplied match cap - the web UI's "Max results" field and the CLI's
+    // --max-results flag. A genuine product rule per the project plan, not a web-only limit, so it
+    // lives here rather than being redefined in each caller. Enforcement differs by caller: the web
+    // layer rejects an out-of-range value (loud), the CLI silently clamps into range (quiet).
+    public const long MinMatchCap = 1;
+    public const long MaxMatchCap = 500;
+
+    // Match cap used when the caller doesn't supply one - also the maximum a caller may request.
+    public const long DefaultMatchCap = MaxMatchCap;
+
     /// <param name="matchCap">
     /// Stop once this many matches have been found (both the web UI's hard 500 cap and its
     /// "stop after first match" option, which is just matchCap=1, and the CLI's --max-results

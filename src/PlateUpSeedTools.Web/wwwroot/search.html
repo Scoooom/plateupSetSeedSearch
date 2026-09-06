@@ -131,6 +131,11 @@
             <input id="limit-input" type="number" value="1000000" min="1" step="1" />
           </label>
 
+          <label class="field">
+            <span>Max results (stop searching after this many matches - 1 to 500)</span>
+            <input id="max-results-input" type="number" value="500" min="1" max="500" step="1" required />
+          </label>
+
           <label class="field full-width">
             <span>Exclude seeds (one per line, or comma-separated - skips seeds you've already found so a rerun surfaces new ones)</span>
             <textarea id="exclude-seeds-input" rows="3" placeholder="e.g. bdgh, jmqr"></textarea>
