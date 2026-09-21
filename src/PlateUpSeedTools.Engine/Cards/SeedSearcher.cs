@@ -55,7 +55,11 @@ public sealed record SeedSearchRequest(
 /// simulation system consumes only the 32-bit seed hash, so a hash collision is total game-state
 /// identity, see FixedString32Hash). Only representatives with at least one such twin appear.
 /// Best-effort: a cancelled or match-cap-truncated search hasn't scanned the whole space, so the
-/// counts/samples are "found so far".
+/// counts/samples are "found so far". Matches found via the IntValue-space search mode (see
+/// <see cref="SeedSearcher.ShouldUseIntValueSpace"/>) never report equivalents even though other
+/// equally-valid seed strings may exist for the same game - that mode visits each IntValue
+/// exactly once by construction, so there's no natural "found a second string for this hash"
+/// signal the way string-space enumeration's redundancy produces one.
 /// </summary>
 public readonly record struct SeedSearchResult(
     bool MatchCapReached,
@@ -107,6 +111,22 @@ public static class SeedSearcher
 
     // Match cap used when the caller doesn't supply one - also the maximum a caller may request.
     public const long DefaultMatchCap = MaxMatchCap;
+
+    // The fixed size of the Seed.IntValue space (2^32). Expressed as `1L << 32` (long) rather than
+    // `1 << 32` (int, which silently overflows to 0) since it's compared against/used as a bound
+    // with Parallel.For's long-bound overload.
+    private const long IntValueSpaceSize = 1L << 32;
+
+    /// <summary>
+    /// Whether searching the fixed 2^32-size Seed.IntValue space directly is cheaper than
+    /// enumerating request.Alphabet/request.Length seed strings - true whenever the requested
+    /// string space is larger than the hash space it collapses onto (e.g. the product's default
+    /// 8-character/19-letter alphabet: 19^8 ≈ 17 billion strings onto only ~4.3 billion possible
+    /// hashes). A winning IntValue is turned back into a displayable seed string of the requested
+    /// length/alphabet via SeedHashInverter only once a match is found, not per candidate. See
+    /// CLAUDE.md's project docs / the "IntValue-space seed search" plan for the full derivation.
+    /// </summary>
+    internal static bool ShouldUseIntValueSpace(SeedSearchRequest request) => request.TotalToCheck > IntValueSpaceSize;
 
     /// <param name="matchCap">
     /// Stop once this many <em>distinct</em> matches have been found - matches are de-duplicated by
@@ -168,50 +188,97 @@ public static class SeedSearcher
             MaxDegreeOfParallelism = maxDegreeOfParallelism,
         };
 
+        void ReportProgress()
+        {
+            var count = Interlocked.Increment(ref checkedCount);
+            if (count % ProgressReportInterval == 0)
+            {
+                onProgress(count);
+            }
+        }
+
         try
         {
-            Parallel.For(0L, request.TotalToCheck, parallelOptions, i =>
+            if (ShouldUseIntValueSpace(request))
             {
-                var seedString = IndexToSeedString(i, request.Alphabet, request.Length);
-                var seed = new Seed(seedString);
-                if (excludedHashes?.Contains(seed.IntValue) != true)
+                // Search the fixed 2^32 IntValue space directly instead of enumerating seed
+                // strings - see ShouldUseIntValueSpace's doc comment. Every IntValue is visited
+                // exactly once by construction, so a "duplicate" (another string hashing to the
+                // same value) can never occur within this loop - groups.TryAdd always succeeds on
+                // first encounter, and there is no equivalents-tracking else-branch to mirror the
+                // string-mode loop below.
+                Parallel.For(0L, IntValueSpaceSize, parallelOptions, i =>
                 {
-                    var (isMatch, otFriendly) = Matches(
-                        repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
-                        flexibleTargetIds, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
-                        request.AllowRerollPerDay);
-                    if (isMatch)
+                    var seed = Seed.FromIntValue(unchecked((int)(uint)i));
+                    if (excludedHashes?.Contains(seed.IntValue) != true)
                     {
-                        if (groups.TryAdd(seed.IntValue, new SeedGroup { Representative = seedString }))
+                        var (isMatch, otFriendly) = Matches(
+                            repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
+                            flexibleTargetIds, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
+                            request.AllowRerollPerDay);
+                        if (isMatch)
                         {
-                            onMatch(seedString, otFriendly);
-                            if (Interlocked.Increment(ref matchCount) >= matchCap)
+                            // Resolve a displayable seed string only now, not per-candidate. A null
+                            // result means a real matching game exists but no seed string of the
+                            // requested length/alphabet reaches it - not actionable (nothing a user
+                            // could type), so skip it without counting it as a match.
+                            var seedString = SeedHashInverter.FindPreimage(seed.IntValue, request.Length, request.Alphabet);
+                            if (seedString is not null && groups.TryAdd(seed.IntValue, new SeedGroup { Representative = seedString }))
                             {
-                                matchCapReached = true;
-                                linkedCts.Cancel();
-                            }
-                        }
-                        else
-                        {
-                            var group = groups[seed.IntValue];
-                            lock (group.DuplicateSample)
-                            {
-                                group.DuplicateCount++;
-                                if (group.DuplicateSample.Count < MaxEquivalentSample)
+                                onMatch(seedString, otFriendly);
+                                if (Interlocked.Increment(ref matchCount) >= matchCap)
                                 {
-                                    group.DuplicateSample.Add(seedString);
+                                    matchCapReached = true;
+                                    linkedCts.Cancel();
                                 }
                             }
                         }
                     }
-                }
 
-                var count = Interlocked.Increment(ref checkedCount);
-                if (count % ProgressReportInterval == 0)
+                    ReportProgress();
+                });
+            }
+            else
+            {
+                Parallel.For(0L, request.TotalToCheck, parallelOptions, i =>
                 {
-                    onProgress(count);
-                }
-            });
+                    var seedString = IndexToSeedString(i, request.Alphabet, request.Length);
+                    var seed = new Seed(seedString);
+                    if (excludedHashes?.Contains(seed.IntValue) != true)
+                    {
+                        var (isMatch, otFriendly) = Matches(
+                            repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
+                            flexibleTargetIds, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
+                            request.AllowRerollPerDay);
+                        if (isMatch)
+                        {
+                            if (groups.TryAdd(seed.IntValue, new SeedGroup { Representative = seedString }))
+                            {
+                                onMatch(seedString, otFriendly);
+                                if (Interlocked.Increment(ref matchCount) >= matchCap)
+                                {
+                                    matchCapReached = true;
+                                    linkedCts.Cancel();
+                                }
+                            }
+                            else
+                            {
+                                var group = groups[seed.IntValue];
+                                lock (group.DuplicateSample)
+                                {
+                                    group.DuplicateCount++;
+                                    if (group.DuplicateSample.Count < MaxEquivalentSample)
+                                    {
+                                        group.DuplicateSample.Add(seedString);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    ReportProgress();
+                });
+            }
         }
         catch (OperationCanceledException) when (matchCapReached && !cancellationToken.IsCancellationRequested)
         {

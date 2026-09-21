@@ -480,6 +480,51 @@ public class SeedSearcherTests
         Assert.NotEmpty(realPaths);
     }
 
+    // Guards the exact int/long overflow pitfall IntValue-space search depends on: `1 << 32` (int)
+    // silently wraps to 0, so the crossover threshold must be computed as a `long`.
+    [Theory]
+    [InlineData(4294967295L, false)] // 2^32 - 1: string space still cheaper (or equal)
+    [InlineData(4294967296L, false)] // exactly 2^32: equal cost, not strictly cheaper - stays in string mode
+    [InlineData(4294967297L, true)]  // 2^32 + 1: string space is now the larger one
+    public void ShouldUseIntValueSpace_CrossesOverExactlyAtTheFixedIntValueSpaceSize(long totalToCheck, bool expected)
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, Seed.FriendlyCharacters, Length: 8, totalToCheck);
+
+        Assert.Equal(expected, SeedSearcher.ShouldUseIntValueSpace(request));
+    }
+
+    // The actual risk IntValue-space search mode introduces: does a Seed built via the raw-int fast
+    // path (Seed.FromIntValue, used inside the IntValue-mode sweep) behave identically, for every
+    // downstream consumer, to an ordinary string-backed Seed with the same hash? Everything in the
+    // engine only ever reads .IntValue off a Seed (confirmed by inspection), so this exercises the
+    // real consumer (CardDrawSimulator) across a full multi-day walk rather than just comparing the
+    // two Seeds' IntValue properties in isolation.
+    [Fact]
+    public void SeedFromIntValue_ProducesIdenticalCardDrawsToAStringBackedSeedWithTheSameHash()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        var stringSeed = new Seed("bdghjmqr");
+        var intSeed = Seed.FromIntValue(stringSeed.IntValue);
+        Assert.Equal(stringSeed.IntValue, intSeed.IntValue);
+
+        var stringSim = new CardDrawSimulator(repo, stringSeed, settingPackId, new ResolvedRunSetup(new HashSet<int>(setup.InitiallyOwnedIds), setup.BonusPackIds));
+        var intSim = new CardDrawSimulator(repo, intSeed, settingPackId, new ResolvedRunSetup(new HashSet<int>(setup.InitiallyOwnedIds), setup.BonusPackIds));
+
+        for (var day = 1; day <= 15; day++)
+        {
+            var fromString = stringSim.SimulateDay(day, offered => offered.Unlock1Id);
+            var fromInt = intSim.SimulateDay(day, offered => offered.Unlock1Id);
+            Assert.Equal(fromString.Unlock1Id, fromInt.Unlock1Id);
+            Assert.Equal(fromString.Unlock2Id, fromInt.Unlock2Id);
+        }
+    }
+
     private static HashSet<string> RunSearch(GameDataRepository repo, SeedSearchRequest request) =>
         RunSearchWithOtFriendlyTags(repo, request).Keys.ToHashSet();
 
