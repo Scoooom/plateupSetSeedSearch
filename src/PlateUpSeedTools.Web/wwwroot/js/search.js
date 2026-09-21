@@ -647,6 +647,7 @@ heatSelect.addEventListener("change", onDishChanged);
 tierInput.addEventListener("input", onDishChanged);
 cardPackSelect.addEventListener("change", onDishChanged);
 settingSelect.addEventListener("change", () => {
+  updateCardPackLock(settingSelect, cardPackSelect);
   loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));
 });
 
@@ -656,6 +657,7 @@ async function loadInit() {
   await loadUnlocksForSetting(settingSelect.value);
   await loadHeatLevels();
   await loadCardPacks();
+  updateCardPackLock(settingSelect, cardPackSelect);
   addDayTargetRow();
   onDishChanged();
 
@@ -680,7 +682,10 @@ async function prefillFormFromPayload(request) {
   }
   heatSelect.value = String(request.heat);
   tierInput.value = String(request.tier);
-  cardPackSelect.value = request.cardPack ?? "";
+  updateCardPackLock(settingSelect, cardPackSelect);
+  if (!cardPackSelect.disabled) {
+    cardPackSelect.value = request.cardPack ?? "";
+  }
   alphabetInput.value = request.alphabet ?? alphabetInput.value;
   lengthInput.value = String(request.length);
   limitInput.value = request.limit != null ? String(request.limit) : "";

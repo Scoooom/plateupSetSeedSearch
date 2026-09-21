@@ -203,6 +203,7 @@ heatSelect.addEventListener("change", resetExploration);
 cardPackSelect.addEventListener("change", resetExploration);
 tierInput.addEventListener("input", resetExploration);
 settingSelect.addEventListener("change", () => {
+  updateCardPackLock(settingSelect, cardPackSelect);
   loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));
 });
 seedInput.addEventListener("input", resetExploration);
@@ -646,7 +647,10 @@ async function applyPreload(preload) {
   }
   heatSelect.value = String(preload.heat);
   tierInput.value = String(preload.tier);
-  cardPackSelect.value = preload.cardPack ?? "";
+  updateCardPackLock(settingSelect, cardPackSelect);
+  if (!cardPackSelect.disabled) {
+    cardPackSelect.value = preload.cardPack ?? "";
+  }
 
   franchiseCardRowsEl.innerHTML = "";
   for (const name of preload.franchiseCardNames ?? []) {
@@ -682,6 +686,7 @@ async function loadInit() {
   await loadUnlocksForSetting(settingSelect.value);
   await loadHeatLevels();
   await loadCardPacks();
+  updateCardPackLock(settingSelect, cardPackSelect);
 
   if (hash) {
     try {
