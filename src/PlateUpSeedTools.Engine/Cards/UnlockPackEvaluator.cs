@@ -51,10 +51,14 @@ public static class UnlockPackEvaluator
     /// and its <see cref="ShouldBlockCard"/>/<see cref="ShouldProvide"/> helpers, reused unchanged
     /// here) - candidate *eligibility*, whether a pack fires at all that day, and which
     /// UnlockGroup/MenuPhase slot(s) a firing pack draws from are all deterministic given
-    /// (currentCards, day, tier). This unions across EVERY sub-pack of a composite (not the "first
-    /// non-empty wins" order <see cref="GetCompositeOptions"/> uses for the real RNG path) and every
-    /// active top-level pack, since the goal is "everything reachable," not "what the actual seed
-    /// would show."
+    /// (currentCards, day, tier). Within one composite pack, this respects the same "first firing
+    /// sub-pack wins" try-order exclusivity <see cref="GetCompositeOptions"/> uses for the real RNG
+    /// path (see <see cref="CollectPossibleCardIds"/>) - a sub-pack that would always be pre-empted
+    /// by an earlier sibling sharing an overlapping condition (e.g. Autumn's Normal Cards Pack vs.
+    /// Autumn Dish Cards on dayInterval:3 days) is correctly excluded, not unioned in regardless.
+    /// Independent top-level packs in <paramref name="activePackIds"/> ARE still unioned with each
+    /// other (they fire concurrently, not exclusively - e.g. a bonus pack alongside the setting's
+    /// main pack).
     /// </summary>
     public static HashSet<int> GetPossibleCardIds(GameDataRepository repo, IReadOnlyList<int> activePackIds, HashSet<int> currentCards, int day, int tier)
     {
@@ -68,32 +72,46 @@ public static class UnlockPackEvaluator
         return result;
     }
 
-    private static void CollectPossibleCardIds(GameDataRepository repo, int packId, HashSet<int> currentCards, UnlockRequest request, HashSet<int> result)
+    /// <summary>
+    /// Returns whether this pack "fired" (would have won a real composite try - see
+    /// GetCompositeOptions) so a composite's sub-packs can be tried in order and stop at the
+    /// first that does, matching the real per-night resolution instead of unioning every
+    /// condition-eligible sub-pack regardless of try-order exclusivity (a real bug this fixed -
+    /// see the "card-search dropdown" plan note: a later sub-pack sharing an overlapping
+    /// condition with an earlier one, e.g. Autumn's Normal Cards Pack vs. Autumn Dish Cards on
+    /// dayInterval:3 days, was listed as reachable even though the earlier sub-pack always
+    /// pre-empts it).
+    /// </summary>
+    private static bool CollectPossibleCardIds(GameDataRepository repo, int packId, HashSet<int> currentCards, UnlockRequest request, HashSet<int> result)
     {
         var pack = repo.GetPack(packId);
-        switch (pack.Type)
+        return pack.Type switch
         {
-            case "composite":
-                foreach (var subPackId in pack.SubPackIds ?? [])
-                {
-                    CollectPossibleCardIds(repo, subPackId, currentCards, request, result);
-                }
-
-                break;
-            case "modular":
-                CollectPossibleModularCardIds(repo, pack, currentCards, request, result);
-                break;
-            default:
-                throw new NotSupportedException($"Unknown pack type '{pack.Type}' for pack {packId}");
-        }
+            "composite" => CollectFromComposite(repo, pack, currentCards, request, result),
+            "modular" => CollectPossibleModularCardIds(repo, pack, currentCards, request, result),
+            _ => throw new NotSupportedException($"Unknown pack type '{pack.Type}' for pack {packId}"),
+        };
     }
 
-    private static void CollectPossibleModularCardIds(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, HashSet<int> result)
+    private static bool CollectFromComposite(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, HashSet<int> result)
+    {
+        foreach (var subPackId in pack.SubPackIds ?? [])
+        {
+            if (CollectPossibleCardIds(repo, subPackId, currentCards, request, result))
+            {
+                return true; // First firing sub-pack wins, matching GetCompositeOptions exactly.
+            }
+        }
+
+        return false;
+    }
+
+    private static bool CollectPossibleModularCardIds(GameDataRepository repo, UnlockPackData pack, HashSet<int> currentCards, UnlockRequest request, HashSet<int> result)
     {
         var condition = pack.Condition ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Condition");
         if (!ShouldProvide(repo, condition, currentCards, request))
         {
-            return;
+            return false;
         }
 
         var filter = pack.Filter ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Filter");
@@ -102,10 +120,25 @@ public static class UnlockPackEvaluator
             .Where(c => !ShouldBlockCard(repo, c, currentCards, request, AsCumulativeCopyFilter(filter)))
             .ToList();
 
+        // "Fires" iff the real per-night resolver's Unlock1Id would be non-null for these
+        // candidates - GetCompositeOptions/GetModularOptions only ever checks Unlock1Id (an
+        // asymmetry inherited from the real game's SelectGroupChoice/SelectMenuPhase, where e.g.
+        // group1 having zero candidates can leave Unlock1Id null even though Unlock2Id would be
+        // non-null), so reuse the real SelectOptions logic directly rather than approximating
+        // with "GetReachableIds is non-empty" - those two conditions can disagree for menuPhase
+        // selectors. skipChoices only affects WHICH candidate within an already-nonempty list is
+        // picked, never whether the list is empty, so 0 is representative for this yes/no check.
+        if (SelectOptions(selector, candidates, skipChoices: 0).Unlock1Id is null)
+        {
+            return false;
+        }
+
         foreach (var id in GetReachableIds(selector, candidates))
         {
             result.Add(id);
         }
+
+        return true;
     }
 
     /// <summary>
