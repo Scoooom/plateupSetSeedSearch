@@ -2,36 +2,43 @@
   {
     "slug": "normal",
     "displayName": "Normal",
-    "packId": -2020288853
+    "packId": -2020288853,
+    "startingUnlockId": null
   },
   {
     "slug": "turbo",
     "displayName": "Turbo (card every day)",
-    "packId": -619515969
+    "packId": -619515969,
+    "startingUnlockId": 1958825350
   },
   {
     "slug": "coffeeshop",
     "displayName": "Coffee Shop",
-    "packId": 1774091848
+    "packId": 1774091848,
+    "startingUnlockId": 746549422
   },
   {
     "slug": "halloween",
     "displayName": "Halloween",
-    "packId": -839658581
+    "packId": -839658581,
+    "startingUnlockId": null
   },
   {
     "slug": "autumn",
     "displayName": "Autumn",
-    "packId": 698670060
+    "packId": 698670060,
+    "startingUnlockId": 319209671
   },
   {
     "slug": "january",
     "displayName": "Lake",
-    "packId": -1893039732
+    "packId": -1893039732,
+    "startingUnlockId": null
   },
   {
     "slug": "february",
     "displayName": "Romantic",
-    "packId": -654728586
+    "packId": -654728586,
+    "startingUnlockId": 1491215862
   }
 ]

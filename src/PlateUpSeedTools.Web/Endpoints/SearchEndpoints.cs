@@ -94,9 +94,9 @@ public static class SearchEndpoints
         ResolvedRunSetup setup;
         try
         {
-            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, setting.StartingUnlockId);
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, ResolveStartingUnlockId(repo, setting, request.CardPack));
         }
-        catch (ArgumentException ex)
+        catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
         {
             return Results.BadRequest(new { error = ex.Message });
         }
@@ -165,9 +165,9 @@ public static class SearchEndpoints
         ResolvedRunSetup setup;
         try
         {
-            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, setting.StartingUnlockId, franchiseCarryoverIds);
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, ResolveStartingUnlockId(repo, setting, request.CardPack), franchiseCarryoverIds);
         }
-        catch (ArgumentException ex)
+        catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
         {
             return Results.BadRequest(new { error = ex.Message });
         }
@@ -325,9 +325,9 @@ public static class SearchEndpoints
         ResolvedRunSetup setup;
         try
         {
-            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, setting.StartingUnlockId, franchiseCarryoverIds);
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, ResolveStartingUnlockId(repo, setting, request.CardPack), franchiseCarryoverIds);
         }
-        catch (ArgumentException ex)
+        catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
         {
             return Results.BadRequest(new { error = ex.Message });
         }
@@ -466,9 +466,9 @@ public static class SearchEndpoints
         ResolvedRunSetup setup;
         try
         {
-            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, setting.StartingUnlockId, franchiseCarryoverIds);
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, ResolveStartingUnlockId(repo, setting, request.CardPack), franchiseCarryoverIds);
         }
-        catch (ArgumentException ex)
+        catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
         {
             return Results.BadRequest(new { error = ex.Message });
         }
@@ -532,6 +532,16 @@ public static class SearchEndpoints
             ? Results.NotFound(new { error = "This shared search result has expired or doesn't exist." })
             : Results.Ok(cached);
     }
+
+    /// <summary>
+    /// Resolves the bonus starting card: an explicit cardPack schedule's own StartingUnlockId if
+    /// given (authoritative even when null - e.g. Halloween/January grant none, which isn't a
+    /// "fall back to the setting" signal), otherwise the setting's own StartingUnlockId (existing
+    /// default behavior). Can throw KeyNotFoundException for an unknown cardPack slug - callers
+    /// already catch that alongside RunSetup.Resolve's ArgumentException.
+    /// </summary>
+    private static int? ResolveStartingUnlockId(GameDataRepository repo, RestaurantSettingData setting, string? cardPack) =>
+        string.IsNullOrEmpty(cardPack) ? setting.StartingUnlockId : repo.ResolveCardScheduleStartingUnlockId(cardPack);
 
     /// <summary>Resolves the pack governing card draws: an explicit cardPack schedule slug if given, otherwise the setting's own pack (existing default behavior).</summary>
     private static bool TryResolvePackId(GameDataRepository repo, string setting, string? cardPack, out int packId, out string? error)

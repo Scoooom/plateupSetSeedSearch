@@ -151,6 +151,18 @@ public sealed class GameDataRepository
         : throw new KeyNotFoundException($"Unknown card schedule '{scheduleSlug}'");
 
     /// <summary>
+    /// Resolves a card-schedule slug to its own bonus starting card, or null if no schedule is
+    /// selected (meaning: use the setting's own StartingUnlockId as before) - see
+    /// CardScheduleData.StartingUnlockId's doc comment. Note this can legitimately be null even when
+    /// a schedule IS selected (e.g. Halloween/January grant no bonus card) - that's authoritative,
+    /// not a "fall back to the setting" signal, since selecting a schedule is an explicit override.
+    /// </summary>
+    public int? ResolveCardScheduleStartingUnlockId(string? scheduleSlug) =>
+        string.IsNullOrEmpty(scheduleSlug) ? null
+        : _cardSchedulesBySlug.TryGetValue(scheduleSlug, out var schedule) ? schedule.StartingUnlockId
+        : throw new KeyNotFoundException($"Unknown card schedule '{scheduleSlug}'");
+
+    /// <summary>
     /// Every Appliance asset (data/settings/shop/appliances.json) - includes non-purchasable ones,
     /// matching CreateShopOptions' own IsPurchasable/IsPurchasableAsUpgrade filter happening at
     /// candidate-build time, not at extraction time. ORDER MATTERS: this must match GameData.asset's

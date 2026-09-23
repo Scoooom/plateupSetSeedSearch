@@ -142,7 +142,10 @@ public static class SearchCommand
             return 1;
         }
 
-        var setup = RunSetup.Resolve(repo, dish.Id, options.SubOptionChoice, options.HeatLevel, setting.StartingUnlockId, franchiseCarryoverIds);
+        var startingUnlockId = string.IsNullOrEmpty(options.CardPack)
+            ? setting.StartingUnlockId
+            : repo.ResolveCardScheduleStartingUnlockId(options.CardPack);
+        var setup = RunSetup.Resolve(repo, dish.Id, options.SubOptionChoice, options.HeatLevel, startingUnlockId, franchiseCarryoverIds);
 
         var spaceSize = BigInteger.Pow(options.Alphabet.Length, options.Length);
         var totalToCheck = options.Limit is long l ? Math.Min(l, (long)BigInteger.Min(spaceSize, long.MaxValue)) : (long)BigInteger.Min(spaceSize, long.MaxValue);

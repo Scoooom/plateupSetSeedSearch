@@ -59,13 +59,12 @@ function createCardInput(className) {
   const datalistId = `explorer-card-datalist-${datalistCounter++}`;
   input.setAttribute("list", datalistId);
 
+  // Populated by refreshFranchiseRow, not synchronously here - a franchise-carryover candidate list
+  // needs the copy-expanded ("Variety (copy 1)") names from /api/search/franchise-candidates, not
+  // the raw unlocksForSetting list, which has no copy-numbering at all (see
+  // fetchFranchiseCandidates/refreshFranchiseRow below).
   const datalist = document.createElement("datalist");
   datalist.id = datalistId;
-  for (const unlock of unlocksForSetting) {
-    const option = document.createElement("option");
-    option.value = unlock.name;
-    datalist.appendChild(option);
-  }
 
   return { input, datalist };
 }
@@ -76,12 +75,88 @@ function getFranchiseCardNames() {
     .filter(Boolean);
 }
 
+function getAllFranchiseRows() {
+  return [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")];
+}
+
+function setDatalistOptions(datalist, names) {
+  datalist.innerHTML = "";
+  for (const name of names) {
+    const option = document.createElement("option");
+    option.value = name;
+    datalist.appendChild(option);
+  }
+}
+
+// Mirrors search.js's fetchFranchiseCandidates - see that file's comment on FranchiseCandidatesResponse
+// for why this list is copy-expanded (repeatable cards like Variety get one "(copy N)" option per
+// still-reachable copy) and filtered to internally-consistent picks (Requires/BlockedBy/duplicate/tier).
+async function fetchFranchiseCandidates(otherSelectedCardNames) {
+  const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
+  try {
+    const response = await fetch("/api/search/franchise-candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        setting: settingSelect.value,
+        dishName: dishSelect.value,
+        subOptionChoice: subOptionField.hidden ? null : Number(checkedSubOption?.value ?? 1),
+        heat: Number(heatSelect.value),
+        tier: Number(tierInput.value),
+        otherSelectedCardNames,
+        cardPack: cardPackSelect.value || null,
+      }),
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const body = await response.json();
+    return body.cardNames;
+  } catch {
+    return [];
+  }
+}
+
+// Generation counter stashed directly on the input (Explorer has no shared per-row state map like
+// search.js's getRowState) - guards against a slower earlier fetch overwriting a newer one.
+async function refreshFranchiseRow(row) {
+  if (!dishSelect.value) {
+    return;
+  }
+
+  const input = row.querySelector(".franchise-card");
+  const datalist = document.getElementById(input.getAttribute("list"));
+  const myGeneration = (input._generation = (input._generation ?? 0) + 1);
+
+  const otherSelectedCardNames = getAllFranchiseRows()
+    .filter((other) => other !== row)
+    .map((other) => other.querySelector(".franchise-card").value)
+    .filter(Boolean);
+
+  const cardNames = await fetchFranchiseCandidates(otherSelectedCardNames);
+
+  if (input._generation !== myGeneration) {
+    return; // a newer request for this row superseded this one - drop the stale result
+  }
+
+  setDatalistOptions(datalist, cardNames);
+}
+
+function refreshAllFranchiseRows() {
+  for (const row of getAllFranchiseRows()) {
+    refreshFranchiseRow(row);
+  }
+}
+
 function addFranchiseCardRow() {
   const row = document.createElement("div");
   row.className = "dynamic-row";
 
   const { input, datalist } = createCardInput("franchise-card");
-  input.addEventListener("change", resetExploration);
+  input.addEventListener("change", () => {
+    resetExploration();
+    refreshAllFranchiseRows();
+  });
 
   const removeButton = document.createElement("button");
   removeButton.type = "button";
@@ -90,12 +165,14 @@ function addFranchiseCardRow() {
   removeButton.addEventListener("click", () => {
     row.remove();
     resetExploration();
+    refreshAllFranchiseRows();
   });
 
   row.appendChild(input);
   row.appendChild(datalist);
   row.appendChild(removeButton);
   franchiseCardRowsEl.appendChild(row);
+  refreshFranchiseRow(row);
 }
 
 addFranchiseCardButton.addEventListener("click", addFranchiseCardRow);
@@ -126,17 +203,7 @@ async function loadUnlocksForSetting(setting) {
     dishSelect.appendChild(option);
   }
 
-  // Rebuild franchise-row datalists against the new setting's card list.
-  for (const row of franchiseCardRowsEl.querySelectorAll(".dynamic-row")) {
-    const input = row.querySelector(".franchise-card");
-    const datalist = document.getElementById(input.getAttribute("list"));
-    datalist.innerHTML = "";
-    for (const unlock of unlocksForSetting) {
-      const option = document.createElement("option");
-      option.value = unlock.name;
-      datalist.appendChild(option);
-    }
-  }
+  refreshAllFranchiseRows();
 
   updateSubOptionUi();
   resetExploration();
@@ -198,10 +265,20 @@ async function loadHeatLevels() {
 dishSelect.addEventListener("change", () => {
   updateSubOptionUi();
   resetExploration();
+  refreshAllFranchiseRows();
 });
-heatSelect.addEventListener("change", resetExploration);
-cardPackSelect.addEventListener("change", resetExploration);
-tierInput.addEventListener("input", resetExploration);
+heatSelect.addEventListener("change", () => {
+  resetExploration();
+  refreshAllFranchiseRows();
+});
+cardPackSelect.addEventListener("change", () => {
+  resetExploration();
+  refreshAllFranchiseRows();
+});
+tierInput.addEventListener("input", () => {
+  resetExploration();
+  refreshAllFranchiseRows();
+});
 settingSelect.addEventListener("change", () => {
   updateCardPackLock(settingSelect, cardPackSelect);
   loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));

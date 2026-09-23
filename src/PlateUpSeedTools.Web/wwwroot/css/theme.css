@@ -488,6 +488,12 @@ button[type="submit"]:hover {
   flex-basis: 100%;
 }
 
+.field-note {
+  margin: 0;
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
 .radio-option {
   display: flex;
   align-items: center;

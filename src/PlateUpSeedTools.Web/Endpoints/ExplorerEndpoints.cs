@@ -96,9 +96,12 @@ public static partial class ExplorerEndpoints
         ResolvedRunSetup setup;
         try
         {
-            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, setting.StartingUnlockId, franchiseCarryoverIds);
+            var startingUnlockId = string.IsNullOrEmpty(request.CardPack)
+                ? setting.StartingUnlockId
+                : repo.ResolveCardScheduleStartingUnlockId(request.CardPack);
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, startingUnlockId, franchiseCarryoverIds);
         }
-        catch (ArgumentException ex)
+        catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
         {
             return Results.BadRequest(new { error = ex.Message });
         }

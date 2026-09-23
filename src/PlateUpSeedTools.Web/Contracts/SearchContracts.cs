@@ -116,7 +116,8 @@ public sealed record FranchiseCandidatesRequest(
     int? SubOptionChoice,
     int Heat,
     int Tier,
-    List<string>? OtherSelectedCardNames);
+    List<string>? OtherSelectedCardNames,
+    string? CardPack = null);
 
 public sealed record FranchiseCandidatesResponse(IReadOnlyList<string> CardNames);
 

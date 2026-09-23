@@ -171,4 +171,64 @@ public class CardDrawSimulatorGroundTruthTests
         var day5RealReroll = sim.PeekOffer(5, skipChoices: 2).Options;
         Assert.Equal(day5Base, day5RealReroll);
     }
+
+    /// <summary>
+    /// Pins CardScheduleData.StartingUnlockId (added 2026-09-23) against a fourth real capture:
+    /// Normal setting, "Autumn" card schedule, seed "bbbbbwvh", starting dish Turkey, franchise tier
+    /// 1, franchise carryover [Affordable, Ice Cream, All You Can Eat, Double Helpings, Variety,
+    /// Burgers] - Burgers being the PREVIOUS run's base dish, Turkey the NEW dish picked for this
+    /// run (confirmed by the real capture's FRANCHISE_CARRYOVER line: cards=[..6 items incl.
+    /// Burgers..], startingItems=[..same 6..., Turkey] - Turkey is added on top of, not inside, the
+    /// carryover list). Before this fix, selecting the "Autumn" card schedule under the "Normal"
+    /// setting silently dropped Autumn's own bonus starting card ("Community", unlock id 319209671 -
+    /// CardScheduleData.StartingUnlockId was missing entirely, so RunSetup.Resolve always got the
+    /// Normal setting's own (null) StartingUnlockId instead), making the day-0 owned set 7 cards
+    /// instead of the real 8 and desyncing every later day's RNG-consumption-driven offer. See
+    /// game-domain-knowledge.md's "Franchise tier / carryover cards" section.
+    /// </summary>
+    [Fact]
+    public void MatchesRealAutumnFranchiseCapture()
+    {
+        const int turkeyId = 1551533879;
+        const int affordableId = -1857686620;
+        const int iceCreamId = 373996608;
+        const int allYouCanEatId = -347199069;
+        const int doubleHelpingsId = 2055765569;
+        const int varietyId = 409052852;
+        const int burgersId = -1778969928;
+        const int communityId = 319209671;
+        const int breakfastId = -2075899;
+        const int roastPotatoId = -1289628495;
+
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        int[] franchiseCarryoverIds = [affordableId, iceCreamId, allYouCanEatId, doubleHelpingsId, varietyId, burgersId];
+        var startingUnlockId = repo.ResolveCardScheduleStartingUnlockId("autumn");
+        Assert.Equal(communityId, startingUnlockId);
+
+        var setup = RunSetup.Resolve(repo, turkeyId, subOptionChoice: null, heatLevel: 0, startingUnlockId, franchiseCarryoverIds);
+        Assert.Equal(
+            new HashSet<int> { turkeyId, affordableId, iceCreamId, allYouCanEatId, doubleHelpingsId, varietyId, burgersId, communityId },
+            setup.InitiallyOwnedIds);
+
+        var packId = repo.ResolveCardSchedulePackId("autumn")!.Value;
+        var sim = new CardDrawSimulator(repo, new Seed("bbbbbwvh"), packId, setup, tier: 1);
+
+        // Only days 0-3 were captured (the user stopped the real run there) - see
+        // game-domain-knowledge.md, don't extend this without a fresh capture covering later days.
+        (int Day, int? Unlock1Id, int? Unlock2Id)[] capturedOffers =
+        [
+            (0, null, null),
+            (1, null, null),
+            (2, null, null),
+            (3, breakfastId, roastPotatoId),
+        ];
+
+        foreach (var (day, expectedUnlock1, expectedUnlock2) in capturedOffers)
+        {
+            var result = sim.SimulateDay(day, offered => offered.Unlock1Id);
+
+            Assert.Equal(expectedUnlock1, result.Unlock1Id);
+            Assert.Equal(expectedUnlock2, result.Unlock2Id);
+        }
+    }
 }

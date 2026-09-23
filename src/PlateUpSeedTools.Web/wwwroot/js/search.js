@@ -447,6 +447,7 @@ async function fetchFranchiseCandidates(otherSelectedCardNames) {
         heat: Number(heatSelect.value),
         tier: Number(tierInput.value),
         otherSelectedCardNames,
+        cardPack: cardPackSelect.value || null,
       }),
     });
     if (!response.ok) {
