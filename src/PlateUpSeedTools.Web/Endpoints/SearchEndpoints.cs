@@ -77,6 +77,19 @@ public static class SearchEndpoints
     /// Unresolvable/blank names in <see cref="FranchiseCandidatesRequest.OtherSelectedCardNames"/>
     /// are skipped rather than erroring - this endpoint is called on every keystroke elsewhere in
     /// the form and a momentarily-stale other-row value shouldn't break this row's own candidate list.
+    ///
+    /// Deliberately validates against dish/sub-option/heat cards but NOT the resolved setting/
+    /// schedule's own bonus StartingUnlockId (e.g. Autumn's "Community") - a carryover card
+    /// represents something owned from a PRIOR run, so it can't be invalidated by a bonus card THIS
+    /// run grants. Some franchise cards ARE genuinely BlockedBy a specific bonus card (e.g. every
+    /// "Variety" copy is BlockedBy Autumn's "Community" - real, ground-truth-verified data), which
+    /// correctly prevents ever freshly drawing them again once that bonus card is owned (see
+    /// GetPossibleCards, unchanged) - but it doesn't retroactively un-own a copy already carried in
+    /// from before that bonus card existed. CardDrawSimulatorGroundTruthTests
+    /// .MatchesRealAutumnFranchiseCapture pins exactly this combination (carried-over Variety +
+    /// this-run's Community) against a real captured game session. Mirrors StartSearch's own
+    /// "defense in depth" re-validation (below), which already excludes StartingUnlockId from its
+    /// baseline for the same reason.
     /// </summary>
     private static IResult GetFranchiseCandidates(FranchiseCandidatesRequest request, GameDataRepository repo)
     {
@@ -94,7 +107,8 @@ public static class SearchEndpoints
         ResolvedRunSetup setup;
         try
         {
-            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, ResolveStartingUnlockId(repo, setting, request.CardPack));
+            ResolveStartingUnlockId(repo, setting, request.CardPack); // validates cardPack slug; deliberately not fed into the baseline below
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, startingUnlockId: null);
         }
         catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
         {
