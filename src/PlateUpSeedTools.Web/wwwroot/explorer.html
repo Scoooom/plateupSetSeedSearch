@@ -85,6 +85,11 @@
         </div>
       </details>
 
+      <div class="field-group full-width">
+        <button type="button" id="export-settings" class="link-button">Export Settings</button>
+        <button type="button" id="import-settings" class="link-button">Import Settings</button>
+      </div>
+
       <button type="submit" id="explorer-submit">Start exploring</button>
     </form>
 
@@ -108,6 +113,19 @@
         <p id="layout-panel-stats" class="job-stats"></p>
       </div>
     </section>
+
+    <dialog id="settings-io-dialog">
+      <div class="preview-dialog-header">
+        <span id="settings-io-title"></span>
+        <button type="button" id="settings-io-close" class="link-button">Close</button>
+      </div>
+      <p id="settings-io-status" class="status"></p>
+      <textarea id="settings-io-textarea" class="settings-io-textarea" rows="6"></textarea>
+      <div class="preview-dialog-nav">
+        <button type="button" id="settings-io-copy" class="link-button">Copy to clipboard</button>
+        <button type="button" id="settings-io-apply" class="link-button">Apply</button>
+      </div>
+    </dialog>
   </main>
 
   <script src="/js/nav.js"></script>

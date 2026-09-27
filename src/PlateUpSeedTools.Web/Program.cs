@@ -12,7 +12,6 @@ builder.Services.AddSingleton<ICacheStore<LayoutResponse>, SqliteCacheStore<Layo
 builder.Services.AddSingleton<ICacheStore<CachedSearchResult>, SqliteCacheStore<CachedSearchResult>>();
 builder.Services.AddSingleton<ICacheStore<ExplorerPreload>, SqliteCacheStore<ExplorerPreload>>();
 builder.Services.AddSingleton(sp => new CacheAdmin(sp.GetRequiredService<IOptions<CacheOptions>>().Value));
-builder.Services.AddHostedService<CacheExpiryMonitor>();
 
 var dataRoot = builder.Configuration["DataRoot"] ?? Path.Combine(AppContext.BaseDirectory, "data", "settings");
 builder.Services.AddSingleton(new GameDataRepository(dataRoot));

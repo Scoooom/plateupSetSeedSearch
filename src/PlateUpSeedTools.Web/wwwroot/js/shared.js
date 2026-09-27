@@ -52,3 +52,73 @@ function updateCardPackLock(settingSelectEl, cardPackSelectEl) {
     ? "Only the Normal setting has more than one real card schedule - this setting always uses its own."
     : "";
 }
+
+// Wires the Export/Import Settings dialog shared by search.html and explorer.html - a client-only
+// base64(JSON) blob of the page's own settings object, no server round-trip (unlike Copy Link's
+// server-stored hash), so it never expires and needs no cache. Both pages have identical dialog
+// markup (#settings-io-dialog and friends) - this is the one place that behavior is written.
+function setupSettingsIoDialog({
+  exportButton, importButton, dialog, title, status, textarea,
+  copyButton, applyButton, closeButton, buildExport, applyImport,
+}) {
+  function close() {
+    dialog.close();
+  }
+
+  function setStatus(message, isError) {
+    status.textContent = message;
+    status.classList.toggle("error", Boolean(isError));
+  }
+
+  exportButton.addEventListener("click", () => {
+    setStatus("", false);
+    title.textContent = "Export Settings";
+    textarea.value = btoa(JSON.stringify(buildExport()));
+    textarea.readOnly = true;
+    copyButton.hidden = false;
+    applyButton.hidden = true;
+    dialog.showModal();
+    textarea.select();
+  });
+
+  importButton.addEventListener("click", () => {
+    setStatus("", false);
+    title.textContent = "Import Settings";
+    textarea.value = "";
+    textarea.readOnly = false;
+    copyButton.hidden = true;
+    applyButton.hidden = false;
+    dialog.showModal();
+    textarea.focus();
+  });
+
+  copyButton.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(textarea.value);
+      setStatus("Copied to clipboard.", false);
+    } catch {
+      setStatus("Failed to copy - select the text and copy manually.", true);
+    }
+  });
+
+  applyButton.addEventListener("click", async () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(atob(textarea.value.trim()));
+    } catch {
+      setStatus("That doesn't look like a valid exported settings string.", true);
+      return;
+    }
+    try {
+      await applyImport(parsed);
+      close();
+    } catch (err) {
+      setStatus(err?.message ?? "Failed to apply these settings.", true);
+    }
+  });
+
+  closeButton.addEventListener("click", close);
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) close();
+  });
+}

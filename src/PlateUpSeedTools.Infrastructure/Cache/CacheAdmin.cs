@@ -31,28 +31,6 @@ public sealed class CacheAdmin(CacheOptions options)
         return total;
     }
 
-    /// <summary>
-    /// Deletes rows older than <paramref name="maxAge"/> from every `cache_*` table, using the
-    /// `created_utc` column SqliteCacheStore already writes on every insert but (until this) never
-    /// read back. One generic sweep covers every cache uniformly (layout previews, shared search
-    /// results, Explorer preloads, ...) rather than each cache type needing its own expiry logic -
-    /// see SearchJobHeartbeatMonitor.cs and Services/CacheExpiryMonitor.cs for the periodic caller.
-    /// </summary>
-    public async Task DeleteExpiredAsync(TimeSpan maxAge, CancellationToken ct = default)
-    {
-        var cutoff = (DateTime.UtcNow - maxAge).ToString("O");
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync(ct);
-
-        foreach (var table in await GetCacheTablesAsync(connection, ct))
-        {
-            await using var delete = connection.CreateCommand();
-            delete.CommandText = $"DELETE FROM {table} WHERE created_utc < $cutoff";
-            delete.Parameters.AddWithValue("$cutoff", cutoff);
-            await delete.ExecuteNonQueryAsync(ct);
-        }
-    }
-
     public async Task<IReadOnlyDictionary<string, int>> GetStatsAsync(CancellationToken ct = default)
     {
         var stats = new Dictionary<string, int>();

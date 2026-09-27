@@ -727,7 +727,7 @@ async function loadCachedResult(hash) {
   try {
     const response = await fetch(`/api/search/cached/${encodeURIComponent(hash)}`);
     if (!response.ok) {
-      setStatus("This shared search result has expired or doesn't exist.", true);
+      setStatus("This shared search result doesn't exist.", true);
       return;
     }
 
@@ -918,7 +918,7 @@ copyLinkButton?.addEventListener("click", async () => {
     }
     const url = `${location.origin}/search/cached#${currentShareHash}`;
     await navigator.clipboard.writeText(url);
-    setStatus(`Shareable link copied (expires in ~24h): ${url}`, false);
+    setStatus(`Shareable link copied: ${url}`, false);
   } catch {
     setStatus("Failed to reach the server.", true);
   }
@@ -929,6 +929,63 @@ function parseExcludedSeeds() {
     .split(/[\s,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+// Builds the SearchStartRequest-shaped object straight from the DOM - shared by the submit handler
+// and the Export Settings button, so there's exactly one place that knows this shape. A row with
+// neither a day nor a card entered (the always-present default row from loadInit, possibly left
+// untouched for an OT-Friendly-only search) isn't a real target - skip it rather than sending an
+// empty cardName the server would reject as an unknown card. Checks the raw .value string, not
+// getRowDay (Number("") is 0, a valid day, so that alone can't tell "empty" apart from "day 0" -
+// see the Christmas/February day-0 mechanic elsewhere in this file).
+function buildSearchPayload() {
+  const dayTargets = getAllDayTargetRows()
+    .filter((row) => row.querySelector(".day-target-day").value || row.querySelector(".day-target-card").value)
+    .map((row) => ({
+      day: isRowFlexible(row) ? null : Number(row.querySelector(".day-target-day").value),
+      cardName: row.querySelector(".day-target-card").value,
+    }));
+
+  const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
+
+  return {
+    setting: settingSelect.value,
+    dishName: dishSelect.value,
+    subOptionChoice: subOptionField.hidden ? null : Number(checkedSubOption?.value ?? 1),
+    heat: Number(heatSelect.value),
+    tier: Number(tierInput.value),
+    franchiseCardNames: getFranchiseCardNames(),
+    dayTargets,
+    alphabet: alphabetInput.value,
+    length: Number(lengthInput.value),
+    limit: limitInput.value ? Number(limitInput.value) : null,
+    maxResults: maxResultsInput.value ? Number(maxResultsInput.value) : null,
+    stopAfterFirstMatch: stopAfterFirstMatchInput.checked,
+    excludedSeeds: parseExcludedSeeds(),
+    cardPack: cardPackSelect.value || null,
+    otFriendly: otFriendlyInput.checked,
+    allowRerollPerDay: allowRerollInput.checked,
+  };
+}
+
+// Restores the whole form from an imported/pasted settings object, then clears any stale live-job
+// state left over from before the import (same reset a fresh search's submit performs) - an
+// imported setup shouldn't leave an old job's results/preview cache on screen mismatched against it.
+async function importSearchSettings(payload) {
+  if (!payload || typeof payload !== "object" || !payload.setting || !payload.dishName) {
+    throw new Error("Missing setting/dish in imported settings.");
+  }
+  await prefillFormFromPayload(payload);
+
+  stopPolling();
+  currentSearchSetting = null;
+  currentSearchPayload = null;
+  currentJobId = null;
+  currentShareHash = null;
+  resetPreviewCache();
+  jobEl.hidden = true;
+  matchesList.innerHTML = "";
+  setStatus("Settings imported.", false);
 }
 
 // Native constraint validation runs BEFORE the "submit" event even fires, and blocks it entirely
@@ -1000,44 +1057,12 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
-  // A row with neither a day nor a card entered (the always-present default row from loadInit,
-  // possibly left untouched for an OT-Friendly-only search) isn't a real target - skip it rather
-  // than sending an empty cardName the server would reject as an unknown card. Checks the raw
-  // .value string, not getRowDay (Number("") is 0, a valid day, so that alone can't tell "empty"
-  // apart from "day 0" - see the Christmas/February day-0 mechanic elsewhere in this file).
-  const dayTargets = getAllDayTargetRows()
-    .filter((row) => row.querySelector(".day-target-day").value || row.querySelector(".day-target-card").value)
-    .map((row) => ({
-      day: isRowFlexible(row) ? null : Number(row.querySelector(".day-target-day").value),
-      cardName: row.querySelector(".day-target-card").value,
-    }));
+  const payload = buildSearchPayload();
 
-  if (dayTargets.length === 0 && !otFriendlyInput.checked) {
+  if (payload.dayTargets.length === 0 && !payload.otFriendly) {
     setStatus("Add at least one day target (or check OT Friendly).", true);
     return;
   }
-
-  const franchiseCardNames = getFranchiseCardNames();
-  const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
-
-  const payload = {
-    setting: settingSelect.value,
-    dishName: dishSelect.value,
-    subOptionChoice: subOptionField.hidden ? null : Number(checkedSubOption?.value ?? 1),
-    heat: Number(heatSelect.value),
-    tier: Number(tierInput.value),
-    franchiseCardNames,
-    dayTargets,
-    alphabet: alphabetInput.value,
-    length: Number(lengthInput.value),
-    limit: limitInput.value ? Number(limitInput.value) : null,
-    maxResults: maxResultsInput.value ? Number(maxResultsInput.value) : null,
-    stopAfterFirstMatch: stopAfterFirstMatchInput.checked,
-    excludedSeeds: parseExcludedSeeds(),
-    cardPack: cardPackSelect.value || null,
-    otFriendly: otFriendlyInput.checked,
-    allowRerollPerDay: allowRerollInput.checked,
-  };
 
   try {
     const response = await fetch("/api/search", {
@@ -1476,6 +1501,20 @@ previewDialog.addEventListener("keydown", (event) => {
     event.preventDefault();
     showPreviewAt(currentPreviewIndex + 1);
   }
+});
+
+setupSettingsIoDialog({
+  exportButton: document.getElementById("export-settings"),
+  importButton: document.getElementById("import-settings"),
+  dialog: document.getElementById("settings-io-dialog"),
+  title: document.getElementById("settings-io-title"),
+  status: document.getElementById("settings-io-status"),
+  textarea: document.getElementById("settings-io-textarea"),
+  copyButton: document.getElementById("settings-io-copy"),
+  applyButton: document.getElementById("settings-io-apply"),
+  closeButton: document.getElementById("settings-io-close"),
+  buildExport: buildSearchPayload,
+  applyImport: importSearchSettings,
 });
 
 loadInit().catch(() => setStatus("Failed to load restaurant settings.", true));

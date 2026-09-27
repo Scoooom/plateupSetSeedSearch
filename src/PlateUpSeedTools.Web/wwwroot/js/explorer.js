@@ -672,7 +672,7 @@ copyLinkButton.addEventListener("click", async () => {
 
     const url = `${location.origin}/explorer/${encodeURIComponent(settingSelect.value)}/${encodeURIComponent(seedInput.value)}/${currentNode.shareHash}`;
     await navigator.clipboard.writeText(url);
-    setStatus(`Shareable link copied (expires in ~24h): ${url}`, false);
+    setStatus(`Shareable link copied: ${url}`, false);
   } catch {
     setStatus("Failed to reach the server.", true);
   }
@@ -753,6 +753,28 @@ async function applyPreload(preload) {
   await viewNode(node, node);
 }
 
+// Same object Copy Link builds (see copyLinkButton's handler above), just kept self-contained
+// (setting/seed included) instead of stripped for URL-path travel - the exported blob has to carry
+// everything on its own.
+function buildExplorerExportPayload() {
+  return { ...currentSetupPayload(), path: pathToNode(currentNode) };
+}
+
+// Restores setting/seed/setup from an imported/pasted blob, then replays its path - the same
+// three-call sequence loadInit uses for the hash-based Copy Link flow, just triggered by a pasted
+// string instead of a URL segment.
+async function importExplorerSettings(preload) {
+  if (!preload || typeof preload !== "object" || !preload.setting || !preload.seed) {
+    throw new Error("Missing setting/seed in imported settings.");
+  }
+
+  settingSelect.value = preload.setting;
+  seedInput.value = preload.seed;
+  updateCardPackLock(settingSelect, cardPackSelect);
+  await loadUnlocksForSetting(settingSelect.value);
+  await applyPreload(preload); // sets its own status on a failed replay step
+}
+
 async function loadInit() {
   const settings = await fetchSettings();
   const { setting: settingFromUrl, seed: seedFromUrl, hash } = paramsFromPath();
@@ -769,7 +791,7 @@ async function loadInit() {
     try {
       const response = await fetch(`/api/explorer/preload/${encodeURIComponent(hash)}`);
       if (!response.ok) {
-        setStatus("This shared Explorer link has expired or doesn't exist.", true);
+        setStatus("This shared Explorer link doesn't exist.", true);
         return;
       }
       await applyPreload(await response.json());
@@ -778,5 +800,19 @@ async function loadInit() {
     }
   }
 }
+
+setupSettingsIoDialog({
+  exportButton: document.getElementById("export-settings"),
+  importButton: document.getElementById("import-settings"),
+  dialog: document.getElementById("settings-io-dialog"),
+  title: document.getElementById("settings-io-title"),
+  status: document.getElementById("settings-io-status"),
+  textarea: document.getElementById("settings-io-textarea"),
+  copyButton: document.getElementById("settings-io-copy"),
+  applyButton: document.getElementById("settings-io-apply"),
+  closeButton: document.getElementById("settings-io-close"),
+  buildExport: buildExplorerExportPayload,
+  applyImport: importExplorerSettings,
+});
 
 loadInit().catch(() => setStatus("Failed to load restaurant settings.", true));

@@ -156,9 +156,8 @@ public sealed record SearchPathResponse(IReadOnlyList<CardPathDto> Paths);
 /// <summary>
 /// A shareable snapshot of one completed search - everything needed to reproduce the results page
 /// from just a hash, without a live SearchJob (which is evicted ~30 min after finishing). Stored in
-/// ICacheStore&lt;CachedSearchResult&gt;, expired after CacheStore:MaxAgeHours like every other cache
-/// (see CacheAdmin.DeleteExpiredAsync) - see SearchEndpoints' POST /api/search/{jobId}/share and
-/// GET /api/search/cached/{hash}.
+/// ICacheStore&lt;CachedSearchResult&gt; permanently (no expiry - see SearchEndpoints' POST
+/// /api/search/{jobId}/share and GET /api/search/cached/{hash}).
 /// </summary>
 public sealed record CachedSearchResult(
     SearchStartRequest Request,

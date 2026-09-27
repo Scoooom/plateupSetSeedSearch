@@ -144,6 +144,11 @@
         </div>
       </details>
 
+      <div class="field-group full-width">
+        <button type="button" id="export-settings" class="link-button">Export Settings</button>
+        <button type="button" id="import-settings" class="link-button">Import Settings</button>
+      </div>
+
       <button type="submit" id="search-submit">Start search</button>
     </form>
 
@@ -182,6 +187,19 @@
       <div id="preview-dialog-path-tabs" class="card-path-tabs" role="tablist" hidden></div>
       <ol id="preview-dialog-path" class="card-path-list"></ol>
       <button type="button" id="preview-dialog-explorer-link" class="link-button" hidden>Open this path in Seed Explorer</button>
+    </dialog>
+
+    <dialog id="settings-io-dialog">
+      <div class="preview-dialog-header">
+        <span id="settings-io-title"></span>
+        <button type="button" id="settings-io-close" class="link-button">Close</button>
+      </div>
+      <p id="settings-io-status" class="status"></p>
+      <textarea id="settings-io-textarea" class="settings-io-textarea" rows="6"></textarea>
+      <div class="preview-dialog-nav">
+        <button type="button" id="settings-io-copy" class="link-button">Copy to clipboard</button>
+        <button type="button" id="settings-io-apply" class="link-button">Apply</button>
+      </div>
     </dialog>
   </main>
 
