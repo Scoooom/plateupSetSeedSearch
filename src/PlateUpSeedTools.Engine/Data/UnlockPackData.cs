@@ -21,6 +21,15 @@ public sealed class UnlockPackData
 
     public SorterPriorityData? SorterPriority { get; init; }
 
+    /// <summary>
+    /// Port of UnlockSorterEncourageCard's per-pack config - a THIRD sorter (after Shuffle+Priority)
+    /// that only "Autumn Dish Cards" and "January Cards" have, byte-verified from the raw Odin asset
+    /// blob (Sorters: [Shuffle, Priority, EncourageCard] instead of the [Shuffle, Priority] pair
+    /// every other currently-decoded pack has - see UnlockPackEvaluator's doc comment, which
+    /// previously assumed that pair universally). Null for every other pack.
+    /// </summary>
+    public SorterEncourageCardData? SorterEncourageCard { get; init; }
+
     public FilterData? Filter { get; init; }
 }
 
@@ -85,6 +94,27 @@ public sealed class SorterPriorityData
     public required List<int> Groups { get; init; }
 
     public required List<int> DishTypes { get; init; }
+}
+
+/// <summary>
+/// Port of UnlockSorterEncourageCard's per-pack config. Both known instances (Autumn Dish Cards,
+/// January Cards - the two packs whose Filter has AllowBaseDishes=true, i.e. the "which of this
+/// setting's dish choices did you NOT pick" packs) reference the OTHER dish option(s) the player
+/// didn't choose - e.g. Autumn Dish Cards' CardIds is [Turkey Base, Nut Roast Base]. Every night
+/// this sorter runs, it draws one RNG value ("shuffle-then-discard" fidelity, same as Priority -
+/// runs even on nights the pack's Condition ultimately declines) and, if the roll succeeds, pushes
+/// any candidate in CardIds to the very end of the (already Shuffle+Priority-sorted) list. Since the
+/// unchosen base dish legitimately remains a candidate (AllowBaseDishes=true, not yet owned), this
+/// can change which 2 candidates a Group1==Group2 selector lands on even though CardIds itself is
+/// never one of the offered 2 - a real, ground-truth-found bug where the port's assumed universal
+/// [Shuffle, Priority] pair silently desynced the RNG-to-candidate mapping for these two packs
+/// specifically. See CardDrawSimulatorGroundTruthTests.MatchesRealAutumnFranchiseDayNineCapture.
+/// </summary>
+public sealed class SorterEncourageCardData
+{
+    public required double Probability { get; init; }
+
+    public required List<int> CardIds { get; init; }
 }
 
 /// <summary>Port of FilterBasic's Ignore*/Allow* flags.</summary>

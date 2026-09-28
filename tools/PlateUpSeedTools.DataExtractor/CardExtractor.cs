@@ -324,6 +324,15 @@ public static class CardExtractor
         var januaryPackId = FindId("January Pack.asset");
         var januaryCardsId = FindId("January Cards.asset");
 
+        // EncourageCard.Cards targets for Autumn Dish Cards / January Cards - see
+        // StandardEncourageCard's doc comment. Resolved from ReferencedUnityObjects the same way as
+        // every other cross-asset reference here, not a new technique.
+        var turkeyBaseId = FindId("Turkey Base_0.asset");
+        var nutRoastBaseId = FindId("Nut Roast Base_0.asset");
+        var dumplingsId = FindId("Dumplings_0.asset");
+        var mandarinId = FindId("Mandarin.asset");
+        var bambooId = FindId("Bamboo.asset");
+
         // santa-workshop's Christmas Pack, decoded (previously URGENT/blocking - see
         // project-history.md and game-domain-knowledge.md's "Christmas Special Card" notes for the
         // full byte-level decode writeup, including validating the field-read technique against
@@ -349,6 +358,16 @@ public static class CardExtractor
         // decoded via the Odin partial-read technique, PrioritiseRequirements/Groups/DishTypes assumed
         // at their class defaults pending ground-truth confirmation (see game-domain-knowledge.md).
         object StandardPriority(double probability, bool prioritiseRequirements = true) => new { probability, prioritiseRequirements, groups = Array.Empty<int>(), dishTypes = Array.Empty<int>() };
+
+        // UnlockSorterEncourageCard - a THIRD sorter only "Autumn Dish Cards"/"January Cards" have
+        // (found via a real ground-truth capture: a real day-9 Autumn/Turkey/franchise-tier-1 offer
+        // didn't match the port's prediction even though the pre-shuffle candidate list matched
+        // byte-for-byte - the raw Odin blob for these two packs' Sorters list byte-decodes to
+        // [Shuffle, Priority, EncourageCard], not the [Shuffle, Priority] pair every other
+        // currently-decoded pack has). CardIds is the OTHER dish option(s) the player didn't pick for
+        // that setting - Autumn's is [Turkey Base, Nut Roast Base], January's is [Dumplings, Mandarin
+        // (Starter), Bamboo]. Probability=0.25 for both, byte-decoded the same way as Priority's.
+        object StandardEncourageCard(params int[] cardIds) => new { probability = 0.25, cardIds };
 
         // FilterBasic with every Ignore*/Allow* flag at its class default (all false) - the shared
         // shape for most packs, but NOT actually uniform: byte-verified during the card-pack-coverage
@@ -455,6 +474,7 @@ public static class CardExtractor
                 selector = new { kind = "groupChoice", group1 = 1, group2 = 1 },
                 condition = new { kind = "regular", dayInterval = 3, dayOffset = 0, dayMin = 1, dayMax = -1, tierRequired = -1 },
                 sorterPriority = StandardPriority(0.5, prioritiseRequirements: false),
+                sorterEncourageCard = StandardEncourageCard(turkeyBaseId, nutRoastBaseId),
                 filter = DefaultFilter(allowBaseDishes: true),
             },
             [januaryCardsId.ToString()] = new
@@ -463,6 +483,7 @@ public static class CardExtractor
                 selector = new { kind = "groupChoice", group1 = 1, group2 = 1 },
                 condition = new { kind = "regular", dayInterval = 3, dayOffset = 0, dayMin = 1, dayMax = -1, tierRequired = -1 },
                 sorterPriority = StandardPriority(0.5, prioritiseRequirements: false),
+                sorterEncourageCard = StandardEncourageCard(dumplingsId, mandarinId, bambooId),
                 filter = DefaultFilter(allowBaseDishes: true),
             },
             [christmasSpecialCardId.ToString()] = new

@@ -340,6 +340,13 @@
       "groups": [],
       "dishTypes": []
     },
+    "sorterEncourageCard": {
+      "probability": 0.25,
+      "cardIds": [
+        1551533879,
+        536093200
+      ]
+    },
     "filter": {
       "ignoreUnlockability": false,
       "ignoreFranchiseTier": false,
@@ -371,6 +378,14 @@
       "prioritiseRequirements": false,
       "groups": [],
       "dishTypes": []
+    },
+    "sorterEncourageCard": {
+      "probability": 0.25,
+      "cardIds": [
+        367917843,
+        1696424557,
+        -1742801708
+      ]
     },
     "filter": {
       "ignoreUnlockability": false,

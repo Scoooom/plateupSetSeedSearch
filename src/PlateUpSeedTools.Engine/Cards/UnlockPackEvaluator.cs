@@ -18,7 +18,14 @@ namespace PlateUpSeedTools.Engine.Cards;
 ///
 /// Simplification vs. the original: only a single Filter/Selector/Condition per modular pack is
 /// modeled (the original allows lists of each) since every currently-decoded pack has exactly one of
-/// each - extend UnlockPackData to a list if a future pack needs more than one.
+/// each - extend UnlockPackData to a list if a future pack needs more than one. Sorters is NOT
+/// similarly single-valued: every currently-decoded pack has [Shuffle, Priority] except "Christmas
+/// Special Card" (empty) and "Autumn Dish Cards"/"January Cards" ([Shuffle, Priority,
+/// EncourageCard]) - discretely modeled as SorterPriority + optional SorterEncourageCard rather than
+/// a generic list, since exactly these two shapes have been found so far (byte-verified from the raw
+/// Odin asset - don't assume a pack matches [Shuffle, Priority] without checking; that wrong
+/// assumption silently desynced Autumn Dish Cards' RNG stream for one real ground-truth capture, see
+/// SorterEncourageCardData's doc comment).
 /// </summary>
 public static class UnlockPackEvaluator
 {
@@ -223,11 +230,13 @@ public static class UnlockPackEvaluator
             .ToList();
 
         // Sorters: [Shuffle, Priority] for every currently-decoded pack EXCEPT "Christmas Special
-        // Card" (byte-verified: its Sorters list is genuinely empty, unlike every other pack) - a
-        // null SorterPriority means "this pack has no sorters," so skip both RNG draws entirely
-        // rather than unconditionally consuming them. Getting this right matters beyond this one
-        // pack's own night: composite sub-packs share one continuing RNG stream (see this class's
-        // doc comment), so phantom draws here would desync every later sub-pack tried the same night.
+        // Card" (byte-verified: its Sorters list is genuinely empty, unlike every other pack) and
+        // "Autumn Dish Cards"/"January Cards" (byte-verified: a THIRD sorter, EncourageCard - see
+        // SorterEncourageCardData). A null SorterPriority means "this pack has no sorters," so skip
+        // both RNG draws entirely rather than unconditionally consuming them. Getting this right
+        // matters beyond this one pack's own night: composite sub-packs share one continuing RNG
+        // stream (see this class's doc comment), so phantom/missing draws here would desync every
+        // later sub-pack tried the same night.
         if (pack.SorterPriority is { } sorterPriority)
         {
             // Runs even if the pack's condition below turns out false (see game-domain-knowledge.md's
@@ -235,6 +244,12 @@ public static class UnlockPackEvaluator
             candidates = candidates.OrderBy(_ => rng.Value).ToList();
             var isPriority = rng.Value < sorterPriority.Probability;
             candidates = candidates.OrderByDescending(c => isPriority && IsPriority(c, sorterPriority) ? 1 : 0).ToList();
+
+            if (pack.SorterEncourageCard is { } encourageCard)
+            {
+                var isEncouraged = rng.Value < encourageCard.Probability;
+                candidates = candidates.OrderBy(c => isEncouraged && encourageCard.CardIds.Contains(c.Id) ? 1 : 0).ToList();
+            }
         }
 
         var condition = pack.Condition ?? throw new InvalidOperationException($"Modular pack '{pack.Name}' has no Condition");
