@@ -232,32 +232,80 @@ public class CardDrawSimulatorGroundTruthTests
         }
     }
 
-    // NOT pinned as a passing test, deliberately - see ShopDaySimulator's precedent for why
-    // asserting a not-fully-exact prediction as "ground truth" would mislead. A real fifth capture
-    // (Normal setting, "Autumn" card schedule, seed "bbbbg7gb", starting dish Turkey, franchise tier
-    // 1, franchise carryover [Affordable, Ice Cream, All You Can Eat, Double Helpings, Variety (copy
-    // 1), Burgers], played to day 15) matched the port's prediction on days 0/3/6 but diverged on day
-    // 9 (real: "Turkey - Cranberry Sauce"/"Fresh Patties" - IDs 1398180456/-1091625127; predicted:
-    // "Broccoli Cheese Soup"/"Roast Potato"). Investigation found one real, independently-confirmed
-    // bug (now fixed - see SorterEncourageCardData: "Autumn Dish Cards.asset"'s raw Odin bytes
-    // byte-decode to a THIRD Sorters entry, UnlockSorterEncourageCard, that the port didn't model at
-    // all) - but instrumenting the fix showed its probabilistic roll came out false on this specific
-    // night (day 9, this capture), so it doesn't explain THIS divergence, even though it's a real
-    // fix worth keeping (confirmed via raw asset bytes, not a guess). With that ruled out, and the
-    // pre-shuffle candidate list for every relevant pack confirmed byte-identical to the real capture
-    // (both membership and order), the remaining suspect is UnityRandom.Value's OWN precision: its
-    // doc comment already states float outputs "match to ~6-7 significant digits but are not proven
-    // bit-exact" - previously benign for layout rendering, but `OrderBy(_ => rng.Value)` shuffles
-    // (109 candidates here) are exactly the kind of use where two candidates' keys landing a few ULPs
-    // apart can flip their relative order and change which 2 cards get offered. A bit-exact
-    // reimplementation was attempted (Unity's common "top-23-bits-as-mantissa" trick) but did NOT
-    // reproduce UnityRandomTests' own documented real-value reference sequence at all (0.836 vs
-    // expected 0.404) - proven wrong, reverted; getting this right needs either real Unity engine
-    // source or a fresh multi-sample ground-truth capture of raw Random.value outputs to
-    // reverse-engineer against, not another guess. Real captured data for whenever this is picked
-    // back up: initial owned (8) = Turkey/Affordable/Burgers/AllYouCanEat/Community/IceCream/Variety/
-    // DoubleHelpings; day3 offer Mandarin Starter/Pizza (matched, picked slot1); day6 Mashed Potato/
-    // Pumpkin Seed (matched, picked slot1); day9 Turkey - Cranberry Sauce/Fresh Patties (MISMATCH,
-    // picked slot1); day12 Cakes/Cherry Pies (picked slot2 - Cherry Pies); day15 Coupons/Double
-    // Homework (not independently verified, downstream of day9's mismatch either way).
+    /// <summary>
+    /// Pins the resolution of a real day-9 divergence (a sixth capture: Normal setting, "Autumn"
+    /// card schedule, seed "bbbbg7gb", starting dish Turkey, franchise tier 1, franchise carryover
+    /// [Affordable, Ice Cream, All You Can Eat, Double Helpings, Variety (copy 1), Burgers], played
+    /// to day 15 with a GroundTruthLogger v1.23.0 raw-RNG capture). Real vs. port matched on days
+    /// 0/3/6 but diverged on day 9 (real: "Turkey - Cranberry Sauce"/"Fresh Patties"; predicted:
+    /// "Broccoli Cheese Soup"/"Roast Potato") even with the pre-shuffle candidate list and every RNG
+    /// draw proven byte-identical to the real capture - two real, independently-confirmed bugs
+    /// combined to cause it:
+    /// 1. <see cref="PlateUpSeedTools.Engine.Random.UnityRandom.Value"/> was not bit-exact (matched
+    ///    only ~6-7 significant digits) - found by diffing 206 real captured `Random.value` bit
+    ///    patterns against several candidate formulas; the correct one is the raw xorshift output's
+    ///    low 23 bits divided by 2^23-1 (not 2^23 - `Random.value` is [0,1] inclusive, not [0,1)).
+    /// 2. <see cref="SorterPriorityData"/>.Groups/DishTypes were wrongly assumed empty for every
+    ///    pack - byte-verified they're actually [6]/[1,2] for Franchise/Normal/Theme/Autumn Dish
+    ///    Cards/January Cards/Halloween Cards (genuinely empty only for March Cards/June Cards/both
+    ///    Heat bonus packs). DishTypes=[1,2] is what actually explains day 9: it prioritises
+    ///    Main-ish dish-upgrade cards (dishType 2, e.g. "Turkey - Cranberry Sauce"/"Fresh Patties")
+    ///    over other dish types (e.g. dishType 4 "Broccoli Cheese Soup") whenever that night's
+    ///    Priority roll succeeds - which it did on day 9 of this capture.
+    /// Neither fix alone reproduces the real day-9 result (confirmed by instrumenting each
+    /// separately during the investigation) - both are required together.
+    ///
+    /// Player policy during capture: accept Unlock1 every day EXCEPT day 12, where the real player
+    /// accepted Unlock2 ("Cherry Pies") instead - confirmed from day 15's ownedIds including Cherry
+    /// Pies' ID, not Cakes' (Unlock1 that day). Day 15 isn't asserted here - it depends on day 12's
+    /// actual pick, and this test's SimulateDay loop always accepts Unlock1 (day 12 predicts "Cakes"
+    /// as Unlock1, matching what real DIDN'T pick that day) - not independently useful as a
+    /// regression pin without also modelling the day-12 slot-2 pick.
+    /// </summary>
+    [Fact]
+    public void MatchesRealAutumnFranchiseDayNineCapture()
+    {
+        const int turkeyId = 1551533879;
+        const int affordableId = -1857686620;
+        const int iceCreamId = 373996608;
+        const int allYouCanEatId = -347199069;
+        const int doubleHelpingsId = 2055765569;
+        const int varietyId = 409052852;
+        const int burgersId = -1778969928;
+        const int communityId = 319209671;
+        const int mandarinStarterId = 1696424557;
+        const int pizzaId = 550743424;
+        const int mashedPotatoId = 364243605;
+        const int pumpkinSeedId = 1393945424;
+        const int turkeyCranberrySauceId = 1398180456;
+        const int freshPattiesId = -1091625127;
+
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        int[] franchiseCarryoverIds = [affordableId, iceCreamId, allYouCanEatId, doubleHelpingsId, varietyId, burgersId];
+        var startingUnlockId = repo.ResolveCardScheduleStartingUnlockId("autumn");
+
+        var setup = RunSetup.Resolve(repo, turkeyId, subOptionChoice: null, heatLevel: 0, startingUnlockId, franchiseCarryoverIds);
+        Assert.Equal(
+            new HashSet<int> { turkeyId, affordableId, iceCreamId, allYouCanEatId, doubleHelpingsId, varietyId, burgersId, communityId },
+            setup.InitiallyOwnedIds);
+
+        var packId = repo.ResolveCardSchedulePackId("autumn")!.Value;
+        var sim = new CardDrawSimulator(repo, new Seed("bbbbg7gb"), packId, setup, tier: 1);
+
+        (int Day, int? Unlock1Id, int? Unlock2Id)[] capturedOffers =
+        [
+            (0, null, null),
+            (3, mandarinStarterId, pizzaId),
+            (6, mashedPotatoId, pumpkinSeedId),
+            (9, turkeyCranberrySauceId, freshPattiesId),
+        ];
+
+        foreach (var (day, expectedUnlock1, expectedUnlock2) in capturedOffers)
+        {
+            var result = sim.SimulateDay(day, offered => offered.Unlock1Id);
+
+            Assert.Equal(expectedUnlock1, result.Unlock1Id);
+            Assert.Equal(expectedUnlock2, result.Unlock2Id);
+        }
+    }
 }

@@ -90,8 +90,13 @@
     "sorterPriority": {
       "probability": 0.5,
       "prioritiseRequirements": true,
-      "groups": [],
-      "dishTypes": []
+      "groups": [
+        6
+      ],
+      "dishTypes": [
+        1,
+        2
+      ]
     },
     "filter": {
       "ignoreUnlockability": false,
@@ -122,8 +127,13 @@
     "sorterPriority": {
       "probability": 0.5,
       "prioritiseRequirements": true,
-      "groups": [],
-      "dishTypes": []
+      "groups": [
+        6
+      ],
+      "dishTypes": [
+        1,
+        2
+      ]
     },
     "filter": {
       "ignoreUnlockability": false,
@@ -152,8 +162,13 @@
     "sorterPriority": {
       "probability": 0.5,
       "prioritiseRequirements": true,
-      "groups": [],
-      "dishTypes": []
+      "groups": [
+        6
+      ],
+      "dishTypes": [
+        1,
+        2
+      ]
     },
     "filter": {
       "ignoreUnlockability": false,
@@ -305,8 +320,13 @@
     "sorterPriority": {
       "probability": 0.5,
       "prioritiseRequirements": false,
-      "groups": [],
-      "dishTypes": []
+      "groups": [
+        6
+      ],
+      "dishTypes": [
+        1,
+        2
+      ]
     },
     "filter": {
       "ignoreUnlockability": false,
@@ -337,8 +357,13 @@
     "sorterPriority": {
       "probability": 0.5,
       "prioritiseRequirements": false,
-      "groups": [],
-      "dishTypes": []
+      "groups": [
+        6
+      ],
+      "dishTypes": [
+        1,
+        2
+      ]
     },
     "sorterEncourageCard": {
       "probability": 0.25,
@@ -376,8 +401,13 @@
     "sorterPriority": {
       "probability": 0.5,
       "prioritiseRequirements": false,
-      "groups": [],
-      "dishTypes": []
+      "groups": [
+        6
+      ],
+      "dishTypes": [
+        1,
+        2
+      ]
     },
     "sorterEncourageCard": {
       "probability": 0.25,

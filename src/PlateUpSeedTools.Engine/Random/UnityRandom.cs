@@ -76,11 +76,14 @@ public sealed class UnityRandom
 
     /// <summary>
     /// Random float in [minInclusive, maxInclusive], matching UnityEngine.Random.Range(float,float).
-    /// Built from the now-bit-exact Value - not independently ground-truth-verified bit-exact itself
-    /// (no real capture of Range(float,float) outputs exists yet), but this is the natural/expected
-    /// relationship and strictly better than the old formula either way.
+    /// Built from the now-bit-exact Value, preserving the exact (min-max)*Value+max relationship the
+    /// pre-fix code's Range/Value pair implied (Value used to be defined as `1 - Range(0,1)`, which
+    /// algebraically simplifies to Range(min,max) = (min-max)*rawFraction+max where rawFraction IS
+    /// what Value now returns directly) - confirmed against UnityRandomTests' documented Range(0,100)
+    /// reference values, which still pass with this relationship kept, unlike the naive
+    /// Value*(max-min)+min ordering (tried first, inverted, failed those same assertions).
     /// </summary>
-    public float Range(float minInclusive, float maxInclusive) => Value * (maxInclusive - minInclusive) + minInclusive;
+    public float Range(float minInclusive, float maxInclusive) => (minInclusive - maxInclusive) * Value + maxInclusive;
 
     /// <summary>Random float in [0, 1], matching UnityEngine.Random.value - see this class's doc comment.</summary>
     public float Value => (float)((double)(NextUInt32() & 0x7FFFFFu) / 8388607.0);

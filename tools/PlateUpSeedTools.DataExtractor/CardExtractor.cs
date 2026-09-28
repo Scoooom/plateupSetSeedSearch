@@ -353,11 +353,23 @@ public static class CardExtractor
         var februarySpecialCardId = FindId("February Special Card.asset");
         var couplesId = FindId("Couples.asset");
 
-        // Default UnlockSorterPriority config shared by the standard schedule packs (Franchise/Normal/
-        // Theme): PriorityProbability=0.5, PrioritiseRequirements=true, empty Groups/DishTypes -
-        // decoded via the Odin partial-read technique, PrioritiseRequirements/Groups/DishTypes assumed
-        // at their class defaults pending ground-truth confirmation (see game-domain-knowledge.md).
-        object StandardPriority(double probability, bool prioritiseRequirements = true) => new { probability, prioritiseRequirements, groups = Array.Empty<int>(), dishTypes = Array.Empty<int>() };
+        // Default UnlockSorterPriority config shared by most packs: PriorityProbability=0.5,
+        // PrioritiseRequirements=true, Groups=[6], DishTypes=[1,2] - byte-verified directly from the
+        // raw Odin blob (session 2026-09-28, chasing a real day-9 Autumn/Turkey/franchise-tier-1
+        // divergence). Groups/DishTypes were PREVIOUSLY assumed empty ("pending ground-truth
+        // confirmation") - a real bug, since Groups=[6]/DishTypes=[1,2] are NOT empty for
+        // Franchise/Normal/Theme/Autumn Dish Cards/January Cards/Halloween Cards (confirmed
+        // byte-identical across all six) - IsPriority's Groups/DishTypes checks were silently
+        // no-ops for every pack, when in reality a night where the Priority roll succeeds
+        // (`Random.value < Probability`) pushes UnlockGroup==6 candidates and DishType 1/2 dish
+        // candidates (a Main-ish/Side-ish pair, e.g. dish-family upgrade cards like "Turkey -
+        // Cranberry Sauce") to the front - this exact mechanism was the actual root cause of the
+        // day-9 divergence, not the RNG float precision or missing-sorter fixes that were tried
+        // first (both real, both kept, neither sufficient alone). March Cards/June Cards/the two
+        // Heat bonus packs are the genuine exception - byte-verified empty for those four, passed
+        // explicitly below rather than defaulting.
+        object StandardPriority(double probability, bool prioritiseRequirements = true, int[]? groups = null, int[]? dishTypes = null) =>
+            new { probability, prioritiseRequirements, groups = groups ?? [6], dishTypes = dishTypes ?? [1, 2] };
 
         // UnlockSorterEncourageCard - a THIRD sorter only "Autumn Dish Cards"/"January Cards" have
         // (found via a real ground-truth capture: a real day-9 Autumn/Turkey/franchise-tier-1 offer
@@ -428,7 +440,8 @@ public static class CardExtractor
                 name = "March Cards", type = "modular",
                 selector = new { kind = "groupChoice", group1 = 1, group2 = 0 },
                 condition = new { kind = "regular", dayInterval = 1, dayOffset = 0, dayMin = 1, dayMax = -1, tierRequired = -1 },
-                sorterPriority = StandardPriority(0.10000000149011612),
+                // Genuine exception to StandardPriority's [6]/[1,2] default - byte-verified empty here.
+                sorterPriority = StandardPriority(0.10000000149011612, groups: [], dishTypes: []),
                 filter = DefaultFilter(),
             },
             [heat2PackId.ToString()] = new
@@ -436,7 +449,8 @@ public static class CardExtractor
                 name = "Heat - Food Card After Day 2 Pack", type = "modular",
                 selector = new { kind = "anyFromGroup", groups = new[] { 1 } },
                 condition = new { kind = "once", day = 2 },
-                sorterPriority = StandardPriority(0.8999999761581421),
+                // Genuine exception to StandardPriority's [6]/[1,2] default - byte-verified empty here.
+                sorterPriority = StandardPriority(0.8999999761581421, groups: [], dishTypes: []),
                 filter = DefaultFilter(),
             },
             [heat10PackId.ToString()] = new
@@ -444,7 +458,8 @@ public static class CardExtractor
                 name = "Heat - Starter Or Dessert Pack", type = "modular",
                 selector = new { kind = "menuPhase", phase1 = 0, phase2 = 2 },
                 condition = new { kind = "once", day = 1 },
-                sorterPriority = StandardPriority(0.8999999761581421),
+                // Genuine exception to StandardPriority's [6]/[1,2] default - byte-verified empty here.
+                sorterPriority = StandardPriority(0.8999999761581421, groups: [], dishTypes: []),
                 // Bug fix (card-pack-coverage session): byte-verified this pack really does have
                 // ignoreFilterByHasMain=true (every other currently-known pack has it false) -
                 // previously wrongly using DefaultFilter()'s all-false shape. Makes sense: this
@@ -457,7 +472,8 @@ public static class CardExtractor
                 name = "June Cards", type = "modular",
                 selector = new { kind = "groupChoice", group1 = 1, group2 = 0 },
                 condition = new { kind = "regular", dayInterval = 3, dayOffset = 0, dayMin = 1, dayMax = -1, tierRequired = -1 },
-                sorterPriority = StandardPriority(0.5),
+                // Genuine exception to StandardPriority's [6]/[1,2] default - byte-verified empty here.
+                sorterPriority = StandardPriority(0.5, groups: [], dishTypes: []),
                 filter = DefaultFilter(),
             },
             [halloweenCardsId.ToString()] = new
