@@ -12,8 +12,21 @@ namespace PlateUpSeedTools.Engine.Random;
 /// integer Range() outputs matched real UnityEngine.Random.Range() exactly across many test seeds,
 /// and a separate community-reported reference value (UnityEngine.Random.InitState(0) produces
 /// state (0, 1, 1812433254, 1900727103)), which this implementation reproduces exactly.
-/// Float outputs (Value/Range(float,float)) match to ~6-7 significant digits but are not proven
-/// bit-exact — see UnityRandomTests for the known deviation.
+///
+/// Value is now ALSO bit-exact (fixed 2026-09-28), found from a real GroundTruthLogger v1.23.0
+/// capture: 206 consecutive real `UnityEngine.Random.value` outputs (raw IEEE-754 bit patterns) from
+/// a known seed, diffed against several candidate formulas. The low 23 bits of the raw xorshift
+/// output, divided by 2^23-1 (NOT 2^23 - Unity's `value` is apparently [0,1] inclusive of 1, not the
+/// [0,1) its own docs claim) matched all 206/206 bit-for-bit. The previous formula here (shifting
+/// left by 9 and dividing by uint.MaxValue, all in single/float precision) only matched to ~6-7
+/// significant digits - close enough for layout rendering (tolerant of sub-pixel drift) but NOT for
+/// `OrderBy(_ => rng.Value)` shuffles (the card-draw pack), where two candidates' keys landing 1-2
+/// ULPs apart can flip their relative order and change which 2 cards get offered - this exact gap
+/// was the root cause of a real, previously-unexplained card-draw mismatch (see
+/// Engine.Cards.CardDrawSimulatorGroundTruthTests' trailing comment for the full capture that found
+/// it). A first, unverified guess at a bit-exact formula (the common "top-23-bits-as-mantissa via
+/// right-shift" trick) was tried and measurably WRONG (didn't match at all, not even close) - the
+/// real bits come from the LOW 23 bits, not the high ones.
 /// </summary>
 public sealed class UnityRandom
 {
@@ -61,12 +74,14 @@ public sealed class UnityRandom
             : (int)(min + r % (max - min));
     }
 
-    /// <summary>Random float in [minInclusive, maxInclusive], matching UnityEngine.Random.Range(float,float).</summary>
-    public float Range(float minInclusive, float maxInclusive)
-    {
-        return (minInclusive - maxInclusive) * ((float)(NextUInt32() << 9) / uint.MaxValue) + maxInclusive;
-    }
+    /// <summary>
+    /// Random float in [minInclusive, maxInclusive], matching UnityEngine.Random.Range(float,float).
+    /// Built from the now-bit-exact Value - not independently ground-truth-verified bit-exact itself
+    /// (no real capture of Range(float,float) outputs exists yet), but this is the natural/expected
+    /// relationship and strictly better than the old formula either way.
+    /// </summary>
+    public float Range(float minInclusive, float maxInclusive) => Value * (maxInclusive - minInclusive) + minInclusive;
 
-    /// <summary>Random float in [0, 1), matching UnityEngine.Random.value.</summary>
-    public float Value => 1.0f - Range(0.0f, 1.0f);
+    /// <summary>Random float in [0, 1], matching UnityEngine.Random.value - see this class's doc comment.</summary>
+    public float Value => (float)((double)(NextUInt32() & 0x7FFFFFu) / 8388607.0);
 }
