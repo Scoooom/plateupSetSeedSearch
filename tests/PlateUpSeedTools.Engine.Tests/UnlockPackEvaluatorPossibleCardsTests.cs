@@ -162,4 +162,59 @@ public class UnlockPackEvaluatorPossibleCardsTests
 
         Assert.Contains(AdvertisingId, possible);
     }
+
+    // GetPossibleDishTypes reachability - powers the class-target search UI's dropdown filtering
+    // (e.g. "Any Base" shouldn't be selectable for a schedule that can never reach DishType 0).
+    // Empirically verified (not assumed): on the normal schedule's interval days (3/6/9/12), the
+    // reachable DishType set is exactly {Main=1, Side=3, Starter=4, Dessert=5} - Base=0 dishes (the
+    // generic placeholder dishes like "Pies"/"Salad" themselves, as opposed to their named
+    // Main-tier variants like "Vegetable Pies") are never offered as day-to-day card draws under
+    // the normal schedule. Autumn's own interval days additionally reach Base=0 via its
+    // cross-family "Autumn Dish Cards" sub-pack - this is the real differentiator the user's "Any
+    // Main" example was gesturing at (Main IS reachable under normal too, via your own starting
+    // dish's variants - Base is the one DishType normal genuinely never reaches).
+    [Fact]
+    public void GetPossibleDishTypes_NormalSchedule_NeverReachesBaseDishType()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        List<int> activePackIds = [settingPackId, .. setup.BonusPackIds];
+
+        for (var day = 0; day <= 15; day++)
+        {
+            var dishTypes = UnlockPackEvaluator.GetPossibleDishTypes(repo, activePackIds, setup.InitiallyOwnedIds, day, tier: 0);
+            Assert.DoesNotContain(0, dishTypes);
+        }
+    }
+
+    [Fact]
+    public void GetPossibleDishTypes_AutumnIntervalDay_ReachesBaseDishType()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        List<int> activePackIds = [AutumnPackId, .. setup.BonusPackIds];
+
+        var dishTypes = UnlockPackEvaluator.GetPossibleDishTypes(repo, activePackIds, setup.InitiallyOwnedIds, AutumnIntervalDay, tier: 0);
+
+        Assert.Contains(0, dishTypes);
+    }
+
+    // DishTypeCatalog.NullValue (6) is defensively excluded even though no real Dish record
+    // currently has it (see DishTypeCatalog's doc comment) - guard against a future data change
+    // silently leaking it into the class-target UI unnoticed.
+    [Fact]
+    public void GetPossibleDishTypes_NeverReturnsNullValue_EvenIfSyntheticallyPresent()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        List<int> activePackIds = [settingPackId, .. setup.BonusPackIds];
+
+        for (var day = 0; day <= 15; day++)
+        {
+            var dishTypes = UnlockPackEvaluator.GetPossibleDishTypes(repo, activePackIds, setup.InitiallyOwnedIds, day, tier: 0);
+            Assert.DoesNotContain(DishTypeCatalog.NullValue, dishTypes);
+        }
+    }
 }

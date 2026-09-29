@@ -62,7 +62,7 @@ public static class SearchCommand
         }
 
         var targetNames = new Dictionary<int, string>();
-        var targetIds = new Dictionary<int, int>();
+        var dayTargets = new Dictionary<int, TargetMatcher>();
         foreach (var (day, cardName) in options.DayTargets)
         {
             if (!TryResolveUnlockByName(repo, cardName, "card", out var card))
@@ -71,11 +71,23 @@ public static class SearchCommand
             }
 
             targetNames[day] = card.Name;
-            targetIds[day] = card.Id;
+            dayTargets[day] = new TargetMatcher.ExactCard(card.Id);
+        }
+
+        foreach (var (day, className) in options.DayClassTargets)
+        {
+            if (!DishTypeCatalog.TryParseName(className, out var dishType))
+            {
+                Console.WriteLine($"Unknown dish class '{className}'. Valid: {string.Join(", ", DishTypeCatalog.Names.Values)}");
+                return 1;
+            }
+
+            targetNames[day] = $"Any {DishTypeCatalog.Names[dishType]}";
+            dayTargets[day] = new TargetMatcher.AnyOfClass(dishType);
         }
 
         var flexibleTargetNames = new List<string>();
-        var flexibleTargetIds = new HashSet<int>();
+        var flexibleTargets = new List<TargetMatcher>();
         foreach (var cardName in options.AnyDayCardNames)
         {
             if (!TryResolveUnlockByName(repo, cardName, "card", out var card))
@@ -84,10 +96,26 @@ public static class SearchCommand
             }
 
             flexibleTargetNames.Add(card.Name);
-            flexibleTargetIds.Add(card.Id);
+            flexibleTargets.Add(new TargetMatcher.ExactCard(card.Id));
         }
 
-        if (UnlockPackEvaluator.HasBlockedByConflict(repo, new HashSet<int>(targetIds.Values.Concat(flexibleTargetIds)), out var conflict))
+        foreach (var className in options.AnyDayClassNames)
+        {
+            if (!DishTypeCatalog.TryParseName(className, out var dishType))
+            {
+                Console.WriteLine($"Unknown dish class '{className}'. Valid: {string.Join(", ", DishTypeCatalog.Names.Values)}");
+                return 1;
+            }
+
+            flexibleTargetNames.Add($"Any {DishTypeCatalog.Names[dishType]}");
+            flexibleTargets.Add(new TargetMatcher.AnyOfClass(dishType));
+        }
+
+        // Class targets can't participate in this check - we don't know in advance which concrete
+        // card a class target will resolve to - so only exact-card targets are checked here. See
+        // TargetMatcher.cs / UnlockPackEvaluator.HasBlockedByConflict's scope.
+        var exactCardIds = new HashSet<int>(dayTargets.Values.Concat(flexibleTargets).OfType<TargetMatcher.ExactCard>().Select(m => m.CardId));
+        if (UnlockPackEvaluator.HasBlockedByConflict(repo, exactCardIds, out var conflict))
         {
             Console.WriteLine($"'{repo.GetUnlock(conflict.CardId).Name}' and '{repo.GetUnlock(conflict.BlockedById).Name}' can never coexist (BlockedBy) - this target set can never be satisfied.");
             return 1;
@@ -165,7 +193,7 @@ public static class SearchCommand
         }
 
         var request = new SeedSearchRequest(
-            settingPackId, setup, targetIds, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds, flexibleTargetIds,
+            settingPackId, setup, dayTargets, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds, flexibleTargets,
             SettingSlug: options.SettingSlug, OtFriendly: options.OtFriendly, AllowRerollPerDay: options.AllowRerollPerDay);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -265,7 +293,9 @@ public static class SearchCommand
         public int Tier { get; init; }
         public required List<string> FranchiseCardNames { get; init; }
         public required Dictionary<int, string> DayTargets { get; init; }
+        public required Dictionary<int, string> DayClassTargets { get; init; }
         public required List<string> AnyDayCardNames { get; init; }
+        public required List<string> AnyDayClassNames { get; init; }
         public required string Alphabet { get; init; }
         public required int Length { get; init; }
         public long? Limit { get; init; }
@@ -292,7 +322,9 @@ public static class SearchCommand
         var tier = 0;
         var franchiseCardNames = new List<string>();
         var dayTargets = new Dictionary<int, string>();
+        var dayClassTargets = new Dictionary<int, string>();
         var anyDayCardNames = new List<string>();
+        var anyDayClassNames = new List<string>();
         var alphabet = Seed.FriendlyCharacters;
         var length = 4;
         long? limit = null;
@@ -336,8 +368,22 @@ public static class SearchCommand
 
                     dayTargets[day] = parts[1];
                     break;
+                case "--day-class" when i + 1 < args.Length:
+                    var rawClass = args[++i];
+                    var classParts = rawClass.Split('=', 2);
+                    if (classParts.Length != 2 || !int.TryParse(classParts[0], out var classDay))
+                    {
+                        Console.WriteLine($"Invalid --day-class value '{rawClass}' - expected <day>=<class name>, e.g. --day-class 3=Side");
+                        return null;
+                    }
+
+                    dayClassTargets[classDay] = classParts[1];
+                    break;
                 case "--any-day-card" when i + 1 < args.Length:
                     anyDayCardNames.Add(args[++i]);
+                    break;
+                case "--any-day-class" when i + 1 < args.Length:
+                    anyDayClassNames.Add(args[++i]);
                     break;
                 case "--alphabet" when i + 1 < args.Length:
                     alphabet = args[++i];
@@ -386,17 +432,32 @@ public static class SearchCommand
             }
         }
 
-        if (settingSlug is null || dishName is null || (dayTargets.Count == 0 && anyDayCardNames.Count == 0 && !otFriendly))
+        foreach (var day in dayTargets.Keys)
+        {
+            if (dayClassTargets.ContainsKey(day))
+            {
+                Console.WriteLine($"Day {day} has both --day and --day-class targets - a day can only have one target.");
+                return null;
+            }
+        }
+
+        if (settingSlug is null || dishName is null ||
+            (dayTargets.Count == 0 && dayClassTargets.Count == 0 && anyDayCardNames.Count == 0 && anyDayClassNames.Count == 0 && !otFriendly))
         {
             Console.WriteLine("Usage: search --setting <slug> --dish <name> [--sub-option 1|2] [--heat <n>]");
             Console.WriteLine("              [--tier <n>] [--franchise-card <name> ...]");
-            Console.WriteLine("              [--day <n>=<card name> ...] [--any-day-card <card name> ...] [--ot-friendly]");
+            Console.WriteLine("              [--day <n>=<card name> ...] [--any-day-card <card name> ...]");
+            Console.WriteLine("              [--day-class <n>=<class name> ...] [--any-day-class <class name> ...] [--ot-friendly]");
             Console.WriteLine("              [--reroll-per-day (temporarily disabled)]");
             Console.WriteLine("              [--alphabet <chars>] [--length <n>] [--limit <n>] [--max-results <n>]");
             Console.WriteLine();
             Console.WriteLine("--day pins a card to an exact day; --any-day-card (repeatable) only requires the card be");
-            Console.WriteLine("obtained by day 15, in any order - combine both freely in the same search. At least one of");
-            Console.WriteLine("--day/--any-day-card/--ot-friendly is required.");
+            Console.WriteLine("obtained by day 15, in any order - combine both freely in the same search. --day-class/");
+            Console.WriteLine("--any-day-class are the same but match ANY card of a dish class instead of one exact card");
+            Console.WriteLine($"(e.g. --day-class 3=Side matches whichever Side dish is offered day 3). Valid classes:");
+            Console.WriteLine($"{string.Join(", ", DishTypeCatalog.Names.Values)}. Repeatable, including duplicates of the");
+            Console.WriteLine("same class (e.g. two --any-day-class Side). A day can't have both --day and --day-class.");
+            Console.WriteLine("At least one of --day/--day-class/--any-day-card/--any-day-class/--ot-friendly is required.");
             Console.WriteLine("--ot-friendly restricts to seeds where days 1, 2, and 4 offer Research Desks - an");
             Console.WriteLine("additional AND-condition layered onto any --day/--any-day-card targets, or usable alone.");
             Console.WriteLine("--reroll-per-day (Bay Leaves 1-reroll-per-night mechanic) is TEMPORARILY DISABLED - a");
@@ -435,7 +496,9 @@ public static class SearchCommand
             Tier = tier,
             FranchiseCardNames = franchiseCardNames,
             DayTargets = dayTargets,
+            DayClassTargets = dayClassTargets,
             AnyDayCardNames = anyDayCardNames,
+            AnyDayClassNames = anyDayClassNames,
             Alphabet = alphabet,
             Length = length,
             Limit = limit,

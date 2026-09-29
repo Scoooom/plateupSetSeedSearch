@@ -1,7 +1,17 @@
 namespace PlateUpSeedTools.Web.Contracts;
 
-/// <summary>Day is null for a "flexible" target - the card just needs to be obtained by day 15, order/day unspecified (see SeedSearchRequest.FlexibleTargetIds).</summary>
-public sealed record DayTargetDto(int? Day, string CardName);
+/// <summary>
+/// Day is null for a "flexible" target - the card just needs to be obtained by day 15, order/day
+/// unspecified (see SeedSearchRequest.FlexibleTargets). Exactly one of CardName/DishType should be
+/// set: CardName for an exact-card target (the original and only kind before class targets),
+/// DishType for a "class" target - any card of that dish category (Base=0, Main=1, Extra=2,
+/// Side=3, Starter=4, Dessert=5 - see Engine.Data.DishTypeCatalog) satisfies it, e.g. "Any Side".
+/// Mutually exclusive by an explicit per-row UI mode toggle, not a sentinel value in CardName.
+/// </summary>
+public sealed record DayTargetDto(int? Day, string? CardName, int? DishType = null);
+
+/// <summary>One dish class selectable as a class target - see DayTargetDto.DishType.</summary>
+public sealed record ClassOptionDto(int DishType, string DisplayName);
 
 public sealed record SearchStartRequest(
     string Setting,
@@ -76,7 +86,8 @@ public sealed record PossibleCardsRequest(
     int? Day,
     string? CardPack = null);
 
-public sealed record PossibleCardsResponse(IReadOnlyList<string> CardNames);
+/// <summary>Classes is filtered to what's actually reachable given the same setup/day(s) as CardNames - see SearchEndpoints.GetPossibleCards.</summary>
+public sealed record PossibleCardsResponse(IReadOnlyList<string> CardNames, IReadOnlyList<ClassOptionDto> Classes);
 
 public sealed record UnlockDto(
     int Id,

@@ -80,6 +80,20 @@ public static class UnlockPackEvaluator
     }
 
     /// <summary>
+    /// Projects <see cref="GetPossibleCardIds"/> onto <see cref="UnlockData.DishType"/> - "which dish
+    /// classes could possibly be offered on day N," for the class-target search UI's reachability
+    /// gate (e.g. "Any Main" shouldn't be selectable for a schedule that can never reach DishType 1).
+    /// <see cref="DishTypeCatalog.NullValue"/> is excluded even though no real Dish record
+    /// currently has it - see DishTypeCatalog's doc comment.
+    /// </summary>
+    public static HashSet<int> GetPossibleDishTypes(GameDataRepository repo, IReadOnlyList<int> activePackIds, HashSet<int> currentCards, int day, int tier) =>
+        GetPossibleCardIds(repo, activePackIds, currentCards, day, tier)
+            .Select(repo.GetUnlock)
+            .Where(u => u.Kind == "Dish" && u.DishType is int dt && dt != DishTypeCatalog.NullValue)
+            .Select(u => u.DishType!.Value)
+            .ToHashSet();
+
+    /// <summary>
     /// Returns whether this pack "fired" (would have won a real composite try - see
     /// GetCompositeOptions) so a composite's sub-packs can be tried in order and stop at the
     /// first that does, matching the real per-night resolution instead of unioning every

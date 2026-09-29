@@ -189,7 +189,11 @@ public static class SearchEndpoints
         var ownedIds = new HashSet<int>(setup.InitiallyOwnedIds);
         foreach (var prior in request.PriorTargets)
         {
-            if (string.IsNullOrEmpty(prior.CardName))
+            // A class-kind prior (CardName null, DishType set) contributes nothing here - we don't
+            // know which concrete card of that class it'll actually resolve to, so it can't sharpen
+            // a later row's Requires/BlockedBy-based reachability the way an exact-card prior can.
+            // Known, accepted limitation, not solved generically.
+            if (prior.CardName is null)
             {
                 continue;
             }
@@ -234,7 +238,60 @@ public static class SearchEndpoints
         }
 
         var names = BuildDisplayNames(repo, possibleIds.Select(repo.GetUnlock)).OrderBy(n => n).ToList();
-        return Results.Ok(new PossibleCardsResponse(names));
+
+        var classes = possibleIds
+            .Select(repo.GetUnlock)
+            .Where(u => u.Kind == "Dish" && u.DishType is int dt && dt != DishTypeCatalog.NullValue)
+            .Select(u => u.DishType!.Value)
+            .Distinct()
+            .OrderBy(dt => dt)
+            .Select(dt => new ClassOptionDto(dt, DishTypeCatalog.Names[dt]))
+            .ToList();
+
+        return Results.Ok(new PossibleCardsResponse(names, classes));
+    }
+
+    /// <summary>
+    /// Resolves one DayTargetDto into what SeedSearcher actually matches on - either an exact card
+    /// (CardName) or any card of a dish class (DishType, e.g. "Any Side" - see TargetMatcher.cs).
+    /// Exactly one of the two should be set on the DTO; an empty CardName with no DishType is the
+    /// "genuinely empty row" case the frontend is expected to filter out before submitting, but is
+    /// still handled here as an error rather than silently skipped, since StartSearch/GetSearchPath
+    /// are also reachable directly (CLI-equivalent callers, curl, etc.).
+    /// </summary>
+    private static bool TryResolveTargetMatcher(GameDataRepository repo, DayTargetDto target, out TargetMatcher matcher, out string? error)
+    {
+        if (target.DishType is int dishType)
+        {
+            if (!DishTypeCatalog.Names.ContainsKey(dishType))
+            {
+                matcher = null!;
+                error = $"Unknown dish class '{dishType}'.";
+                return false;
+            }
+
+            matcher = new TargetMatcher.AnyOfClass(dishType);
+            error = null;
+            return true;
+        }
+
+        if (string.IsNullOrEmpty(target.CardName))
+        {
+            matcher = null!;
+            error = "Each day target needs either a card name or a dish class.";
+            return false;
+        }
+
+        if (!TryResolveUnlock(repo, target.CardName, "card", out var card, out var cardError))
+        {
+            matcher = null!;
+            error = cardError;
+            return false;
+        }
+
+        matcher = new TargetMatcher.ExactCard(card.Id);
+        error = null;
+        return true;
     }
 
     private static IResult StartSearch(SearchStartRequest request, GameDataRepository repo, SearchJobManager jobs)
@@ -261,26 +318,30 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = "At least one card target is required (or check OT Friendly)." });
         }
 
-        var targetIds = new Dictionary<int, int>();
-        var flexibleTargetIds = new HashSet<int>();
+        var dayTargets = new Dictionary<int, TargetMatcher>();
+        var flexibleTargets = new List<TargetMatcher>();
         foreach (var target in request.DayTargets)
         {
-            if (!TryResolveUnlock(repo, target.CardName, "card", out var card, out var cardError))
+            if (!TryResolveTargetMatcher(repo, target, out var matcher, out var matcherError))
             {
-                return Results.BadRequest(new { error = cardError });
+                return Results.BadRequest(new { error = matcherError });
             }
 
             if (target.Day is int day)
             {
-                targetIds[day] = card.Id;
+                dayTargets[day] = matcher;
             }
             else
             {
-                flexibleTargetIds.Add(card.Id);
+                flexibleTargets.Add(matcher);
             }
         }
 
-        if (UnlockPackEvaluator.HasBlockedByConflict(repo, new HashSet<int>(targetIds.Values.Concat(flexibleTargetIds)), out var targetConflict))
+        // Class targets (TargetMatcher.AnyOfClass) can't participate in this check - we don't know
+        // in advance which concrete card a class target will resolve to - so only exact-card targets
+        // are checked here. See TargetMatcher.cs / UnlockPackEvaluator.HasBlockedByConflict's scope.
+        var exactCardIds = new HashSet<int>(dayTargets.Values.Concat(flexibleTargets).OfType<TargetMatcher.ExactCard>().Select(m => m.CardId));
+        if (UnlockPackEvaluator.HasBlockedByConflict(repo, exactCardIds, out var targetConflict))
         {
             return Results.BadRequest(new { error = $"'{repo.GetUnlock(targetConflict.CardId).Name}' and '{repo.GetUnlock(targetConflict.BlockedById).Name}' can never coexist (BlockedBy) - this target set can never be satisfied." });
         }
@@ -360,7 +421,7 @@ public static class SearchEndpoints
             ? new HashSet<string>(request.ExcludedSeeds.Select(s => s.ToLowerInvariant()), StringComparer.Ordinal)
             : null;
         var searchRequest = new SeedSearchRequest(
-            settingPackId, setup, targetIds, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds, flexibleTargetIds,
+            settingPackId, setup, dayTargets, request.Tier, alphabet, request.Length, totalToCheck, excludedSeeds, flexibleTargets,
             // Reroll temporarily disabled (known-buggy skipChoices mechanic) - re-enable by
             // restoring `request.AllowRerollPerDay == true` here and in GetSearchPath, and
             // un-hiding the checkbox in search.html.
@@ -446,22 +507,22 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = dishError });
         }
 
-        var targetIds = new Dictionary<int, int>();
-        var flexibleTargetIds = new HashSet<int>();
+        var targetIds = new Dictionary<int, TargetMatcher>();
+        var flexibleTargets = new List<TargetMatcher>();
         foreach (var target in request.DayTargets)
         {
-            if (!TryResolveUnlock(repo, target.CardName, "card", out var card, out var cardError))
+            if (!TryResolveTargetMatcher(repo, target, out var matcher, out var matcherError))
             {
-                return Results.BadRequest(new { error = cardError });
+                return Results.BadRequest(new { error = matcherError });
             }
 
             if (target.Day is int day)
             {
-                targetIds[day] = card.Id;
+                targetIds[day] = matcher;
             }
             else
             {
-                flexibleTargetIds.Add(card.Id);
+                flexibleTargets.Add(matcher);
             }
         }
 
@@ -492,9 +553,9 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = packError });
         }
 
-        var maxDay = Math.Max(targetIds.Count == 0 ? 0 : targetIds.Keys.Max(), flexibleTargetIds.Count > 0 ? FlexibleHorizon : 0);
+        var maxDay = Math.Max(targetIds.Count == 0 ? 0 : targetIds.Keys.Max(), flexibleTargets.Count > 0 ? FlexibleHorizon : 0);
         var paths = SeedSearcher.ResolveCardPaths(
-            repo, new Seed(request.Seed), settingPackId, setup, targetIds, flexibleTargetIds, maxDay, request.Tier,
+            repo, new Seed(request.Seed), settingPackId, setup, targetIds, flexibleTargets, maxDay, request.Tier,
             // Reroll temporarily disabled (known-buggy skipChoices mechanic) - see StartSearch.
             false, MaxCardPaths);
 

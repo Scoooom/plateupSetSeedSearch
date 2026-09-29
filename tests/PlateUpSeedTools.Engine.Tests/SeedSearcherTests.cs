@@ -40,7 +40,7 @@ public class SeedSearcherTests
 
         var expectedMatches = ComputeMatchesSequentially(repo, settingPackId, setup, alphabet, length, totalToCheck);
 
-        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int> { [TargetDay] = TargetCardId }, Tier: 0, alphabet, length, totalToCheck);
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, TargetMatcher> { [TargetDay] = new TargetMatcher.ExactCard(TargetCardId) }, Tier: 0, alphabet, length, totalToCheck);
 
         var actualMatches = new HashSet<string>();
         var matchLock = new object();
@@ -92,7 +92,7 @@ public class SeedSearcherTests
         var totalToCheck = (long)Math.Pow(alphabet.Length, length); // 256
         const long matchCap = 10;
 
-        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck);
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck);
 
         var matchCount = 0;
         var finalCheckedCount = 0L;
@@ -122,7 +122,7 @@ public class SeedSearcherTests
         const int length = 4;
         var totalToCheck = (long)Math.Pow(alphabet.Length, length); // 256
 
-        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck);
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck);
 
         var matchCount = 0;
         var finalCheckedCount = 0L;
@@ -159,7 +159,7 @@ public class SeedSearcherTests
         const int length = 2;
         var totalToCheck = (long)Math.Pow(alphabet.Length, length); // 9
 
-        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck);
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck);
 
         var reported = new List<string>();
         var result = SeedSearcher.Search(
@@ -191,7 +191,7 @@ public class SeedSearcherTests
         var settingPackId = repo.ResolveUnlockPackId("normal");
         var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
 
-        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, "v46", 2, 9);
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, "v46", 2, 9);
 
         var matchCount = 0;
         var result = SeedSearcher.Search(
@@ -213,7 +213,7 @@ public class SeedSearcherTests
         var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
 
         var request = new SeedSearchRequest(
-            settingPackId, setup, new Dictionary<int, int>(), Tier: 0, "v46", 2, 9,
+            settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, "v46", 2, 9,
             ExcludedSeeds: new HashSet<string> { "v4" });
 
         var reported = new List<string>();
@@ -241,11 +241,11 @@ public class SeedSearcherTests
 
         var expectedMatches = ComputeMatchesSequentially(repo, settingPackId, setup, alphabet, length, totalToCheck);
 
-        // FlexibleTargetIds explicitly set to an empty set (rather than left null) - should be a
+        // FlexibleTargets explicitly set to an empty list (rather than left null) - should be a
         // total no-op, reproducing exactly today's fixed-day-only results.
         var request = new SeedSearchRequest(
-            settingPackId, setup, new Dictionary<int, int> { [TargetDay] = TargetCardId }, Tier: 0, alphabet, length, totalToCheck,
-            FlexibleTargetIds: new HashSet<int>());
+            settingPackId, setup, new Dictionary<int, TargetMatcher> { [TargetDay] = new TargetMatcher.ExactCard(TargetCardId) }, Tier: 0, alphabet, length, totalToCheck,
+            FlexibleTargets: new List<TargetMatcher>());
 
         var actualMatches = RunSearch(repo, request);
 
@@ -271,11 +271,11 @@ public class SeedSearcherTests
 
         var expectedMatches = ComputeFlexibleMatchesSequentially(
             repo, settingPackId, setup, alphabet, length, totalToCheck,
-            new Dictionary<int, int>(), new HashSet<int> { TargetCardId }, horizon);
+            new Dictionary<int, TargetMatcher>(), new List<TargetMatcher> { new TargetMatcher.ExactCard(TargetCardId) }, horizon);
 
         var request = new SeedSearchRequest(
-            settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck,
-            FlexibleTargetIds: new HashSet<int> { TargetCardId }, FlexibleHorizon: horizon);
+            settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck,
+            FlexibleTargets: new List<TargetMatcher> { new TargetMatcher.ExactCard(TargetCardId) }, FlexibleHorizon: horizon);
 
         var actualMatches = RunSearch(repo, request);
 
@@ -300,15 +300,15 @@ public class SeedSearcherTests
         var totalToCheck = (long)Math.Pow(alphabet.Length, length);
         const int horizon = 6; // covers SecondCardId's real day-6 offer for the ground-truth seed
 
-        var dayTargets = new Dictionary<int, int> { [TargetDay] = TargetCardId };
-        var flexibleTargetIds = new HashSet<int> { SecondCardId };
+        var dayTargets = new Dictionary<int, TargetMatcher> { [TargetDay] = new TargetMatcher.ExactCard(TargetCardId) };
+        var flexibleTargets = new List<TargetMatcher> { new TargetMatcher.ExactCard(SecondCardId) };
 
         var expectedMatches = ComputeFlexibleMatchesSequentially(
-            repo, settingPackId, setup, alphabet, length, totalToCheck, dayTargets, flexibleTargetIds, horizon);
+            repo, settingPackId, setup, alphabet, length, totalToCheck, dayTargets, flexibleTargets, horizon);
 
         var request = new SeedSearchRequest(
             settingPackId, setup, dayTargets, Tier: 0, alphabet, length, totalToCheck,
-            FlexibleTargetIds: flexibleTargetIds, FlexibleHorizon: horizon);
+            FlexibleTargets: flexibleTargets, FlexibleHorizon: horizon);
 
         var actualMatches = RunSearch(repo, request);
 
@@ -322,7 +322,7 @@ public class SeedSearcherTests
         var settingPackId = repo.ResolveUnlockPackId("normal");
         var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
 
-        var flexibleTargetIds = new HashSet<int> { TargetCardId };
+        var flexibleTargets = new List<TargetMatcher> { new TargetMatcher.ExactCard(TargetCardId) };
         const int horizon = TargetDay;
 
         // "bdghjmqr" is the ground-truth-pinned seed itself, not a member of the tiny brute-force
@@ -330,7 +330,7 @@ public class SeedSearcherTests
         // Pies/Health and Safety (CardDrawSimulatorGroundTruthTests.CapturedOffers), so a flexible
         // search for Vegetable Pies with a day-3 horizon must resolve to exactly day 3.
         var paths = SeedSearcher.ResolveCardPaths(
-            repo, new Seed("bdghjmqr"), settingPackId, setup, new Dictionary<int, int>(), flexibleTargetIds, horizon,
+            repo, new Seed("bdghjmqr"), settingPackId, setup, new Dictionary<int, TargetMatcher>(), flexibleTargets, horizon,
             tier: 0, allowRerollPerDay: false, maxPaths: 3);
 
         Assert.NotEmpty(paths);
@@ -357,7 +357,7 @@ public class SeedSearcherTests
         const int length = 4;
         var totalToCheck = (long)Math.Pow(alphabet.Length, length); // 256, includes "vqrj" itself
 
-        var withoutFilter = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck);
+        var withoutFilter = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck);
         var withFilter = withoutFilter with { OtFriendly = true, SettingSlug = "normal" };
 
         var allMatches = RunSearch(repo, withoutFilter);
@@ -388,7 +388,7 @@ public class SeedSearcherTests
 
         // No OtFriendly gating - every seed in the space matches trivially (no day targets).
         var request = new SeedSearchRequest(
-            settingPackId, setup, new Dictionary<int, int>(), Tier: 0, alphabet, length, totalToCheck,
+            settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck,
             SettingSlug: "normal", OtFriendly: false);
 
         var tags = RunSearchWithOtFriendlyTags(repo, request);
@@ -414,7 +414,7 @@ public class SeedSearcherTests
         const int rerollOnlyCardId = -1289628495; // "Roast Potato"
 
         var requestNoReroll = new SeedSearchRequest(
-            settingPackId, setup, new Dictionary<int, int> { [rerollDay] = rerollOnlyCardId }, Tier: 0,
+            settingPackId, setup, new Dictionary<int, TargetMatcher> { [rerollDay] = new TargetMatcher.ExactCard(rerollOnlyCardId) }, Tier: 0,
             Alphabet: "b", Length: 4, TotalToCheck: 1);
         var requestWithReroll = requestNoReroll with { AllowRerollPerDay = true };
 
@@ -436,8 +436,8 @@ public class SeedSearcherTests
         const int rerollOnlyCardId = -1289628495; // "Roast Potato"
 
         var paths = SeedSearcher.ResolveCardPaths(
-            repo, new Seed("bbbb"), settingPackId, setup, new Dictionary<int, int> { [rerollDay] = rerollOnlyCardId },
-            new HashSet<int>(), rerollDay, tier: 0, allowRerollPerDay: true, maxPaths: 3);
+            repo, new Seed("bbbb"), settingPackId, setup, new Dictionary<int, TargetMatcher> { [rerollDay] = new TargetMatcher.ExactCard(rerollOnlyCardId) },
+            new List<TargetMatcher>(), rerollDay, tier: 0, allowRerollPerDay: true, maxPaths: 3);
 
         Assert.NotEmpty(paths);
         var path = paths[0];
@@ -466,18 +466,143 @@ public class SeedSearcherTests
         const int exclusiveId = -1323758054; // only offered by the WRONG (pre-fix) skip_choices=1
         const int charmingId = 1293847744; // genuinely offered on day 5 (base offer, and real reroll)
 
-        var falsePositiveTargets = new Dictionary<int, int> { [3] = allYouCanEatId, [5] = exclusiveId };
-        var realTargets = new Dictionary<int, int> { [3] = allYouCanEatId, [5] = charmingId };
+        var falsePositiveTargets = new Dictionary<int, TargetMatcher> { [3] = new TargetMatcher.ExactCard(allYouCanEatId), [5] = new TargetMatcher.ExactCard(exclusiveId) };
+        var realTargets = new Dictionary<int, TargetMatcher> { [3] = new TargetMatcher.ExactCard(allYouCanEatId), [5] = new TargetMatcher.ExactCard(charmingId) };
 
         var falsePositivePaths = SeedSearcher.ResolveCardPaths(
             repo, new Seed("bbbbvw7"), settingPackId, setup, falsePositiveTargets,
-            new HashSet<int>(), maxDay: 5, tier: 0, allowRerollPerDay: true, maxPaths: 3);
+            new List<TargetMatcher>(), maxDay: 5, tier: 0, allowRerollPerDay: true, maxPaths: 3);
         Assert.Empty(falsePositivePaths);
 
         var realPaths = SeedSearcher.ResolveCardPaths(
             repo, new Seed("bbbbvw7"), settingPackId, setup, realTargets,
-            new HashSet<int>(), maxDay: 5, tier: 0, allowRerollPerDay: true, maxPaths: 3);
+            new List<TargetMatcher>(), maxDay: 5, tier: 0, allowRerollPerDay: true, maxPaths: 3);
         Assert.NotEmpty(realPaths);
+    }
+
+    // DishType 3 = Side (see Engine.Data.DishTypeCatalog). Over the "bd"-alphabet/length-3 space
+    // (same 8 candidate seeds as the exact-card tests above, Normal/Pies/Heat 0), directly probing
+    // each seed's real day-3/6/9/12 offers (via CardDrawSimulator, not guessed) found: only "bbd"
+    // offers a Side card on day 3 (Mashed Potato); "bbb"/"bbd"/"bdd"/"ddb"/"ddd" each offer at least
+    // one Side card somewhere across days 0-15 (day 9 and/or day 12); "ddb" and "ddd" are the only
+    // two that offer TWO separate Side cards (day 9 AND day 12) - the rest offer at most one.
+    private const int SideDishType = 3;
+
+    [Fact]
+    public void FixedDayClassTarget_MatchesAnyCardOfThatClass()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "bd";
+        const int length = 3;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length);
+
+        var request = new SeedSearchRequest(
+            settingPackId, setup, new Dictionary<int, TargetMatcher> { [TargetDay] = new TargetMatcher.AnyOfClass(SideDishType) },
+            Tier: 0, alphabet, length, totalToCheck);
+
+        var actualMatches = RunSearch(repo, request);
+
+        Assert.Equal(new HashSet<string> { "bbd" }, actualMatches);
+    }
+
+    [Fact]
+    public void LooseClassTarget_MatchesEverySeedWhereAnyMatchingCardIsObtainedByTheHorizon()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "bd";
+        const int length = 3;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length);
+        const int horizon = 15;
+
+        var request = new SeedSearchRequest(
+            settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck,
+            FlexibleTargets: new List<TargetMatcher> { new TargetMatcher.AnyOfClass(SideDishType) }, FlexibleHorizon: horizon);
+
+        var actualMatches = RunSearch(repo, request);
+
+        Assert.Equal(new HashSet<string> { "bbb", "bbd", "bdd", "ddb", "ddd" }, actualMatches);
+    }
+
+    // The test that actually exercises the List-not-HashSet structural fix (see
+    // SeedSearchRequest.FlexibleTargets' doc comment): two identical AnyOfClass(Side) entries must
+    // require TWO distinct Side cards to be obtained, not collapse into one requirement the way a
+    // HashSet<TargetMatcher> would if two equal-by-value records deduped. Only "ddb"/"ddd" offer two
+    // separate Side cards (day 9 and day 12) in this space - seeds with only one Side occurrence
+    // ("bbb", "bbd", "bdd") must NOT match a two-target requirement.
+    [Fact]
+    public void LooseClassTargetRepeats_RequireDistinctMatchingCardsEach()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "bd";
+        const int length = 3;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length);
+        const int horizon = 15;
+
+        var request = new SeedSearchRequest(
+            settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck,
+            FlexibleTargets: new List<TargetMatcher> { new TargetMatcher.AnyOfClass(SideDishType), new TargetMatcher.AnyOfClass(SideDishType) },
+            FlexibleHorizon: horizon);
+
+        var actualMatches = RunSearch(repo, request);
+
+        Assert.Equal(new HashSet<string> { "ddb", "ddd" }, actualMatches);
+    }
+
+    [Fact]
+    public void MixesAFixedExactCardTargetAndALooseClassTargetInTheSameSearch()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "bd";
+        const int length = 3;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length);
+        const int horizon = 15;
+
+        // TargetCardId ("Vegetable Pies") on day 3 alone matches {"bdb", "bdd", "ddb"} (see
+        // FindsExactlyTheSameMatchesAsAnIndependentSequentialSimulation's ComputeMatchesSequentially
+        // for the exact-card baseline); of those, only "bdd" and "ddb" also obtain a Side card by
+        // day 15 ("bdb" never does, per the class-target tests above).
+        var request = new SeedSearchRequest(
+            settingPackId, setup, new Dictionary<int, TargetMatcher> { [TargetDay] = new TargetMatcher.ExactCard(TargetCardId) },
+            Tier: 0, alphabet, length, totalToCheck,
+            FlexibleTargets: new List<TargetMatcher> { new TargetMatcher.AnyOfClass(SideDishType) }, FlexibleHorizon: horizon);
+
+        var actualMatches = RunSearch(repo, request);
+
+        Assert.Equal(new HashSet<string> { "bdd", "ddb" }, actualMatches);
+    }
+
+    [Fact]
+    public void ResolveCardPathsReportsTheConcreteCardAClassTargetActuallyResolvedTo()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        // "bbd" is the one seed (of the "bd"-alphabet/length-3 space) confirmed above to offer a
+        // Side card on day 3 (Mashed Potato).
+        var dayTargets = new Dictionary<int, TargetMatcher> { [TargetDay] = new TargetMatcher.AnyOfClass(SideDishType) };
+
+        var paths = SeedSearcher.ResolveCardPaths(
+            repo, new Seed("bbd"), settingPackId, setup, dayTargets, new List<TargetMatcher>(), TargetDay,
+            tier: 0, allowRerollPerDay: false, maxPaths: 3);
+
+        Assert.NotEmpty(paths);
+        var path = paths[0];
+        var targetEntry = Assert.Single(path, entry => entry.Day == TargetDay);
+        Assert.NotNull(targetEntry.CardId);
+        Assert.Equal(SideDishType, repo.GetUnlock(targetEntry.CardId!.Value).DishType);
     }
 
     // Guards the exact int/long overflow pitfall IntValue-space search depends on: `1 << 32` (int)
@@ -491,7 +616,7 @@ public class SeedSearcherTests
         var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
         var settingPackId = repo.ResolveUnlockPackId("normal");
         var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
-        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, int>(), Tier: 0, Seed.FriendlyCharacters, Length: 8, totalToCheck);
+        var request = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, Seed.FriendlyCharacters, Length: 8, totalToCheck);
 
         Assert.Equal(expected, SeedSearcher.ShouldUseIntValueSpace(request));
     }
@@ -558,7 +683,7 @@ public class SeedSearcherTests
     // drift without a test noticing.
     private static HashSet<string> ComputeFlexibleMatchesSequentially(
         GameDataRepository repo, int settingPackId, ResolvedRunSetup setup, string alphabet, int length, long totalToCheck,
-        IReadOnlyDictionary<int, int> dayTargets, IReadOnlySet<int> flexibleTargetIds, int horizon)
+        IReadOnlyDictionary<int, TargetMatcher> dayTargets, IReadOnlyList<TargetMatcher> flexibleTargets, int horizon)
     {
         var matches = new HashSet<string>();
         for (var i = 0L; i < totalToCheck; i++)
@@ -566,35 +691,50 @@ public class SeedSearcherTests
             var seedString = IndexToSeedString(i, alphabet, length);
             var freshSetup = new ResolvedRunSetup(new HashSet<int>(setup.InitiallyOwnedIds), setup.BonusPackIds);
             var sim = new CardDrawSimulator(repo, new Seed(seedString), settingPackId, freshSetup);
-            var remaining = new HashSet<int>(flexibleTargetIds);
+            var remaining = new List<TargetMatcher>(flexibleTargets);
             var fixedMismatch = false;
 
             for (var day = 0; day <= horizon; day++)
             {
-                var fixedTarget = dayTargets.TryGetValue(day, out var t) ? t : (int?)null;
+                var fixedTarget = dayTargets.TryGetValue(day, out var t) ? t : (TargetMatcher?)null;
                 var result = sim.SimulateDay(day, offered =>
                 {
-                    if (fixedTarget is int ft)
+                    if (fixedTarget is { } ft)
                     {
-                        return offered.Unlock1Id == ft || offered.Unlock2Id == ft ? ft : offered.Unlock1Id;
+                        if (offered.Unlock1Id is int fid1 && ft.Matches(repo.GetUnlock(fid1)))
+                        {
+                            return offered.Unlock1Id;
+                        }
+
+                        return offered.Unlock2Id is int fid2 && ft.Matches(repo.GetUnlock(fid2)) ? offered.Unlock2Id : offered.Unlock1Id;
                     }
 
-                    if (offered.Unlock1Id is int u1 && remaining.Contains(u1))
+                    if (offered.Unlock1Id is int u1)
                     {
-                        remaining.Remove(u1);
-                        return u1;
+                        var idx1 = remaining.FindIndex(m => m.Matches(repo.GetUnlock(u1)));
+                        if (idx1 >= 0)
+                        {
+                            remaining.RemoveAt(idx1);
+                            return u1;
+                        }
                     }
 
-                    if (offered.Unlock2Id is int u2 && remaining.Contains(u2))
+                    if (offered.Unlock2Id is int u2)
                     {
-                        remaining.Remove(u2);
-                        return u2;
+                        var idx2 = remaining.FindIndex(m => m.Matches(repo.GetUnlock(u2)));
+                        if (idx2 >= 0)
+                        {
+                            remaining.RemoveAt(idx2);
+                            return u2;
+                        }
                     }
 
                     return offered.Unlock1Id;
                 });
 
-                if (fixedTarget is int f && result.Unlock1Id != f && result.Unlock2Id != f)
+                if (fixedTarget is { } f &&
+                    !(result.Unlock1Id is int rid1 && f.Matches(repo.GetUnlock(rid1))) &&
+                    !(result.Unlock2Id is int rid2 && f.Matches(repo.GetUnlock(rid2))))
                 {
                     fixedMismatch = true;
                     break;

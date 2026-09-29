@@ -33,7 +33,7 @@ public class OtFriendlyCheckerTests
         var repo = LoadRepo();
         var setup = RunSetup.Resolve(repo, -133939790, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
         var request = new SeedSearchRequest(
-            repo.ResolveUnlockPackId("normal"), setup, new Dictionary<int, int>(), Tier: 0,
+            repo.ResolveUnlockPackId("normal"), setup, new Dictionary<int, TargetMatcher>(), Tier: 0,
             Alphabet: "vqrj", Length: 1, TotalToCheck: 4,
             OtFriendly: true, SettingSlug: null);
 

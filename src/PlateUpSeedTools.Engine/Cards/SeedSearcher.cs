@@ -9,16 +9,23 @@ namespace PlateUpSeedTools.Engine.Cards;
 public sealed record SeedSearchRequest(
     int SettingPackId,
     ResolvedRunSetup Setup,
-    IReadOnlyDictionary<int, int> DayTargets,
+    // Day -> what's required that day - either one exact card (TargetMatcher.ExactCard) or any
+    // card of a dish class (TargetMatcher.AnyOfClass, e.g. "Any Side" - see TargetMatcher.cs).
+    IReadOnlyDictionary<int, TargetMatcher> DayTargets,
     int Tier,
     string Alphabet,
     int Length,
     long TotalToCheck,
     IReadOnlySet<string>? ExcludedSeeds = null,
-    // Cards the caller wants obtained by FlexibleHorizon but doesn't care which day - mixed freely
-    // with DayTargets in the same search (e.g. "Ice Cream on day 3, Individual Dining any day").
-    // Empty/null means "fixed-day targets only", reproducing pre-existing behavior exactly.
-    IReadOnlySet<int>? FlexibleTargetIds = null,
+    // Targets the caller wants satisfied by FlexibleHorizon but doesn't care which day - mixed
+    // freely with DayTargets in the same search (e.g. "Ice Cream on day 3, Individual Dining any
+    // day"). Empty/null means "fixed-day targets only", reproducing pre-existing behavior exactly.
+    // A List, not a Set: two entries can be independently-claimable duplicates (two "Any Side"
+    // targets, or even two identical exact-card loose targets), which a HashSet<int> could never
+    // represent - either it has no single id to key on (a class target), or it silently dedupes
+    // two identical exact-card entries into one. Claiming consumes exactly one matching entry, not
+    // every structurally-equal one - see SeedSearcher.TryClaim.
+    IReadOnlyList<TargetMatcher>? FlexibleTargets = null,
     int FlexibleHorizon = 15,
     // Restaurant-setting slug (NOT SettingPackId, the card-draw pack - can differ, see the "card
     // schedule" override feature) - only needed to resolve a layout when OtFriendly is set, since
@@ -154,11 +161,11 @@ public static class SeedSearcher
             throw new ArgumentException("SettingSlug is required when OtFriendly is set - OtFriendlyChecker needs it to resolve the starting-kitchen layout.", nameof(request));
         }
 
-        var hasFlexibleTargets = request.FlexibleTargetIds is { Count: > 0 };
+        var hasFlexibleTargets = request.FlexibleTargets is { Count: > 0 };
         var maxDay = Math.Max(
             request.DayTargets.Count == 0 ? 0 : request.DayTargets.Keys.Max(),
             hasFlexibleTargets ? request.FlexibleHorizon : 0);
-        var flexibleTargetIds = hasFlexibleTargets ? request.FlexibleTargetIds! : (IReadOnlySet<int>)new HashSet<int>();
+        var flexibleTargets = hasFlexibleTargets ? request.FlexibleTargets! : (IReadOnlyList<TargetMatcher>)Array.Empty<TargetMatcher>();
         long checkedCount = 0;
         long matchCount = 0;
         var matchCapReached = false;
@@ -214,7 +221,7 @@ public static class SeedSearcher
                     {
                         var (isMatch, otFriendly) = Matches(
                             repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
-                            flexibleTargetIds, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
+                            flexibleTargets, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
                             request.AllowRerollPerDay);
                         if (isMatch)
                         {
@@ -248,7 +255,7 @@ public static class SeedSearcher
                     {
                         var (isMatch, otFriendly) = Matches(
                             repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
-                            flexibleTargetIds, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
+                            flexibleTargets, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
                             request.AllowRerollPerDay);
                         if (isMatch)
                         {
@@ -318,16 +325,16 @@ public static class SeedSearcher
     /// </summary>
     private static (bool IsMatch, bool OtFriendly) Matches(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, IReadOnlySet<int> flexibleTargetIds, int maxDay, int tier,
+        IReadOnlyDictionary<int, TargetMatcher> dayTargets, IReadOnlyList<TargetMatcher> flexibleTargets, int maxDay, int tier,
         bool otFriendly, string? settingSlug, bool allowRerollPerDay)
     {
-        // Mutated in place by Walk as flexible targets get picked up - a strict subset check at the
-        // end (rather than a running "found day X" flag) since order among flexible targets doesn't
-        // matter, only that all of them end up owned by maxDay.
-        var remainingFlexible = new HashSet<int>(flexibleTargetIds);
-        foreach (var (_, targetId, actual, _) in Walk(repo, seed, settingPackId, setup, dayTargets, remainingFlexible, maxDay, tier, allowRerollPerDay))
+        // Mutated in place by Walk as flexible targets get picked up - a strict "none left" check at
+        // the end (rather than a running "found target X" flag) since order among flexible targets
+        // doesn't matter, only that all of them end up satisfied by maxDay.
+        var remainingFlexible = new List<TargetMatcher>(flexibleTargets);
+        foreach (var (_, targetMatcher, actual, _) in Walk(repo, seed, settingPackId, setup, dayTargets, remainingFlexible, maxDay, tier, allowRerollPerDay))
         {
-            if (targetId is int t && actual.Unlock1Id != t && actual.Unlock2Id != t)
+            if (targetMatcher is { } tm && !OfferedMatches(repo, actual.Unlock1Id, tm) && !OfferedMatches(repo, actual.Unlock2Id, tm))
             {
                 return (false, false);
             }
@@ -370,7 +377,7 @@ public static class SeedSearcher
     /// </summary>
     public static IReadOnlyList<IReadOnlyList<(int Day, int? CardId, bool Rerolled)>> ResolveCardPaths(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, IReadOnlySet<int> flexibleTargetIds, int maxDay, int tier,
+        IReadOnlyDictionary<int, TargetMatcher> dayTargets, IReadOnlyList<TargetMatcher> flexibleTargets, int maxDay, int tier,
         bool allowRerollPerDay, int maxPaths)
     {
         var results = new List<IReadOnlyList<(int Day, int? CardId, bool Rerolled)>>();
@@ -378,15 +385,15 @@ public static class SeedSearcher
         var nodesVisited = 0;
         Backtrack(
             repo, seed, settingPackId, setup, dayTargets, maxDay, tier, allowRerollPerDay,
-            day: 0, ownedIds: new HashSet<int>(setup.InitiallyOwnedIds), remainingFlexible: new HashSet<int>(flexibleTargetIds),
+            day: 0, ownedIds: new HashSet<int>(setup.InitiallyOwnedIds), remainingFlexible: new List<TargetMatcher>(flexibleTargets),
             rerollsUsedSoFar: 0, current, results, maxPaths, ref nodesVisited);
         return results;
     }
 
     private static void Backtrack(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, int maxDay, int tier, bool allowRerollPerDay, int day,
-        HashSet<int> ownedIds, HashSet<int> remainingFlexible, int rerollsUsedSoFar,
+        IReadOnlyDictionary<int, TargetMatcher> dayTargets, int maxDay, int tier, bool allowRerollPerDay, int day,
+        HashSet<int> ownedIds, List<TargetMatcher> remainingFlexible, int rerollsUsedSoFar,
         List<(int Day, int? CardId, bool Rerolled)> current, List<IReadOnlyList<(int Day, int? CardId, bool Rerolled)>> results,
         int maxPaths, ref int nodesVisited)
     {
@@ -415,7 +422,7 @@ public static class SeedSearcher
         // owned-set - PeekOffer never mutates anything we keep.
         var peekSetup = new ResolvedRunSetup(new HashSet<int>(ownedIds), setup.BonusPackIds);
         var sim = new CardDrawSimulator(repo, seed, settingPackId, peekSetup, tier);
-        var targetId = dayTargets.TryGetValue(day, out var target) ? target : (int?)null;
+        var targetMatcher = dayTargets.TryGetValue(day, out var target) ? target : (TargetMatcher?)null;
 
         var offered = sim.PeekOffer(day, skipChoices: 0).Options;
         var rerolled = false;
@@ -424,10 +431,10 @@ public static class SeedSearcher
         // uses the correct (possibly >1) skip_choices if an earlier day in this same branch also
         // rerolled.
         var nextRerollsUsedSoFar = rerollsUsedSoFar;
-        if (allowRerollPerDay && !OfferSatisfiesWanted(offered, targetId, remainingFlexible))
+        if (allowRerollPerDay && !OfferSatisfiesWanted(repo, offered, targetMatcher, remainingFlexible))
         {
             var rerollOffer = sim.PeekOffer(day, rerollsUsedSoFar + 1).Options;
-            if (OfferSatisfiesWanted(rerollOffer, targetId, remainingFlexible))
+            if (OfferSatisfiesWanted(repo, rerollOffer, targetMatcher, remainingFlexible))
             {
                 offered = rerollOffer;
                 rerolled = true;
@@ -444,14 +451,28 @@ public static class SeedSearcher
         }
 
         List<int> candidates;
-        if (targetId is int target2)
+        if (targetMatcher is { } tm2)
         {
-            if (offered.Unlock1Id != target2 && offered.Unlock2Id != target2)
+            // Either offered slot legitimately satisfies a class target (e.g. two Side dishes
+            // offered the same night both satisfy "Any Side") - explore both as distinct paths,
+            // unlike an exact-card target which only ever has one possible candidate.
+            var matching = new List<int>();
+            if (OfferedMatches(repo, offered.Unlock1Id, tm2))
+            {
+                matching.Add(offered.Unlock1Id!.Value);
+            }
+
+            if (offered.Unlock2Id is int u2m && u2m != offered.Unlock1Id && OfferedMatches(repo, u2m, tm2))
+            {
+                matching.Add(u2m);
+            }
+
+            if (matching.Count == 0)
             {
                 return; // Dead end: this branch's owned-set no longer offers the target on this day.
             }
 
-            candidates = [target2];
+            candidates = matching;
         }
         else
         {
@@ -464,7 +485,7 @@ public static class SeedSearcher
             // result stays consistent with what Matches actually confirmed) - but still explore the
             // "leave it as filler" branch too, same as today's multi-option filler days, since a
             // flexible target left for a later day is just as valid a path as picking it now.
-            candidates = opts.OrderByDescending(remainingFlexible.Contains).ToList();
+            candidates = opts.OrderByDescending(id => remainingFlexible.Exists(m => m.Matches(repo.GetUnlock(id)))).ToList();
         }
 
         foreach (var candidate in candidates)
@@ -476,30 +497,50 @@ public static class SeedSearcher
 
             current.Add((day, candidate, rerolled));
             var nextOwned = new HashSet<int>(ownedIds) { candidate };
-            var nextRemainingFlexible = remainingFlexible.Contains(candidate)
-                ? new HashSet<int>(remainingFlexible.Where(id => id != candidate))
-                : remainingFlexible;
+            var claimedIdx = remainingFlexible.FindIndex(m => m.Matches(repo.GetUnlock(candidate)));
+            var nextRemainingFlexible = claimedIdx < 0
+                ? remainingFlexible
+                : remainingFlexible.Where((_, i) => i != claimedIdx).ToList();
             Backtrack(repo, seed, settingPackId, setup, dayTargets, maxDay, tier, allowRerollPerDay, day + 1, nextOwned, nextRemainingFlexible, nextRerollsUsedSoFar, current, results, maxPaths, ref nodesVisited);
             current.RemoveAt(current.Count - 1);
         }
     }
 
-    /// <summary>Whether an offer contains something still wanted - a fixed day target, or (when
-    /// targetId is null, i.e. a filler day) any card still in remainingFlexible.</summary>
-    private static bool OfferSatisfiesWanted(UnlockOptions offered, int? targetId, HashSet<int> remainingFlexible)
+    private static bool OfferedMatches(GameDataRepository repo, int? offeredId, TargetMatcher matcher) =>
+        offeredId is int id && matcher.Matches(repo.GetUnlock(id));
+
+    /// <summary>Removes exactly ONE matching entry (not every structurally-equal one) so repeats are
+    /// claimed independently - two AnyOfClass(Side) entries and a Side card correctly consumes
+    /// either one, and a mix of ExactCard/AnyOfClass entries never removes the wrong kind.</summary>
+    private static bool TryClaim(List<TargetMatcher> remaining, GameDataRepository repo, int offeredId)
     {
-        if (targetId is int t)
+        var card = repo.GetUnlock(offeredId);
+        var idx = remaining.FindIndex(m => m.Matches(card));
+        if (idx < 0)
         {
-            return offered.Unlock1Id == t || offered.Unlock2Id == t;
+            return false;
         }
 
-        return (offered.Unlock1Id is int u1 && remainingFlexible.Contains(u1)) ||
-               (offered.Unlock2Id is int u2 && remainingFlexible.Contains(u2));
+        remaining.RemoveAt(idx);
+        return true;
     }
 
-    private static IEnumerable<(int Day, int? TargetId, CardDayResult Actual, bool Rerolled)> Walk(
+    /// <summary>Whether an offer contains something still wanted - a fixed day target, or (when
+    /// targetMatcher is null, i.e. a filler day) any card still in remainingFlexible.</summary>
+    private static bool OfferSatisfiesWanted(GameDataRepository repo, UnlockOptions offered, TargetMatcher? targetMatcher, List<TargetMatcher> remainingFlexible)
+    {
+        if (targetMatcher is { } tm)
+        {
+            return OfferedMatches(repo, offered.Unlock1Id, tm) || OfferedMatches(repo, offered.Unlock2Id, tm);
+        }
+
+        return (offered.Unlock1Id is int u1 && remainingFlexible.Exists(m => m.Matches(repo.GetUnlock(u1)))) ||
+               (offered.Unlock2Id is int u2 && remainingFlexible.Exists(m => m.Matches(repo.GetUnlock(u2))));
+    }
+
+    private static IEnumerable<(int Day, TargetMatcher? TargetMatcher, CardDayResult Actual, bool Rerolled)> Walk(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
-        IReadOnlyDictionary<int, int> dayTargets, HashSet<int> remainingFlexible, int maxDay, int tier,
+        IReadOnlyDictionary<int, TargetMatcher> dayTargets, List<TargetMatcher> remainingFlexible, int maxDay, int tier,
         bool allowRerollPerDay)
     {
         // ResolvedRunSetup.InitiallyOwnedIds gets mutated per-day by the simulator, so each candidate
@@ -521,20 +562,20 @@ public static class SeedSearcher
         // harmless to always include: no other decoded condition can ever match day 0.
         for (var day = 0; day <= maxDay; day++)
         {
-            var targetId = dayTargets.TryGetValue(day, out var t) ? t : (int?)null;
+            var targetMatcher = dayTargets.TryGetValue(day, out var t) ? t : (TargetMatcher?)null;
 
             // Only worth probing a reroll when something is actually wanted this day - filler days
             // with nothing left to chase don't care what's offered, so skip the extra PeekOffer cost.
             var skipChoices = 0;
             var rerolled = false;
-            if (allowRerollPerDay && (targetId is not null || remainingFlexible.Count > 0))
+            if (allowRerollPerDay && (targetMatcher is not null || remainingFlexible.Count > 0))
             {
                 var baseOffer = sim.PeekOffer(day, skipChoices: 0).Options;
-                if (!OfferSatisfiesWanted(baseOffer, targetId, remainingFlexible))
+                if (!OfferSatisfiesWanted(repo, baseOffer, targetMatcher, remainingFlexible))
                 {
                     var candidateSkipChoices = rerollsUsedSoFar + 1;
                     var rerollOffer = sim.PeekOffer(day, candidateSkipChoices).Options;
-                    if (OfferSatisfiesWanted(rerollOffer, targetId, remainingFlexible))
+                    if (OfferSatisfiesWanted(repo, rerollOffer, targetMatcher, remainingFlexible))
                     {
                         skipChoices = candidateSkipChoices;
                         rerolled = true;
@@ -545,30 +586,33 @@ public static class SeedSearcher
 
             var result = sim.SimulateDay(day, offered =>
             {
-                if (targetId is int tid)
+                if (targetMatcher is { } tm)
                 {
-                    return offered.Unlock1Id == tid || offered.Unlock2Id == tid ? tid : offered.Unlock1Id;
+                    if (OfferedMatches(repo, offered.Unlock1Id, tm))
+                    {
+                        return offered.Unlock1Id;
+                    }
+
+                    return OfferedMatches(repo, offered.Unlock2Id, tm) ? offered.Unlock2Id : offered.Unlock1Id;
                 }
 
                 // No fixed target this day - greedily accept whichever offered slot still needs
                 // picking up (Unlock1Id preferred, matching the existing filler convention below),
                 // else fall back to the same "accept Unlock1Id as filler" policy as always.
-                if (offered.Unlock1Id is int u1 && remainingFlexible.Contains(u1))
+                if (offered.Unlock1Id is int u1 && TryClaim(remainingFlexible, repo, u1))
                 {
-                    remainingFlexible.Remove(u1);
                     return u1;
                 }
 
-                if (offered.Unlock2Id is int u2 && remainingFlexible.Contains(u2))
+                if (offered.Unlock2Id is int u2 && TryClaim(remainingFlexible, repo, u2))
                 {
-                    remainingFlexible.Remove(u2);
                     return u2;
                 }
 
                 return offered.Unlock1Id;
             }, skipChoices);
 
-            yield return (day, targetId, result, rerolled);
+            yield return (day, targetMatcher, result, rerolled);
         }
     }
 

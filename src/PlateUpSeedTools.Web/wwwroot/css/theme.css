@@ -511,6 +511,7 @@ button[type="submit"]:hover {
 
 .dynamic-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
 }
@@ -536,8 +537,16 @@ button[type="submit"]:hover {
   min-width: 0;
 }
 
-.dynamic-row input[list]:invalid {
+.dynamic-row input[list]:invalid,
+.dynamic-row select:invalid {
   border-color: var(--error, #d33);
+}
+
+/* The "Specific card"/"Any of class" toggle should stay compact, unlike the card/class value
+   control next to it (which flexes to fill via the rule above). */
+.dynamic-row .day-target-mode {
+  flex: none;
+  width: auto;
 }
 
 .any-day-toggle {

@@ -125,6 +125,52 @@ function setDatalistOptions(datalist, names) {
   }
 }
 
+// Unlike setDatalistOptions (a <datalist> backing a free-text <input>), this populates a real
+// <select> - so an already-chosen value that's still a valid option must be preserved rather than
+// reset to nothing on every repopulate (a free-text input never has this problem, since typed text
+// isn't cleared by changing the datalist). A value staged before options existed yet (see
+// addDayTargetRow's prefill-ordering note) is applied here once options actually exist, then cleared.
+function setClassSelectOptions(select, classes) {
+  const previousValue = select.dataset.pendingClassValue ?? select.value;
+  select.innerHTML = "";
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = classes.length === 0 ? "No classes reachable" : "Choose a class";
+  select.appendChild(placeholder);
+
+  for (const cls of classes) {
+    const option = document.createElement("option");
+    option.value = String(cls.dishType);
+    option.textContent = cls.displayName;
+    select.appendChild(option);
+  }
+
+  if (previousValue && [...select.options].some((o) => o.value === previousValue)) {
+    select.value = previousValue;
+  }
+
+  delete select.dataset.pendingClassValue;
+}
+
+// <select>-flavored sibling of validateCardInput - invalid if class mode is active and nothing
+// valid is currently selected (covers both "never chose one" and "a previously-valid class stopped
+// being reachable after an earlier row's card changed").
+function validateClassInput(select) {
+  if (select.disabled) {
+    select.setCustomValidity("");
+    return true;
+  }
+
+  if (!select.value) {
+    select.setCustomValidity("Choose a dish class.");
+    return false;
+  }
+
+  select.setCustomValidity("");
+  return true;
+}
+
 // Enforces the user's decision: a typed value that isn't one of the row's current valid options
 // blocks submit with a message (via the input's native validity state), rather than silently
 // reverting to the last valid value.
@@ -153,10 +199,18 @@ function getRowDay(row) {
 }
 
 // A row toggled "any day" (see addDayTargetRow) only needs its card obtained by day 15, order/day
-// unspecified - see SeedSearchRequest.FlexibleTargetIds. Its day INPUT is ignored/cleared while
+// unspecified - see SeedSearchRequest.FlexibleTargets. Its day INPUT is ignored/cleared while
 // this is checked.
 function isRowFlexible(row) {
   return row.querySelector(".day-target-any-day")?.checked ?? false;
+}
+
+// "card" (default) = an exact card name via the free-text/datalist input; "class" = any card of a
+// dish category via the select populated by setClassSelectOptions - see addDayTargetRow's mode
+// toggle. Mutually exclusive by construction (only one of the two controls is ever enabled/visible
+// per row), matching DayTargetDto's CardName/DishType shape.
+function getRowMode(row) {
+  return row.querySelector(".day-target-mode")?.value ?? "card";
 }
 
 // The day value that actually governs matching/refresh for this row - null for a flexible row
@@ -181,10 +235,15 @@ function getAllFranchiseRows() {
 // validity first (via validateCardInput) so a resolved conflict doesn't leave a stale message
 // behind, then overlays the conflict message on top where one still applies.
 function refreshBlockedByValidation() {
-  const entries = getAllDayTargetRows().map((row) => {
-    const input = row.querySelector(".day-target-card");
-    return { input, unlock: unlocksForSetting.find((u) => u.name === input.value) };
-  });
+  // Class-mode rows are excluded here entirely - there's no single unlock to look up (any card of
+  // the class could satisfy it), so they can't participate in a pairwise BlockedBy check. See
+  // TargetMatcher.cs / UnlockPackEvaluator.HasBlockedByConflict's scope on the server side.
+  const entries = getAllDayTargetRows()
+    .filter((row) => getRowMode(row) === "card")
+    .map((row) => {
+      const input = row.querySelector(".day-target-card");
+      return { input, unlock: unlocksForSetting.find((u) => u.name === input.value) };
+    });
 
   for (const { input } of entries) {
     validateCardInput(input);
@@ -221,11 +280,68 @@ function addDayTargetRow() {
   dayInput.className = "day-target-day";
   dayInput.required = true;
 
+  // "Specific card" (default) vs "Any of class" - swaps which of cardInput/classSelect below is
+  // the row's active target control. A separate explicit toggle rather than overloading cardInput
+  // with sentinel values like "Any Side", so DayTargetDto's CardName/DishType stay a real
+  // structural choice instead of string-parsing a magic value.
+  const modeSelect = document.createElement("select");
+  modeSelect.className = "day-target-mode";
+  const cardModeOption = document.createElement("option");
+  cardModeOption.value = "card";
+  cardModeOption.textContent = "Specific card";
+  const classModeOption = document.createElement("option");
+  classModeOption.value = "class";
+  classModeOption.textContent = "Any of class";
+  modeSelect.appendChild(cardModeOption);
+  modeSelect.appendChild(classModeOption);
+
   // Starts empty and disabled - only populated (via /api/search/possible-cards) once this row has
   // a valid day, and only with cards actually reachable that day given the dish/heat/earlier picks.
   const { input: cardInput, datalist: cardDatalist } = createCardInput("day-target-card");
   cardInput.disabled = true;
   cardInput.required = true;
+
+  // Class mode's equivalent of cardInput - a real <select> (not a datalist-backed input, since the
+  // option set is small and closed) populated the same way, only with reachable dish classes
+  // instead of reachable card names. Starts hidden/disabled/not-required to match the default
+  // "card" mode - see the modeSelect change handler below for how these two controls trade places.
+  const classSelect = document.createElement("select");
+  classSelect.className = "day-target-class";
+  classSelect.hidden = true;
+  classSelect.disabled = true;
+  classSelect.required = true;
+  classSelect.addEventListener("blur", () => validateClassInput(classSelect));
+  classSelect.addEventListener("change", () => {
+    validateClassInput(classSelect);
+    refreshBlockedByValidation();
+  });
+
+  modeSelect.addEventListener("change", () => {
+    const cardMode = modeSelect.value === "card";
+    cardInput.hidden = !cardMode;
+    cardInput.required = cardMode;
+    classSelect.hidden = cardMode;
+    classSelect.required = !cardMode;
+    if (cardMode) {
+      classSelect.value = "";
+      classSelect.setCustomValidity("");
+    } else {
+      cardInput.value = "";
+      cardInput.setCustomValidity("");
+    }
+
+    // A mode switch changes what this row actually needs (a specific card's reachability vs a
+    // class's), AND what it contributes as an "owned prior" to every later row/the franchise
+    // dropdown (a class-mode row contributes nothing there - see refreshDayTargetRow/
+    // getDayTargetCardNames) - refresh this row and everything after it, same threshold policy
+    // cardInput's own change handler below uses for a fixed row.
+    if (isRowFlexible(row)) {
+      scheduleAllDayTargetRefresh();
+    } else {
+      scheduleAffectedDayTargetRefresh(getRowDay(row) ?? 0);
+    }
+    scheduleAllFranchiseRefresh();
+  });
 
   // Per-card toggle (not a global mode): this row's card just needs to be obtained by day 15, in
   // any order relative to the rest of the list - mixed freely with pinned-day rows in one search.
@@ -294,8 +410,10 @@ function addDayTargetRow() {
 
   row.appendChild(dayInput);
   row.appendChild(anyDayLabel);
+  row.appendChild(modeSelect);
   row.appendChild(cardInput);
   row.appendChild(cardDatalist);
+  row.appendChild(classSelect);
   row.appendChild(removeButton);
   dayTargetRowsEl.appendChild(row);
   scheduleRowRefresh(row);
@@ -350,13 +468,16 @@ otFriendlyInput.addEventListener("change", () => {
   for (const row of getAllDayTargetRows()) {
     const dayInput = row.querySelector(".day-target-day");
     const cardInput = row.querySelector(".day-target-card");
-    if (!dayInput.value && !cardInput.value) {
+    const classSelect = row.querySelector(".day-target-class");
+    if (!dayInput.value && !cardInput.value && !classSelect.value) {
       dayInput.required = false;
       cardInput.required = false;
-      // validateCardInput may have already run while cardInput was still required, leaving a
-      // stale setCustomValidity("Choose a card.") message - required alone doesn't clear that,
-      // re-run it now so an untouched row's card field is genuinely valid, not just not-required.
+      classSelect.required = false;
+      // validateCardInput/validateClassInput may have already run while still required, leaving a
+      // stale setCustomValidity message - required alone doesn't clear that, re-run it now so an
+      // untouched row's active field is genuinely valid, not just not-required.
       validateCardInput(cardInput);
+      validateClassInput(classSelect);
     }
   }
 });
@@ -406,7 +527,11 @@ function scheduleAllFranchiseRefresh() {
   }
 }
 
-async function fetchPossibleCardNames(day, priorTargets, franchiseCardNames) {
+// Returns both reachable card names (for the "Specific card" datalist) and reachable dish classes
+// (for the "Any of class" select) in one round-trip - both are projections of the same server-side
+// possibleIds set, so a second independent endpoint/fetch per row would just add a duplicate
+// debounce/generation race for no benefit. See PossibleCardsResponse/SearchEndpoints.GetPossibleCards.
+async function fetchPossibleCardsAndClasses(day, priorTargets, franchiseCardNames) {
   const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
   try {
     const response = await fetch("/api/search/possible-cards", {
@@ -425,12 +550,12 @@ async function fetchPossibleCardNames(day, priorTargets, franchiseCardNames) {
       }),
     });
     if (!response.ok) {
-      return [];
+      return { cardNames: [], classes: [] };
     }
     const body = await response.json();
-    return body.cardNames;
+    return { cardNames: body.cardNames, classes: body.classes };
   } catch {
-    return [];
+    return { cardNames: [], classes: [] };
   }
 }
 
@@ -461,31 +586,51 @@ async function fetchFranchiseCandidates(otherSelectedCardNames) {
 }
 
 async function refreshDayTargetRow(row) {
+  const mode = getRowMode(row);
   const cardInput = row.querySelector(".day-target-card");
   const datalist = document.getElementById(cardInput.getAttribute("list"));
+  const classSelect = row.querySelector(".day-target-class");
+  const activeControl = mode === "class" ? classSelect : cardInput;
+  const inactiveControl = mode === "class" ? cardInput : classSelect;
   const flexible = isRowFlexible(row);
 
+  // The inactive control (whichever of card/class this row isn't currently using) is never a
+  // validation candidate and never populated - always disabled, regardless of dish/day state. This
+  // is the *inactive* side being disabled, not the session-8 "disabling the active field breaks
+  // native validation" bug (see cardInput's own comment below) - it's genuinely not this row's target.
+  inactiveControl.disabled = true;
+
   if (!dishSelect.value) {
-    // Nothing to type against yet, but this doesn't hide anything from validation - the whole
-    // day-targets section is disabled in this state via setDayTargetsEnabled anyway, and the form
-    // is already correctly blocked by dish-select's own separate `required` attribute regardless.
-    cardInput.disabled = true;
-    setDatalistOptions(datalist, []);
+    // Nothing to type/select against yet, but this doesn't hide anything from validation - the
+    // whole day-targets section is disabled in this state via setDayTargetsEnabled anyway, and the
+    // form is already correctly blocked by dish-select's own separate `required` attribute regardless.
+    activeControl.disabled = true;
+    if (mode === "class") {
+      setClassSelectOptions(classSelect, []);
+    } else {
+      setDatalistOptions(datalist, []);
+    }
     return;
   }
 
-  // Never disable this field once a dish is chosen, for any reason (invalid/empty day, zero
-  // candidates, etc.) - a disabled field is invisible to native form validation entirely
+  // Never disable the ACTIVE control once a dish is chosen, for any reason (invalid/empty day,
+  // zero candidates, etc.) - a disabled field is invisible to native form validation entirely
   // (setCustomValidity/reportValidity/required are all no-ops on it), which was letting the form
   // submit despite an incomplete/invalid row in exactly the state that should have blocked it.
-  // validateCardInput's :invalid styling communicates the problem instead, and stays effective.
-  cardInput.disabled = false;
+  // validateCardInput/validateClassInput's :invalid styling communicates the problem instead, and
+  // stays effective.
+  activeControl.disabled = false;
 
   // A flexible row has no day to validate - it's always queryable once a dish is chosen.
   const day = flexible ? null : getRowDay(row);
   if (!flexible && (day === null || day < 0)) {
-    setDatalistOptions(datalist, []);
-    validateCardInput(cardInput);
+    if (mode === "class") {
+      setClassSelectOptions(classSelect, []);
+      validateClassInput(classSelect);
+    } else {
+      setDatalistOptions(datalist, []);
+      validateCardInput(cardInput);
+    }
     return;
   }
 
@@ -494,26 +639,35 @@ async function refreshDayTargetRow(row) {
 
   // A flexible prior is always included (it could end up owned at any point); a fixed prior is
   // only included if it's strictly before this row's own day, OR this row itself is flexible (no
-  // day to be "before" - conservatively treat every fixed prior as possibly-already-owned too).
+  // day to be "before" - conservatively treat every fixed prior as possibly-already-owned too). A
+  // class-mode prior contributes nothing (empty cardName here, filtered out below) - we don't know
+  // which concrete card it'll resolve to, so it can't sharpen a later row's reachability, mirroring
+  // GetPossibleCards' own PriorTargets handling server-side.
   const priorTargets = getAllDayTargetRows()
     .filter((other) => other !== row)
     .map((other) => ({
       day: getEffectiveDay(other),
-      cardName: other.querySelector(".day-target-card").value,
+      cardName: getRowMode(other) === "class" ? "" : other.querySelector(".day-target-card").value,
       isFlexible: isRowFlexible(other),
     }))
     .filter((t) => t.cardName && (t.isFlexible || (t.day !== null && (day === null || t.day < day))))
     .map((t) => ({ day: t.day, cardName: t.cardName }));
 
-  const cardNames = await fetchPossibleCardNames(day, priorTargets, getFranchiseCardNames());
+  const { cardNames, classes } = await fetchPossibleCardsAndClasses(day, priorTargets, getFranchiseCardNames());
 
   if (state.generation !== myGeneration) {
     return; // a newer request for this row superseded this one - drop the stale result
   }
 
-  setDatalistOptions(datalist, cardNames);
-  validateCardInput(cardInput);
-  // This async refresh's own validateCardInput call above can overwrite a BlockedBy message
+  if (mode === "class") {
+    setClassSelectOptions(classSelect, classes);
+    validateClassInput(classSelect);
+  } else {
+    setDatalistOptions(datalist, cardNames);
+    validateCardInput(cardInput);
+  }
+
+  // This async refresh's own validate call above can overwrite a BlockedBy message
   // refreshBlockedByValidation previously set on this same input (e.g. a flexible row's change
   // event re-refreshes every other row on a debounce) - reapply it so the more specific message
   // survives instead of silently reverting to the generic "not a valid card" one.
@@ -714,7 +868,19 @@ async function prefillFormFromPayload(request) {
     } else {
       row.querySelector(".day-target-day").value = String(target.day);
     }
-    row.querySelector(".day-target-card").value = target.cardName;
+
+    if (target.dishType !== null && target.dishType !== undefined) {
+      const modeSelect = row.querySelector(".day-target-mode");
+      modeSelect.value = "class";
+      modeSelect.dispatchEvent(new Event("change"));
+      // Options don't exist yet (populated async below via onDishChanged's refresh cascade) - stash
+      // the value for setClassSelectOptions to apply once they do, same pattern as a <select> can't
+      // otherwise support (unlike cardInput's free-text/datalist pair, which has no such ordering
+      // hazard - see createCardInput's doc comment).
+      row.querySelector(".day-target-class").dataset.pendingClassValue = String(target.dishType);
+    } else {
+      row.querySelector(".day-target-card").value = target.cardName;
+    }
   }
 
   // Re-runs possibility queries for every row now that the setup + rows exist - this is what
@@ -940,11 +1106,20 @@ function parseExcludedSeeds() {
 // see the Christmas/February day-0 mechanic elsewhere in this file).
 function buildSearchPayload() {
   const dayTargets = getAllDayTargetRows()
-    .filter((row) => row.querySelector(".day-target-day").value || row.querySelector(".day-target-card").value)
-    .map((row) => ({
-      day: isRowFlexible(row) ? null : Number(row.querySelector(".day-target-day").value),
-      cardName: row.querySelector(".day-target-card").value,
-    }));
+    .filter((row) => {
+      const hasValue = getRowMode(row) === "class"
+        ? row.querySelector(".day-target-class").value
+        : row.querySelector(".day-target-card").value;
+      return row.querySelector(".day-target-day").value || hasValue;
+    })
+    .map((row) => {
+      const mode = getRowMode(row);
+      return {
+        day: isRowFlexible(row) ? null : Number(row.querySelector(".day-target-day").value),
+        cardName: mode === "class" ? null : row.querySelector(".day-target-card").value,
+        dishType: mode === "class" ? Number(row.querySelector(".day-target-class").value) : null,
+      };
+    });
 
   const checkedSubOption = subOptionField.querySelector("input[name='sub-option']:checked");
 
@@ -1025,18 +1200,25 @@ form.addEventListener("submit", async (event) => {
   stopPolling();
   setStatus("", false);
 
-  const dayTargetInputs = getAllDayTargetRows().map((row) => row.querySelector(".day-target-card"));
+  const dayTargetInputs = getAllDayTargetRows().map((row) =>
+    row.querySelector(getRowMode(row) === "class" ? ".day-target-class" : ".day-target-card")
+  );
   const franchiseInputs = getAllFranchiseRows().map((row) => row.querySelector(".franchise-card"));
 
-  // Re-validate every card field right before submit (not just on blur) - blocks submit with the
-  // browser's native validation UI if any typed card name isn't currently valid for its row. Also
-  // set an explicit status message, not just the native bubble - a native validation bubble only
-  // ever points at ONE field and is easy to miss/dismiss, which was leaving submit silently
-  // refusing to do anything with no visible explanation.
+  // Re-validate every card/class field right before submit (not just on blur/change) - blocks
+  // submit with the browser's native validation UI if any typed card name or chosen class isn't
+  // currently valid for its row. Also set an explicit status message, not just the native bubble -
+  // a native validation bubble only ever points at ONE field and is easy to miss/dismiss, which was
+  // leaving submit silently refusing to do anything with no visible explanation.
   for (const input of franchiseInputs) {
     validateCardInput(input);
   }
-  refreshBlockedByValidation(); // validates every day-target input, then overlays any BlockedBy conflict
+  for (const row of getAllDayTargetRows()) {
+    if (getRowMode(row) === "class") {
+      validateClassInput(row.querySelector(".day-target-class"));
+    }
+  }
+  refreshBlockedByValidation(); // validates every card-mode day-target input, then overlays any BlockedBy conflict
 
   let allValid = true;
   let invalidCount = 0;
