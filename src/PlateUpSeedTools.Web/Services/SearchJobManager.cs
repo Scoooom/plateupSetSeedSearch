@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
+using PlateUpSeedTools.Engine.Seeding;
 using PlateUpSeedTools.Web.Contracts;
 
 namespace PlateUpSeedTools.Web.Services;
@@ -167,7 +168,16 @@ public sealed class SearchJobManager
                 request,
                 _maxDegreeOfParallelismPerJob,
                 matchCap,
-                onMatch: (seed, otFriendly) => job.Matches.Enqueue(new SearchMatchDto(seed, otFriendly)),
+                onMatch: (seed, otFriendly) =>
+                {
+                    // Computed for every match regardless of whether the search was size-filtered,
+                    // same "always tag" convention as otFriendly above - see SearchMatchDto.MapSize.
+                    var mapSize = !string.IsNullOrEmpty(request.SettingSlug) &&
+                                  SeedSearcher.TryResolveMapSize(_repo, new Seed(seed), request.SettingSlug, out var size)
+                        ? size.ToString()
+                        : null;
+                    job.Matches.Enqueue(new SearchMatchDto(seed, otFriendly, MapSize: mapSize));
+                },
                 onProgress: job.SetCheckedCount,
                 cancellationToken: job.Cts.Token);
 

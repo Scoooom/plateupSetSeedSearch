@@ -1,5 +1,6 @@
 using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
+using PlateUpSeedTools.Engine.Layouts;
 using PlateUpSeedTools.Engine.Seeding;
 using Xunit;
 
@@ -648,6 +649,105 @@ public class SeedSearcherTests
             Assert.Equal(fromString.Unlock1Id, fromInt.Unlock1Id);
             Assert.Equal(fromString.Unlock2Id, fromInt.Unlock2Id);
         }
+    }
+
+    /// <summary>
+    /// Proves MapSizes is a real AND-condition, not silently ignored - mirrors
+    /// OtFriendlyNarrowsMatchesToASubsetIncludingAKnownGoodSeed's structure. Doesn't hardcode which
+    /// size "vqrj" resolves to (that's an implementation detail of the real pool/RNG) - instead reads
+    /// it directly via LayoutSeed and filters on whatever it turns out to be, then independently
+    /// re-derives every surviving match's size the same way to confirm the filter is exact, not just
+    /// "narrower".
+    /// </summary>
+    [Fact]
+    public void MapSizeNarrowsMatchesToASubsetSharingTheSameResolvedSize()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+
+        const string alphabet = "vqrjg";
+        const int length = 4;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length);
+
+        Assert.True(LayoutSeed.TryGetSize(LayoutSeed.LayoutIdFromSeed(new Seed("vqrj")), out var targetSize));
+
+        var withoutFilter = new SeedSearchRequest(settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck);
+        var withFilter = withoutFilter with { SettingSlug = "normal", MapSizes = new HashSet<LayoutSeed.LayoutSize> { targetSize } };
+
+        var allMatches = RunSearch(repo, withoutFilter);
+        var sizeMatches = RunSearch(repo, withFilter);
+
+        Assert.Equal(totalToCheck, allMatches.Count); // no day targets - everyone matches trivially
+        Assert.True(sizeMatches.Count < allMatches.Count);
+        Assert.Subset(allMatches, sizeMatches);
+        Assert.Contains("vqrj", sizeMatches);
+        Assert.All(sizeMatches, seed =>
+        {
+            Assert.True(LayoutSeed.TryGetSize(LayoutSeed.LayoutIdFromSeed(new Seed(seed)), out var actualSize));
+            Assert.Equal(targetSize, actualSize);
+        });
+    }
+
+    /// <summary>
+    /// A setting with its own ForceLayoutId (banquet-hall) never matches any requested size - its
+    /// layout is never one of the 5 pool IDs LayoutSeed.TryGetSize knows about. Requesting every
+    /// known size still finds nothing, proving this isn't just "the wrong size was picked."
+    /// </summary>
+    [Fact]
+    public void MapSizeNeverMatchesASettingThatForcesItsOwnLayout()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var settingPackId = repo.ResolveUnlockPackId("normal");
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        var allSizes = new HashSet<LayoutSeed.LayoutSize>(Enum.GetValues<LayoutSeed.LayoutSize>());
+
+        const string alphabet = "vqrjg";
+        const int length = 4;
+        var totalToCheck = (long)Math.Pow(alphabet.Length, length);
+
+        var request = new SeedSearchRequest(
+            settingPackId, setup, new Dictionary<int, TargetMatcher>(), Tier: 0, alphabet, length, totalToCheck,
+            SettingSlug: "banquet-hall", MapSizes: allSizes);
+
+        Assert.Empty(RunSearch(repo, request));
+    }
+
+    [Fact]
+    public void Search_MapSizesWithoutSettingSlug_Throws()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var setup = RunSetup.Resolve(repo, PiesId, subOptionChoice: null, heatLevel: 0, startingUnlockId: null);
+        var request = new SeedSearchRequest(
+            repo.ResolveUnlockPackId("normal"), setup, new Dictionary<int, TargetMatcher>(), Tier: 0,
+            Alphabet: "vqrj", Length: 1, TotalToCheck: 4,
+            MapSizes: new HashSet<LayoutSeed.LayoutSize> { LayoutSeed.LayoutSize.Diner }, SettingSlug: null);
+
+        Assert.Throws<ArgumentException>(() => SeedSearcher.Search(
+            repo, request, maxDegreeOfParallelism: 1, matchCap: 1,
+            onMatch: (_, _) => { }, onProgress: _ => { }, cancellationToken: CancellationToken.None));
+    }
+
+    /// <summary>TryResolveMapSize is the shared primitive both the filter and SearchJobManager's per-match display tag rely on.</summary>
+    [Fact]
+    public void TryResolveMapSize_MatchesLayoutSeedDirectlyAndFailsForAForcedLayoutSetting()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+
+        foreach (var seedString in new[] { "vqrj", "gggg", "bbbb" })
+        {
+            var seed = new Seed(seedString);
+            var expectedResolved = LayoutSeed.TryGetSize(LayoutSeed.LayoutIdFromSeed(seed), out var expectedSize);
+            var actualResolved = SeedSearcher.TryResolveMapSize(repo, seed, "normal", out var actualSize);
+
+            Assert.Equal(expectedResolved, actualResolved);
+            if (expectedResolved)
+            {
+                Assert.Equal(expectedSize, actualSize);
+            }
+        }
+
+        Assert.False(SeedSearcher.TryResolveMapSize(repo, new Seed("vqrj"), "banquet-hall", out _));
     }
 
     private static HashSet<string> RunSearch(GameDataRepository repo, SeedSearchRequest request) =>

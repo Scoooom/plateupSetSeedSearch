@@ -350,7 +350,8 @@ async function loadLayoutPreview() {
     }
 
     const tableCount = layout.appliances.filter((a) => a.applianceId === layout.tableApplianceId).length;
-    layoutPanelStats.textContent = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)`;
+    const sizeSuffix = layout.mapSizeName ? `, ${layout.mapSizeName} layout` : "";
+    layoutPanelStats.textContent = `${layout.width}×${layout.height} tiles, ${tableCount} dining table(s)${sizeSuffix}`;
   } catch {
     if (myGeneration === layoutPreviewGeneration) {
       layoutPanelStats.textContent = "Failed to reach the server.";

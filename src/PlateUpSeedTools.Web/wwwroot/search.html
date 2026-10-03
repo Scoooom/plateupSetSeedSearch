@@ -81,6 +81,18 @@
         </details>
       </div>
 
+      <div class="field-group full-width" id="map-size-field-group">
+        <span>Map size</span>
+        <div class="map-size-row">
+          <label class="field checkbox-field"><input type="checkbox" class="map-size-checkbox" value="Basic" /> <span>Basic</span></label>
+          <label class="field checkbox-field"><input type="checkbox" class="map-size-checkbox" value="Diner" /> <span>Diner</span></label>
+          <label class="field checkbox-field"><input type="checkbox" class="map-size-checkbox" value="Medium" /> <span>Medium</span></label>
+          <label class="field checkbox-field"><input type="checkbox" class="map-size-checkbox" value="Huge" /> <span>Huge</span></label>
+          <label class="field checkbox-field"><input type="checkbox" class="map-size-checkbox" value="Extended" /> <span>Extended</span></label>
+        </div>
+        <p class="field-note">Only the Normal setting draws its layout from this size pool - other settings always use their own fixed layout.</p>
+      </div>
+
       <!-- Reroll (Bay Leaves) search temporarily disabled - known-buggy skipChoices mechanic,
            see SearchEndpoints.StartSearch. Remove `hidden` + revert the endpoint flags to re-enable. -->
       <div class="field-group full-width" hidden>

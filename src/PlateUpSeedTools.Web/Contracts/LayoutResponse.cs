@@ -5,6 +5,10 @@ public sealed record LayoutResponse(
     string SettingSlug,
     string SettingName,
     int LayoutProfileId,
+    // The resolved named map size (e.g. "Diner") - null for a setting that forces its own bespoke
+    // layout (ForceLayoutId is never one of the 5 shared-pool IDs LayoutSeed.TryGetSize knows about),
+    // where size isn't a meaningful concept at all. See LayoutSeed.TryGetSize.
+    string? MapSizeName,
     int Width,
     int Height,
     IReadOnlyList<TileDto> Tiles,

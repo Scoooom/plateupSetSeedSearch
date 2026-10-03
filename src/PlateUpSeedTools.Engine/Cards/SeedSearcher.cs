@@ -51,7 +51,14 @@ public sealed record SeedSearchRequest(
     // not a hardcoded 1 - a search that only ever needs at most one reroll in the whole run is
     // unaffected, but multi-reroll runs previously silently mispredicted every reroll after the
     // first.
-    bool AllowRerollPerDay = false);
+    bool AllowRerollPerDay = false,
+    // Restricts matches to seeds whose layout resolves to one of these named sizes
+    // (LayoutSeed.LayoutSize) - only meaningful for a setting with no ForceLayoutId (today, just
+    // "normal"); a setting that forces its own bespoke layout never matches any size, since its
+    // ForceLayoutId is never one of the 5 pool IDs LayoutSeed.TryGetSize knows about. Requires
+    // SettingSlug (checked the same way OtFriendly needs it, via ArgumentException). Null/empty
+    // means "no size filter", reproducing pre-existing behavior exactly.
+    IReadOnlySet<Layouts.LayoutSeed.LayoutSize>? MapSizes = null);
 
 /// <summary>
 /// Result of a <see cref="SeedSearcher.Search"/> call. <see cref="MatchCapReached"/> distinguishes
@@ -161,6 +168,11 @@ public static class SeedSearcher
             throw new ArgumentException("SettingSlug is required when OtFriendly is set - OtFriendlyChecker needs it to resolve the starting-kitchen layout.", nameof(request));
         }
 
+        if (request.MapSizes is { Count: > 0 } && string.IsNullOrEmpty(request.SettingSlug))
+        {
+            throw new ArgumentException("SettingSlug is required when MapSizes is set - resolving a seed's layout size needs it.", nameof(request));
+        }
+
         var hasFlexibleTargets = request.FlexibleTargets is { Count: > 0 };
         var maxDay = Math.Max(
             request.DayTargets.Count == 0 ? 0 : request.DayTargets.Keys.Max(),
@@ -222,7 +234,7 @@ public static class SeedSearcher
                         var (isMatch, otFriendly) = Matches(
                             repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
                             flexibleTargets, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
-                            request.AllowRerollPerDay);
+                            request.AllowRerollPerDay, request.MapSizes);
                         if (isMatch)
                         {
                             // Resolve a displayable seed string only now, not per-candidate. A null
@@ -256,7 +268,7 @@ public static class SeedSearcher
                         var (isMatch, otFriendly) = Matches(
                             repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
                             flexibleTargets, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
-                            request.AllowRerollPerDay);
+                            request.AllowRerollPerDay, request.MapSizes);
                         if (isMatch)
                         {
                             if (groups.TryAdd(seed.IntValue, new SeedGroup { Representative = seedString }))
@@ -326,8 +338,16 @@ public static class SeedSearcher
     private static (bool IsMatch, bool OtFriendly) Matches(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
         IReadOnlyDictionary<int, TargetMatcher> dayTargets, IReadOnlyList<TargetMatcher> flexibleTargets, int maxDay, int tier,
-        bool otFriendly, string? settingSlug, bool allowRerollPerDay)
+        bool otFriendly, string? settingSlug, bool allowRerollPerDay, IReadOnlySet<Layouts.LayoutSeed.LayoutSize>? mapSizes)
     {
+        // Cheapest possible rejection - a single RNG call, no card-draw simulation at all - so this
+        // runs before everything else in this method. A setting with its own ForceLayoutId never
+        // matches any requested size (see MapSizes' doc comment).
+        if (mapSizes is { Count: > 0 } && !MatchesMapSize(repo, seed, settingSlug!, mapSizes))
+        {
+            return (false, false);
+        }
+
         // Mutated in place by Walk as flexible targets get picked up - a strict "none left" check at
         // the end (rather than a running "found target X" flag) since order among flexible targets
         // doesn't matter, only that all of them end up satisfied by maxDay.
@@ -505,6 +525,28 @@ public static class SeedSearcher
             current.RemoveAt(current.Count - 1);
         }
     }
+
+    /// <summary>
+    /// Resolves this seed's named map size for the given setting - false if the setting forces its own
+    /// bespoke layout (ForceLayoutId is never one of the 5 pool IDs LayoutSeed.TryGetSize knows about),
+    /// in which case size isn't a meaningful concept at all. Shared by MatchesMapSize's filtering and
+    /// by callers (e.g. SearchEndpoints) that just want to display a match's resolved size.
+    /// </summary>
+    public static bool TryResolveMapSize(GameDataRepository repo, Seed seed, string settingSlug, out Layouts.LayoutSeed.LayoutSize size)
+    {
+        var setting = repo.GetSetting(settingSlug);
+        if (setting.ForceLayoutId is not null)
+        {
+            size = default;
+            return false;
+        }
+
+        return Layouts.LayoutSeed.TryGetSize(Layouts.LayoutSeed.LayoutIdFromSeed(seed), out size);
+    }
+
+    /// <summary>Whether this seed's layout resolves to one of the requested sizes - see TryResolveMapSize.</summary>
+    private static bool MatchesMapSize(GameDataRepository repo, Seed seed, string settingSlug, IReadOnlySet<Layouts.LayoutSeed.LayoutSize> mapSizes) =>
+        TryResolveMapSize(repo, seed, settingSlug, out var size) && mapSizes.Contains(size);
 
     private static bool OfferedMatches(GameDataRepository repo, int? offeredId, TargetMatcher matcher) =>
         offeredId is int id && matcher.Matches(repo.GetUnlock(id));

@@ -1,6 +1,7 @@
 using System.Numerics;
 using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
+using PlateUpSeedTools.Engine.Layouts;
 using PlateUpSeedTools.Engine.Seeding;
 
 namespace PlateUpSeedTools.Cli;
@@ -46,6 +47,27 @@ public static class SearchCommand
         {
             Console.WriteLine($"Unknown setting '{options.SettingSlug}'. Known: {string.Join(", ", repo.ListSettings().Select(s => s.Slug))}");
             return 1;
+        }
+
+        var mapSizes = new HashSet<LayoutSeed.LayoutSize>();
+        if (options.MapSizeNames.Count > 0)
+        {
+            if (setting.ForceLayoutId is not null)
+            {
+                Console.WriteLine($"--map-size doesn't apply to '{setting.DisplayName}' - it always uses its own fixed layout, not the shared size pool.");
+                return 1;
+            }
+
+            foreach (var name in options.MapSizeNames)
+            {
+                if (!Enum.TryParse<LayoutSeed.LayoutSize>(name, ignoreCase: true, out var size))
+                {
+                    Console.WriteLine($"Unknown map size '{name}'. Valid: {string.Join(", ", Enum.GetNames<LayoutSeed.LayoutSize>())}");
+                    return 1;
+                }
+
+                mapSizes.Add(size);
+            }
         }
 
         if (!TryResolveUnlockByName(repo, options.DishName, "dish", out var dish))
@@ -194,7 +216,8 @@ public static class SearchCommand
 
         var request = new SeedSearchRequest(
             settingPackId, setup, dayTargets, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds, flexibleTargets,
-            SettingSlug: options.SettingSlug, OtFriendly: options.OtFriendly, AllowRerollPerDay: options.AllowRerollPerDay);
+            SettingSlug: options.SettingSlug, OtFriendly: options.OtFriendly, AllowRerollPerDay: options.AllowRerollPerDay,
+            MapSizes: mapSizes.Count > 0 ? mapSizes : null);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var matchCount = 0;
@@ -216,7 +239,14 @@ public static class SearchCommand
                 lock (matchLock)
                 {
                     matchCount++;
-                    Console.WriteLine(options.MatchesOnly ? seedString : $"MATCH: {seedString}{(otFriendly ? " [OT]" : "")}");
+                    if (options.MatchesOnly)
+                    {
+                        Console.WriteLine(seedString);
+                        return;
+                    }
+
+                    var sizeTag = SeedSearcher.TryResolveMapSize(repo, new Seed(seedString), options.SettingSlug, out var size) ? $" [{size}]" : "";
+                    Console.WriteLine($"MATCH: {seedString}{(otFriendly ? " [OT]" : "")}{sizeTag}");
                 }
             },
             onProgress: count => checkedCount = count,
@@ -305,6 +335,7 @@ public static class SearchCommand
         public string? CardPack { get; init; }
         public bool OtFriendly { get; init; }
         public bool AllowRerollPerDay { get; init; }
+        public required List<string> MapSizeNames { get; init; }
     }
 
     // Same default/bounds the web UI uses (see SeedSearcher.MinMatchCap/MaxMatchCap) - a genuine
@@ -334,6 +365,7 @@ public static class SearchCommand
         string? cardPack = null;
         var otFriendly = false;
         var allowRerollPerDay = false;
+        var mapSizeNames = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -421,6 +453,9 @@ public static class SearchCommand
                 case "--ot-friendly":
                     otFriendly = true;
                     break;
+                case "--map-size" when i + 1 < args.Length:
+                    mapSizeNames.Add(args[++i]);
+                    break;
                 case "--reroll-per-day":
                     // Reroll temporarily disabled (known-buggy skipChoices mechanic) - see
                     // SearchEndpoints. Accepted but inert so existing scripts don't hard-fail.
@@ -442,12 +477,13 @@ public static class SearchCommand
         }
 
         if (settingSlug is null || dishName is null ||
-            (dayTargets.Count == 0 && dayClassTargets.Count == 0 && anyDayCardNames.Count == 0 && anyDayClassNames.Count == 0 && !otFriendly))
+            (dayTargets.Count == 0 && dayClassTargets.Count == 0 && anyDayCardNames.Count == 0 && anyDayClassNames.Count == 0 && !otFriendly && mapSizeNames.Count == 0))
         {
             Console.WriteLine("Usage: search --setting <slug> --dish <name> [--sub-option 1|2] [--heat <n>]");
             Console.WriteLine("              [--tier <n>] [--franchise-card <name> ...]");
             Console.WriteLine("              [--day <n>=<card name> ...] [--any-day-card <card name> ...]");
             Console.WriteLine("              [--day-class <n>=<class name> ...] [--any-day-class <class name> ...] [--ot-friendly]");
+            Console.WriteLine("              [--map-size <name> ...]");
             Console.WriteLine("              [--reroll-per-day (temporarily disabled)]");
             Console.WriteLine("              [--alphabet <chars>] [--length <n>] [--limit <n>] [--max-results <n>]");
             Console.WriteLine();
@@ -457,9 +493,13 @@ public static class SearchCommand
             Console.WriteLine($"(e.g. --day-class 3=Side matches whichever Side dish is offered day 3). Valid classes:");
             Console.WriteLine($"{string.Join(", ", DishTypeCatalog.Names.Values)}. Repeatable, including duplicates of the");
             Console.WriteLine("same class (e.g. two --any-day-class Side). A day can't have both --day and --day-class.");
-            Console.WriteLine("At least one of --day/--day-class/--any-day-card/--any-day-class/--ot-friendly is required.");
+            Console.WriteLine("At least one of --day/--day-class/--any-day-card/--any-day-class/--ot-friendly/--map-size is required.");
             Console.WriteLine("--ot-friendly restricts to seeds where days 1, 2, and 4 offer Research Desks - an");
             Console.WriteLine("additional AND-condition layered onto any --day/--any-day-card targets, or usable alone.");
+            Console.WriteLine("--map-size <name> (repeatable) restricts to seeds whose layout resolves to one of the named");
+            Console.WriteLine($"sizes ({string.Join(", ", Enum.GetNames<LayoutSeed.LayoutSize>())}) - only applies to a setting with");
+            Console.WriteLine("no forced layout (currently just 'normal'); an additional AND-condition, or usable alone.");
+            Console.WriteLine("Matched seeds gain a [<Size>] suffix in MATCH output showing their resolved layout size.");
             Console.WriteLine("--reroll-per-day (Bay Leaves 1-reroll-per-night mechanic) is TEMPORARILY DISABLED - a");
             Console.WriteLine("known-buggy skipChoices mechanic; the flag is accepted but ignored for now.");
             Console.WriteLine("Matched seeds gain a [OT] suffix in MATCH output when they're also OT-Friendly");
@@ -508,6 +548,7 @@ public static class SearchCommand
             CardPack = cardPack,
             OtFriendly = otFriendly,
             AllowRerollPerDay = allowRerollPerDay,
+            MapSizeNames = mapSizeNames,
         };
     }
 }

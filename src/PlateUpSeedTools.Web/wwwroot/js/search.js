@@ -16,6 +16,8 @@ const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
 const addFranchiseCardButton = document.getElementById("add-franchise-card");
 const stopAfterFirstMatchInput = document.getElementById("stop-after-first-match");
 const otFriendlyInput = document.getElementById("ot-friendly");
+const mapSizeFieldGroup = document.getElementById("map-size-field-group");
+const mapSizeCheckboxes = [...document.querySelectorAll(".map-size-checkbox")];
 const allowRerollInput = document.getElementById("allow-reroll");
 const excludeSeedsInput = document.getElementById("exclude-seeds-input");
 const form = document.getElementById("search-form");
@@ -456,15 +458,11 @@ addDayTargetButton.addEventListener("click", () => {
 // A fresh page load always seeds one empty day-target row (see loadInit) - its day/card inputs are
 // `required` so a genuine card-target search can't be submitted half-filled-in. But that same
 // `required` blocks the native submit event entirely (before any JS validation runs) for an
-// OT-Friendly-only search, where the user never touches that row at all. Checking OT Friendly
-// relaxes `required` on any row that's still completely empty at that moment - a row the user has
-// actually started filling in keeps being validated normally either way, since a non-empty field
-// satisfies `required` regardless of its boolean value.
-otFriendlyInput.addEventListener("change", () => {
-  if (!otFriendlyInput.checked) {
-    return;
-  }
-
+// OT-Friendly-only (or map-size-only) search, where the user never touches that row at all. Checking
+// OT Friendly or a map size relaxes `required` on any row that's still completely empty at that
+// moment - a row the user has actually started filling in keeps being validated normally either way,
+// since a non-empty field satisfies `required` regardless of its boolean value.
+function relaxEmptyDayTargetRows() {
   for (const row of getAllDayTargetRows()) {
     const dayInput = row.querySelector(".day-target-day");
     const cardInput = row.querySelector(".day-target-card");
@@ -480,7 +478,22 @@ otFriendlyInput.addEventListener("change", () => {
       validateClassInput(classSelect);
     }
   }
+}
+
+otFriendlyInput.addEventListener("change", () => {
+  if (otFriendlyInput.checked) {
+    relaxEmptyDayTargetRows();
+  }
 });
+
+for (const checkbox of mapSizeCheckboxes) {
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) {
+      relaxEmptyDayTargetRows();
+    }
+  });
+}
+
 addFranchiseCardButton.addEventListener("click", () => {
   addFranchiseCardRow();
   scheduleAffectedDayTargetRefresh(1); // a newly-owned franchise card can affect any day's possible cards
@@ -801,8 +814,24 @@ dishSelect.addEventListener("change", onDishChanged);
 heatSelect.addEventListener("change", onDishChanged);
 tierInput.addEventListener("input", onDishChanged);
 cardPackSelect.addEventListener("change", onDishChanged);
+// Only the Normal setting draws its layout from the shared size pool - every other setting forces
+// its own bespoke layout, where "size" isn't a meaningful concept at all (see
+// Engine.Layouts.LayoutSeed.TryGetSize). Same hardcoded `!== "normal"` gating shared.js's
+// updateCardPackLock already uses for the same reason, not a new generic mechanism.
+function updateMapSizeLock() {
+  const locked = settingSelect.value !== "normal";
+  mapSizeFieldGroup.classList.toggle("disabled", locked);
+  for (const checkbox of mapSizeCheckboxes) {
+    checkbox.disabled = locked;
+    if (locked) {
+      checkbox.checked = false;
+    }
+  }
+}
+
 settingSelect.addEventListener("change", () => {
   updateCardPackLock(settingSelect, cardPackSelect);
+  updateMapSizeLock();
   loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));
 });
 
@@ -813,6 +842,7 @@ async function loadInit() {
   await loadHeatLevels();
   await loadCardPacks();
   updateCardPackLock(settingSelect, cardPackSelect);
+  updateMapSizeLock();
   addDayTargetRow();
   onDishChanged();
 
@@ -848,6 +878,13 @@ async function prefillFormFromPayload(request) {
   stopAfterFirstMatchInput.checked = Boolean(request.stopAfterFirstMatch);
   otFriendlyInput.checked = Boolean(request.otFriendly);
   allowRerollInput.checked = Boolean(request.allowRerollPerDay);
+  updateMapSizeLock();
+  if (!mapSizeFieldGroup.classList.contains("disabled")) {
+    const requestedSizes = new Set(request.mapSizes ?? []);
+    for (const checkbox of mapSizeCheckboxes) {
+      checkbox.checked = requestedSizes.has(checkbox.value);
+    }
+  }
   excludeSeedsInput.value = (request.excludedSeeds ?? []).join(", ");
 
   franchiseCardRowsEl.innerHTML = "";
@@ -999,6 +1036,13 @@ function renderJobStatus(job) {
       badge.title = "OT Friendly - Research Desk offered days 1, 2, and 4";
       li.append(" ", badge);
     }
+    if (match.mapSize) {
+      const badge = document.createElement("span");
+      badge.className = "size-badge";
+      badge.textContent = match.mapSize;
+      badge.title = `Resolved layout size: ${match.mapSize}`;
+      li.append(" ", badge);
+    }
     if (match.equivalentCount > 0) {
       const badge = document.createElement("span");
       badge.className = "equiv-badge";
@@ -1140,6 +1184,7 @@ function buildSearchPayload() {
     cardPack: cardPackSelect.value || null,
     otFriendly: otFriendlyInput.checked,
     allowRerollPerDay: allowRerollInput.checked,
+    mapSizes: mapSizeCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
   };
 }
 
@@ -1241,8 +1286,8 @@ form.addEventListener("submit", async (event) => {
 
   const payload = buildSearchPayload();
 
-  if (payload.dayTargets.length === 0 && !payload.otFriendly) {
-    setStatus("Add at least one day target (or check OT Friendly).", true);
+  if (payload.dayTargets.length === 0 && !payload.otFriendly && payload.mapSizes.length === 0) {
+    setStatus("Add at least one day target (or check OT Friendly / a map size).", true);
     return;
   }
 

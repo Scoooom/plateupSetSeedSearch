@@ -226,11 +226,14 @@ public static partial class LayoutEndpoints
             .Select(f => new FeatureDto(f.Tile1.X, f.Tile1.Y, f.Tile2.X, f.Tile2.Y, f.Type.ToString()))
             .ToList();
 
+        var mapSizeName = LayoutSeed.TryGetSize(layoutProfileId, out var mapSize) ? mapSize.ToString() : null;
+
         return new LayoutResponse(
             seed,
             settingSlug,
             settingName,
             layoutProfileId,
+            mapSizeName,
             bounds.MaxX - bounds.MinX + 1,
             bounds.MaxY - bounds.MinY + 1,
             tiles,

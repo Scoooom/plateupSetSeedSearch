@@ -1,6 +1,7 @@
 using System.Numerics;
 using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
+using PlateUpSeedTools.Engine.Layouts;
 using PlateUpSeedTools.Engine.Seeding;
 using PlateUpSeedTools.Infrastructure.Cache;
 using PlateUpSeedTools.Web.Contracts;
@@ -313,9 +314,9 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = $"'{dish.Name}' has sub-options - subOptionChoice must be 1 or 2. 1) {opt1}   2) {opt2}" });
         }
 
-        if (request.DayTargets is not { Count: > 0 } && request.OtFriendly != true)
+        if (request.DayTargets is not { Count: > 0 } && request.OtFriendly != true && request.MapSizes is not { Count: > 0 })
         {
-            return Results.BadRequest(new { error = "At least one card target is required (or check OT Friendly)." });
+            return Results.BadRequest(new { error = "At least one card target is required (or check OT Friendly / a map size)." });
         }
 
         var dayTargets = new Dictionary<int, TargetMatcher>();
@@ -397,6 +398,12 @@ public static class SearchEndpoints
         }
 
         var setting = repo.GetSetting(request.Setting);
+
+        if (!TryResolveMapSizes(setting, request.MapSizes, out var mapSizes, out var mapSizeError))
+        {
+            return Results.BadRequest(new { error = mapSizeError });
+        }
+
         ResolvedRunSetup setup;
         try
         {
@@ -425,7 +432,7 @@ public static class SearchEndpoints
             // Reroll temporarily disabled (known-buggy skipChoices mechanic) - re-enable by
             // restoring `request.AllowRerollPerDay == true` here and in GetSearchPath, and
             // un-hiding the checkbox in search.html.
-            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true, AllowRerollPerDay: false);
+            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true, AllowRerollPerDay: false, MapSizes: mapSizes);
         long matchCap;
         if (request.StopAfterFirstMatch == true)
         {
@@ -617,6 +624,48 @@ public static class SearchEndpoints
     /// </summary>
     private static int? ResolveStartingUnlockId(GameDataRepository repo, RestaurantSettingData setting, string? cardPack) =>
         string.IsNullOrEmpty(cardPack) ? setting.StartingUnlockId : repo.ResolveCardScheduleStartingUnlockId(cardPack);
+
+    /// <summary>
+    /// Resolves the requested map-size names into a set of LayoutSeed.LayoutSize - empty/null input
+    /// resolves to null (no filter), matching SeedSearchRequest.MapSizes' convention. Rejects an
+    /// unknown name, or any non-empty request against a setting that forces its own bespoke layout
+    /// (ForceLayoutId set) - size isn't a meaningful concept there, see LayoutSeed.TryGetSize. Defense
+    /// in depth behind the client-side gating in search.js (updateCardPackLock-style
+    /// settingSelect.value !== "normal" check that disables the checkboxes).
+    /// </summary>
+    private static bool TryResolveMapSizes(RestaurantSettingData setting, List<string>? requested, out IReadOnlySet<LayoutSeed.LayoutSize>? mapSizes, out string? error)
+    {
+        if (requested is not { Count: > 0 })
+        {
+            mapSizes = null;
+            error = null;
+            return true;
+        }
+
+        if (setting.ForceLayoutId is not null)
+        {
+            mapSizes = null;
+            error = $"Map size filtering doesn't apply to '{setting.DisplayName}' - it always uses its own fixed layout, not the shared size pool.";
+            return false;
+        }
+
+        var sizes = new HashSet<LayoutSeed.LayoutSize>();
+        foreach (var name in requested)
+        {
+            if (!Enum.TryParse<LayoutSeed.LayoutSize>(name, ignoreCase: true, out var size))
+            {
+                mapSizes = null;
+                error = $"Unknown map size '{name}'. Valid: {string.Join(", ", Enum.GetNames<LayoutSeed.LayoutSize>())}";
+                return false;
+            }
+
+            sizes.Add(size);
+        }
+
+        mapSizes = sizes;
+        error = null;
+        return true;
+    }
 
     /// <summary>Resolves the pack governing card draws: an explicit cardPack schedule slug if given, otherwise the setting's own pack (existing default behavior).</summary>
     private static bool TryResolvePackId(GameDataRepository repo, string setting, string? cardPack, out int packId, out string? error)

@@ -35,7 +35,13 @@ public sealed record SearchStartRequest(
     // ignored when StopAfterFirstMatch is set (that's just a cap of 1). Must be within
     // SeedSearcher.MinMatchCap..MaxMatchCap or StartSearch rejects the request (the UI enforces the
     // same range loudly before submit).
-    int? MaxResults = null);
+    int? MaxResults = null,
+    // Restricts matches to seeds whose layout resolves to one of these named sizes (e.g. "Diner",
+    // "Medium") - see SeedSearchRequest.MapSizes. Only meaningful for a setting with no ForceLayoutId
+    // (today, just "normal") - StartSearch rejects a non-empty list for any other setting, and the UI
+    // disables the checkboxes the same way it already locks the card-pack dropdown for non-normal
+    // settings (see shared.js's updateCardPackLock). Null/empty means no size filter.
+    List<string>? MapSizes = null);
 
 public sealed record SearchStartResponse(string JobId, long TotalToCheck, string SpaceSize);
 
@@ -52,7 +58,11 @@ public sealed record SearchMatchDto(
     string Seed,
     bool OtFriendly,
     IReadOnlyList<string>? EquivalentSeeds = null,
-    int EquivalentCount = 0);
+    int EquivalentCount = 0,
+    // The resolved named map size (e.g. "Diner") - computed for every match regardless of whether the
+    // search itself was size-filtered, same "always tag" convention as OtFriendly above. Null for a
+    // setting that forces its own bespoke layout, where size isn't a meaningful concept at all.
+    string? MapSize = null);
 
 public sealed record SearchStatusResponse(
     string JobId,

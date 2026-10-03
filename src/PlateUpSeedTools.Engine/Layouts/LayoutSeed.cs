@@ -22,6 +22,30 @@ public static class LayoutSeed
         -2045800810, -80202533, 557943155, 154938708,
     ];
 
+    /// <summary>Real in-game display name for each of the 5 distinct layouts in <see cref="FixedRunLayoutIds"/>.</summary>
+    public enum LayoutSize { Basic, Diner, Medium, Huge, Extended }
+
+    /// <summary>
+    /// Maps each of the 5 distinct <see cref="FixedRunLayoutIds"/> values to its real in-game name -
+    /// found by grepping `.asset` files for `^  ID: &lt;value&gt;$` (`Basic/Diner/Extended/Huge/Medium
+    /// Layout.asset`), see game-domain-knowledge.md's "RestaurantSetting / LayoutProfile data model"
+    /// section. A setting's own ForceLayoutId (see ResolveLayoutId) is never one of these 5 values, so
+    /// TryGetSize correctly returns false for every forced-layout setting - size is only a meaningful
+    /// concept for settings that draw from this shared pool.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<int, LayoutSize> SizeByLayoutId = new Dictionary<int, LayoutSize>
+    {
+        [222370461] = LayoutSize.Basic,
+        [-80202533] = LayoutSize.Diner,
+        [557943155] = LayoutSize.Extended,
+        [154938708] = LayoutSize.Huge,
+        [-2045800810] = LayoutSize.Medium,
+    };
+
+    /// <summary>Resolves a layout profile ID to its named size - false for any ID outside the 5-member pool (i.e. every ForceLayoutId-based layout).</summary>
+    public static bool TryGetSize(int layoutProfileId, out LayoutSize size) =>
+        SizeByLayoutId.TryGetValue(layoutProfileId, out size);
+
     /// <summary>Port of LayoutSeed.LayoutIDFromSeed().</summary>
     public static int LayoutIdFromSeed(Seed seed)
     {
