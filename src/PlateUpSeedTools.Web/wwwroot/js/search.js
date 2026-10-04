@@ -15,6 +15,9 @@ const addDayTargetButton = document.getElementById("add-day-target");
 const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
 const addFranchiseCardButton = document.getElementById("add-franchise-card");
 const stopAfterFirstMatchInput = document.getElementById("stop-after-first-match");
+const notifyField = document.getElementById("notify-field");
+const notifyOnCompletionInput = document.getElementById("notify-on-completion");
+const notifyPermissionWarning = document.getElementById("notify-permission-warning");
 const otFriendlyInput = document.getElementById("ot-friendly");
 const mapSizeFieldGroup = document.getElementById("map-size-field-group");
 const mapSizeCheckboxes = [...document.querySelectorAll(".map-size-checkbox")];
@@ -71,9 +74,36 @@ let previewCacheGeneration = 0;
 const PREVIEW_CACHE_MAX = 60;
 // Cached per currentJobId - repeated Copy Link clicks for the same job's results must reuse the
 // same hash/DB row rather than minting a new one every click (a real bug: clicking rapidly used to
-// duplicate a cache row per click). Reset to null anywhere currentJobId itself changes.
+// duplicate a cache row per click). Reset to null anywhere currentJobId itself changes. Also set
+// directly (not via a click) for a notify-enabled job, which gets its hash eagerly at job start -
+// see the submit handler and loadInit's "live" link branch.
 let currentShareHash = null;
 let datalistCounter = 0;
+
+// "Notify on completion" (Web Push) state - see notifyOnCompletionInput's change handler below.
+// pushSupported/pushConfigured gate whether notifyField is ever shown at all; currentPushSubscription
+// is the live PushSubscription object (or null) the browser handed back from pushManager.subscribe(),
+// attached to a job via POST /api/search/{jobId}/push-subscription right after it's created. Not
+// reset between searches - once subscribed, the same subscription is reused for every subsequent
+// notify-enabled search in this tab (subscribing again when already subscribed is a no-op that
+// returns the same subscription).
+let pushSupported = false;
+let pushConfigured = false;
+let vapidPublicKey = null;
+let currentPushSubscription = null;
+
+// Standard Web Push boilerplate: PushManager.subscribe's applicationServerKey wants a raw
+// Uint8Array, not the URL-safe base64 string the server hands out.
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 // Per-row refresh state (debounce timer + a generation counter to drop stale out-of-order
 // responses), keyed by the row's <div class="dynamic-row"> element - see refreshDayTargetRow/
@@ -494,6 +524,43 @@ for (const checkbox of mapSizeCheckboxes) {
   });
 }
 
+// Runs the permission+subscribe sequence right on the checkbox's own change event (not deferred to
+// form submit) specifically to stay inside the same user-gesture window Notification.requestPermission
+// relies on in some browsers. Un-checking (or any failure below) clears currentPushSubscription, so
+// buildSearchPayload's notifyOnCompletion correctly collapses back to false - a checked box with no
+// working subscription behind it must never claim notify-mode (see StartSearch's own
+// IsConfigured-and-subscribed gate; this is just the client-side mirror of that same rule).
+notifyOnCompletionInput?.addEventListener("change", async () => {
+  if (!notifyOnCompletionInput.checked) {
+    currentPushSubscription = null;
+    notifyPermissionWarning.hidden = true;
+    return;
+  }
+
+  notifyPermissionWarning.hidden = true;
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      notifyOnCompletionInput.checked = false;
+      currentPushSubscription = null;
+      notifyPermissionWarning.textContent = "Notification permission denied - this search will run normally and stop if you close this tab.";
+      notifyPermissionWarning.hidden = false;
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    currentPushSubscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+    });
+  } catch {
+    notifyOnCompletionInput.checked = false;
+    currentPushSubscription = null;
+    notifyPermissionWarning.textContent = "Couldn't set up notifications in this browser - this search will run normally and stop if you close this tab.";
+    notifyPermissionWarning.hidden = false;
+  }
+});
+
 addFranchiseCardButton.addEventListener("click", () => {
   addFranchiseCardRow();
   scheduleAffectedDayTargetRefresh(1); // a newly-owned franchise card can affect any day's possible cards
@@ -835,6 +902,39 @@ settingSelect.addEventListener("change", () => {
   loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));
 });
 
+// Feature-detects Push support and checks the server actually has WebPush:* configured - only
+// reveals notifyField if both are true, and eagerly registers the service worker (rather than
+// waiting for the checkbox) so navigator.serviceWorker.ready resolves instantly later instead of
+// racing a fresh install. A thrown SecurityError (insecure non-localhost origin) is treated the
+// same as "unsupported" - notifyField just stays hidden, no warning needed since the user never
+// saw the option.
+async function setUpPushNotifications() {
+  pushSupported = "serviceWorker" in navigator && "PushManager" in window;
+  if (!pushSupported) {
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/push/public-key");
+    const body = await response.json();
+    pushConfigured = Boolean(body.configured);
+    vapidPublicKey = body.publicKey;
+  } catch {
+    pushConfigured = false;
+  }
+
+  if (!pushConfigured) {
+    return;
+  }
+
+  try {
+    await navigator.serviceWorker.register("/sw.js");
+    notifyField.hidden = false;
+  } catch {
+    // Insecure context or some other registration failure - stay hidden, same as "unsupported".
+  }
+}
+
 async function loadInit() {
   const settings = await fetchSettings();
   populateSettingSelect(settingSelect, settings);
@@ -845,15 +945,16 @@ async function loadInit() {
   updateMapSizeLock();
   addDayTargetRow();
   onDishChanged();
+  setUpPushNotifications().catch(() => {});
 
   const hash = location.hash.slice(1);
   if (hash) {
-    await loadCachedResult(hash);
+    await loadSearchLink(hash);
   }
 }
 
 // Prefills the whole form from a previously-run search's request payload (same shape as
-// currentSearchPayload) - used both by loadCachedResult below. Reuses the row-building helpers the
+// currentSearchPayload) - used both by loadSearchLink below. Reuses the row-building helpers the
 // form already uses (addDayTargetRow/addFranchiseCardRow) rather than hand-rolling row markup here.
 async function prefillFormFromPayload(request) {
   settingSelect.value = request.setting;
@@ -876,6 +977,12 @@ async function prefillFormFromPayload(request) {
   limitInput.value = request.limit != null ? String(request.limit) : "";
   maxResultsInput.value = request.maxResults != null ? String(request.maxResults) : "500";
   stopAfterFirstMatchInput.checked = Boolean(request.stopAfterFirstMatch);
+  // Inert - just reflects the prior request's choice, no subscribe side-effect. A genuinely NEW
+  // notify-enabled search still requires the user to actually check this box themselves (a fresh
+  // user gesture is needed for Notification.requestPermission/pushManager.subscribe anyway).
+  if (notifyOnCompletionInput) {
+    notifyOnCompletionInput.checked = Boolean(request.notifyOnCompletion);
+  }
   otFriendlyInput.checked = Boolean(request.otFriendly);
   allowRerollInput.checked = Boolean(request.allowRerollPerDay);
   updateMapSizeLock();
@@ -926,21 +1033,43 @@ async function prefillFormFromPayload(request) {
   onDishChanged();
 }
 
-async function loadCachedResult(hash) {
+// Resolves a /search/cached#hash (or a notify-enabled job's own eagerly-minted link, same URL
+// shape) via GET /api/search/link/{hash} - which checks the permanent cache first, then falls
+// back to a still-running/just-finished in-memory job. Branches on the response's "kind":
+// "cached" renders the same permanent-snapshot view this used to always render (hitting
+// /api/search/cached/{hash} directly); "live" resumes normal polling against the still-running
+// job, exactly as if the user had just submitted it themselves.
+async function loadSearchLink(hash) {
   try {
-    const response = await fetch(`/api/search/cached/${encodeURIComponent(hash)}`);
+    const response = await fetch(`/api/search/link/${encodeURIComponent(hash)}`);
     if (!response.ok) {
       setStatus("This shared search result doesn't exist.", true);
       return;
     }
 
-    const cached = await response.json();
+    const body = await response.json();
+
+    if (body.kind === "live") {
+      await prefillFormFromPayload(body.request);
+      currentSearchSetting = body.request.setting;
+      currentSearchPayload = body.request;
+      currentJobId = body.jobId;
+      currentShareHash = hash;
+      resetPreviewCache();
+      jobEl.hidden = false;
+      matchesList.innerHTML = "";
+      pollHandle = setInterval(() => pollJob(currentJobId), 1000);
+      await pollJob(currentJobId);
+      return;
+    }
+
+    const cached = body.cached;
     await prefillFormFromPayload(cached.request);
 
     currentSearchSetting = cached.request.setting;
     currentSearchPayload = cached.request;
-    currentJobId = null; // no live job behind this view - Cancel/Copy Link stay hidden
-    currentShareHash = null;
+    currentJobId = null; // no live job behind this view - Cancel stays hidden
+    currentShareHash = hash; // Copy Link (if ever shown again) should reuse this same link
     resetPreviewCache();
 
     renderJobStatus({
@@ -952,6 +1081,7 @@ async function loadCachedResult(hash) {
       matches: cached.matches,
       error: null,
       matchCapReached: cached.matchCapReached,
+      timedOut: cached.timedOut,
     });
   } catch {
     setStatus("Failed to reach the server.", true);
@@ -996,7 +1126,12 @@ function renderJobStatus(job) {
     }
     cancelButton.hidden = true;
 
-    if (job.status === "Completed" && job.matchCapReached) {
+    if (job.status === "Completed" && job.timedOut) {
+      jobStatusText.textContent =
+        `Stopped after the 1-hour time limit - kept ${job.matches.length} match(es) found so far. ` +
+        "The search space wasn't fully checked; narrow it (shorter length, smaller alphabet, more " +
+        "specific targets) and search again to cover the rest.";
+    } else if (job.status === "Completed" && job.matchCapReached) {
       jobStatusText.textContent =
         `Stopped after finding ${job.matches.length} match(es) - the search hit your "Max results" ` +
         "limit (or 1, with \"Stop after first match\"). Don't like these? Raise Max results (up to " +
@@ -1015,10 +1150,11 @@ function renderJobStatus(job) {
   }
 
   copyMatchesButton.hidden = job.matches.length === 0;
-  // Only offered for a live, just-run search (currentJobId set) - a page reached via
-  // /search/cached#hash has no live job behind it (see loadCachedResult), so there's nothing new
-  // to share beyond the link the user is already looking at.
-  copyLinkButton.hidden = job.status !== "Completed" || !currentJobId;
+  // A page reached via /search/cached#hash (no live job behind it - see loadSearchLink) never
+  // shows this, regardless of status. For a live job: a notify-enabled job already has its
+  // ShareHash from the moment it started (see the submit handler), so the link is offered
+  // immediately rather than waiting for Completed like a regular job's lazy mint-on-click does.
+  copyLinkButton.hidden = !currentJobId || (!currentShareHash && job.status !== "Completed");
 
   // Cap how many match badges get rendered as DOM nodes - some target cards are common enough
   // that a search can turn up thousands of matches, and building/reflowing that many elements on
@@ -1185,6 +1321,11 @@ function buildSearchPayload() {
     otFriendly: otFriendlyInput.checked,
     allowRerollPerDay: allowRerollInput.checked,
     mapSizes: mapSizeCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+    // Collapses to false if the box is checked but subscribing never actually succeeded (denied
+    // permission, unsupported browser, etc.) - correctly falls back to today's fully
+    // heartbeat-gated behavior with no server-side change needed, since the server never sees
+    // this as true (see SearchJobManager.StartSearch's own IsConfigured-and-subscribed gate).
+    notifyOnCompletion: Boolean(notifyOnCompletionInput?.checked && currentPushSubscription),
   };
 }
 
@@ -1309,10 +1450,29 @@ form.addEventListener("submit", async (event) => {
     currentSearchSetting = payload.setting;
     currentSearchPayload = payload;
     currentJobId = body.jobId;
-    currentShareHash = null;
+    // Non-null only for a notify-enabled job (eagerly minted server-side - see
+    // SearchJobManager.StartSearch) - a regular job still gets null here and mints its hash lazily
+    // on the first Copy Link click, same as before.
+    currentShareHash = body.shareHash ?? null;
     resetPreviewCache(); // a new search - prior seeds' cached previews no longer belong to it
     jobEl.hidden = false;
     matchesList.innerHTML = "";
+
+    if (payload.notifyOnCompletion && currentPushSubscription) {
+      // PushSubscription.toJSON() nests endpoint/keys.{p256dh,auth} - flatten to match the
+      // server's PushSubscriptionDto(Endpoint, P256dh, Auth) shape.
+      const subscriptionJson = currentPushSubscription.toJSON();
+      fetch(`/api/search/${encodeURIComponent(currentJobId)}/push-subscription`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: subscriptionJson.endpoint,
+          p256dh: subscriptionJson.keys.p256dh,
+          auth: subscriptionJson.keys.auth,
+        }),
+      }).catch(() => {});
+    }
+
     pollHandle = setInterval(() => pollJob(currentJobId), 1000);
     await pollJob(currentJobId);
   } catch {

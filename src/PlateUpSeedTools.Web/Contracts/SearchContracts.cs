@@ -41,9 +41,21 @@ public sealed record SearchStartRequest(
     // (today, just "normal") - StartSearch rejects a non-empty list for any other setting, and the UI
     // disables the checkboxes the same way it already locks the card-pack dropdown for non-normal
     // settings (see shared.js's updateCardPackLock). Null/empty means no size filter.
-    List<string>? MapSizes = null);
+    List<string>? MapSizes = null,
+    // Opts into: heartbeat-abandonment immunity (see SearchJobHeartbeatMonitor/
+    // SearchJobManager.SweepAbandonedJobs), a hard wall-clock deadline instead
+    // (Search:MaxJobDurationSeconds, default 1h), an eagerly-minted ShareHash so the job has a
+    // live/cached link from the moment it starts, and a Web Push notification on completion. Only
+    // takes effect if the client actually attached a push subscription AND the server has
+    // WebPush:* configured - see SearchJobManager.StartSearch.
+    bool? NotifyOnCompletion = null);
 
-public sealed record SearchStartResponse(string JobId, long TotalToCheck, string SpaceSize);
+/// <summary>
+/// ShareHash is non-null only for a notify-enabled job - see SearchJobManager.StartSearch. Lets the
+/// client surface a working link immediately rather than waiting for completion (see the existing,
+/// still-separate lazy "Copy Link" flow for a job that didn't opt into notify).
+/// </summary>
+public sealed record SearchStartResponse(string JobId, long TotalToCheck, string SpaceSize, string? ShareHash = null);
 
 /// <summary>
 /// One matched seed. <see cref="OtFriendly"/> is computed for every match regardless of whether the
@@ -73,7 +85,13 @@ public sealed record SearchStatusResponse(
     double ElapsedSeconds,
     IReadOnlyList<SearchMatchDto> Matches,
     string? Error,
-    bool MatchCapReached);
+    bool MatchCapReached,
+    // True when this Completed job actually stopped because it hit the notify-mode hard deadline
+    // (Search:MaxJobDurationSeconds) rather than exhausting its search space - see
+    // SearchJobManager.RunAsync. Surfaced as Completed, not a separate status, for the same reason
+    // MatchCapReached is: it's a "stopped early, still show partial results as a success" case, not
+    // a failure - see SearchJob.TimedOut's doc comment.
+    bool TimedOut = false);
 
 /// <summary>
 /// "What cards could possibly be offered on day N" - powers the search UI's day-target dropdown
@@ -185,6 +203,15 @@ public sealed record CachedSearchResult(
     IReadOnlyList<SearchMatchDto> Matches,
     long TotalToCheck,
     long CheckedCount,
-    bool MatchCapReached);
+    bool MatchCapReached,
+    bool TimedOut = false);
 
 public sealed record ShareSearchResultResponse(string Hash);
+
+/// <summary>
+/// Resolves a shareable hash to whichever of the two places it could point at still exists - a
+/// permanent cached snapshot (Kind "cached", any job this age) or a still-running/just-finished
+/// in-memory job (Kind "live", only exists for a notify-enabled job - see
+/// SearchJobManager.TryGetJobByHash). See SearchEndpoints.GetSearchLink.
+/// </summary>
+public sealed record SearchLinkResponse(string Kind, string? JobId, SearchStartRequest? Request, CachedSearchResult? Cached);

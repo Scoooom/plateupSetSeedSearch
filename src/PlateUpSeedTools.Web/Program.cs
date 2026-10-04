@@ -13,6 +13,9 @@ builder.Services.AddSingleton<ICacheStore<CachedSearchResult>, SqliteCacheStore<
 builder.Services.AddSingleton<ICacheStore<ExplorerPreload>, SqliteCacheStore<ExplorerPreload>>();
 builder.Services.AddSingleton(sp => new CacheAdmin(sp.GetRequiredService<IOptions<CacheOptions>>().Value));
 
+builder.Services.Configure<WebPushOptions>(builder.Configuration.GetSection(WebPushOptions.SectionName));
+builder.Services.AddSingleton<PushNotificationSender>();
+
 var dataRoot = builder.Configuration["DataRoot"] ?? Path.Combine(AppContext.BaseDirectory, "data", "settings");
 builder.Services.AddSingleton(new GameDataRepository(dataRoot));
 builder.Services.AddSingleton<SearchJobManager>();
@@ -27,6 +30,7 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 app.MapLayoutEndpoints();
 app.MapSearchEndpoints();
 app.MapExplorerEndpoints();
+app.MapPushEndpoints();
 
 // Clean-URL routing for the previewer: /preview, /preview/{setting}, and /preview/{setting}/{seed}
 // all serve the same static preview.html - it reads setting/seed out of the path client-side (see
@@ -36,8 +40,9 @@ app.MapFallbackToFile("/preview/{*path}", "preview.html");
 
 // Same pattern for the search page: /search and /search/... serve the static search.html, which
 // reads no path state itself - the form starts empty each visit UNLESS the URL also carries a
-// #<hash> fragment (/search/cached#hash), which search.js reads and resolves client-side via
-// GET /api/search/cached/{hash}; fragments never reach the server, so this route doesn't need to
+// #<hash> fragment (/search/cached#hash - also used for a still-running notify-enabled job's
+// "live" link, not just a finished one's), which search.js reads and resolves client-side via
+// GET /api/search/link/{hash}; fragments never reach the server, so this route doesn't need to
 // know about that case at all, it's still just "serve search.html for anything under /search".
 app.MapFallbackToFile("/search/{*path}", "search.html");
 

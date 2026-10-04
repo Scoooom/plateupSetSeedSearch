@@ -39,6 +39,8 @@ public static class SearchEndpoints
         app.MapPost("/api/search/path", GetSearchPath);
         app.MapPost("/api/search/{jobId}/share", ShareSearchResult);
         app.MapGet("/api/search/cached/{hash}", GetCachedSearchResult);
+        app.MapGet("/api/search/link/{hash}", GetSearchLink);
+        app.MapPost("/api/search/{jobId}/push-subscription", RegisterPushSubscription);
     }
 
     private static IResult GetUnlocks(string setting, GameDataRepository repo)
@@ -452,9 +454,9 @@ public static class SearchEndpoints
             matchCap = DefaultMatchCap;
         }
 
-        var job = jobs.StartSearch(searchRequest, matchCap);
+        var job = jobs.StartSearch(searchRequest, matchCap, request);
 
-        return Results.Accepted($"/api/search/{job.Id}", new SearchStartResponse(job.Id, totalToCheck, spaceSize.ToString()));
+        return Results.Accepted($"/api/search/{job.Id}", new SearchStartResponse(job.Id, totalToCheck, spaceSize.ToString(), job.ShareHash));
     }
 
     private static IResult GetStatus(string jobId, SearchJobManager jobs)
@@ -477,23 +479,11 @@ public static class SearchEndpoints
             job.TotalToCheck,
             seedsPerSecond,
             elapsed.TotalSeconds,
-            WithEquivalents(job),
+            SearchResultProjection.WithEquivalents(job),
             job.Error,
-            job.MatchCapReached));
+            job.MatchCapReached,
+            job.TimedOut));
     }
-
-    /// <summary>
-    /// Folds a finished job's equivalent-seed groups (see SeedSearchResult.EquivalentSeeds) into its
-    /// match list. During the run job.Equivalents is empty, so this is a no-op passthrough; once the
-    /// search completes each representative match gains the other seed strings that resolve to the
-    /// same game.
-    /// </summary>
-    private static List<SearchMatchDto> WithEquivalents(SearchJob job) =>
-        job.Matches
-            .Select(m => job.Equivalents.TryGetValue(m.Seed, out var eq)
-                ? m with { EquivalentSeeds = eq.Sample, EquivalentCount = eq.Count }
-                : m)
-            .ToList();
 
     /// <summary>
     /// "Which card to pick each day to reproduce this seed's match" for the search results'
@@ -600,8 +590,10 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = "Only a completed search can be shared." });
         }
 
-        var hash = ShareHash.Generate();
-        var cached = new CachedSearchResult(request, WithEquivalents(job), job.TotalToCheck, job.CheckedCount, job.MatchCapReached);
+        // Reuses the job's own eagerly-minted hash if it has one (a notify-enabled job - see
+        // SearchJobManager.StartSearch) instead of minting a second valid link for the same job.
+        var hash = job.ShareHash ?? ShareHash.Generate();
+        var cached = new CachedSearchResult(request, SearchResultProjection.WithEquivalents(job), job.TotalToCheck, job.CheckedCount, job.MatchCapReached, job.TimedOut);
         await cache.SetAsync(hash, cached);
 
         return Results.Ok(new ShareSearchResultResponse(hash));
@@ -614,6 +606,36 @@ public static class SearchEndpoints
             ? Results.NotFound(new { error = "This shared search result has expired or doesn't exist." })
             : Results.Ok(cached);
     }
+
+    /// <summary>
+    /// Resolves a hash to whichever of the two places it could still point at - checked in this
+    /// order: a permanent cached snapshot first (works for any job's age, including long after the
+    /// live SearchJob itself has been evicted), then a still-running/just-finished in-memory
+    /// notify-enabled job (see SearchJobManager.TryGetJobByHash - only notify jobs are ever indexed
+    /// by hash at all). Sits alongside, not in place of, the pre-existing GET /api/search/cached/{hash}
+    /// (kept for backward compatibility) - this is what search.js's loadCachedResult-equivalent
+    /// actually calls now, since a notify job's link needs to resolve BOTH ways over its lifetime.
+    /// </summary>
+    private static async Task<IResult> GetSearchLink(string hash, SearchJobManager jobs, ICacheStore<CachedSearchResult> cache)
+    {
+        var cached = await cache.GetAsync(hash);
+        if (cached is not null)
+        {
+            return Results.Ok(new SearchLinkResponse("cached", null, null, cached));
+        }
+
+        if (jobs.TryGetJobByHash(hash, out var job))
+        {
+            return Results.Ok(new SearchLinkResponse("live", job.Id, job.OriginalRequest, null));
+        }
+
+        return Results.NotFound(new { error = "This shared search result has expired or doesn't exist." });
+    }
+
+    private static IResult RegisterPushSubscription(string jobId, PushSubscriptionDto subscription, SearchJobManager jobs) =>
+        jobs.TryRegisterPushSubscription(jobId, subscription)
+            ? Results.Ok()
+            : Results.NotFound(new { error = $"Unknown or non-notify search job '{jobId}'." });
 
     /// <summary>
     /// Resolves the bonus starting card: an explicit cardPack schedule's own StartingUnlockId if
