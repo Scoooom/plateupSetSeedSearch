@@ -23,6 +23,8 @@ const mapSizeFieldGroup = document.getElementById("map-size-field-group");
 const mapSizeCheckboxes = [...document.querySelectorAll(".map-size-checkbox")];
 const allowRerollInput = document.getElementById("allow-reroll");
 const excludeSeedsInput = document.getElementById("exclude-seeds-input");
+const recentSearchesSection = document.getElementById("recent-searches");
+const recentSearchesList = document.getElementById("recent-searches-list");
 const form = document.getElementById("search-form");
 const statusEl = document.getElementById("status");
 const jobEl = document.getElementById("job");
@@ -103,6 +105,137 @@ function urlBase64ToUint8Array(base64String) {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
+}
+
+// "Recent searches" - a browser-local memory of jobs THIS browser started, so closing the tab
+// (the expected thing to do for a notify-enabled search - that's the whole point of the feature)
+// doesn't strand the user with no way back to it. There's no account system, so this is
+// deliberately client-side only (localStorage, same pattern as app.js's colorOverrides) - a hash-
+// backed entry (notify-enabled, or any job someone's since clicked Copy Link on) resolves forever
+// via the permanent cache; a hash-less entry (a regular job nobody's shared yet) only resolves
+// while the in-memory SearchJob is still alive (until it's evicted, ~30 min after it finishes) -
+// resuming one that's gone just removes it from the list rather than erroring forever.
+const RECENT_SEARCHES_STORAGE_KEY = "plateup:recentSearches";
+const MAX_RECENT_SEARCHES = 15;
+
+function loadRecentSearches() {
+  try {
+    const raw = localStorage.getItem(RECENT_SEARCHES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentSearches(entries) {
+  try {
+    localStorage.setItem(RECENT_SEARCHES_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    // localStorage unavailable (private browsing, storage full, ...) - the list just won't
+    // persist across reloads; still works for the current page view.
+  }
+}
+
+// Called right after a search starts (both notify and regular jobs - a regular job closed early
+// is still better recoverable-by-jobId for ~30 minutes than not tracked at all). Stores the full
+// payload (not just setting/dishName) so a resumed entry can also prefill the form, same as
+// loadSearchLink's "live" branch does for a hash-backed link.
+function recordRecentSearch(jobId, hash, payload) {
+  const entries = loadRecentSearches();
+  entries.unshift({ jobId, hash, payload, startedAt: new Date().toISOString() });
+  saveRecentSearches(entries.slice(0, MAX_RECENT_SEARCHES));
+  renderRecentSearches();
+}
+
+// Called once a hash-less entry gains a hash later (the user clicked Copy Link after the fact) -
+// upgrades it in place so it becomes permanently recoverable instead of only until eviction.
+function attachHashToRecentSearch(jobId, hash) {
+  const entries = loadRecentSearches();
+  const entry = entries.find((e) => e.jobId === jobId);
+  if (entry) {
+    entry.hash = hash;
+    saveRecentSearches(entries);
+    renderRecentSearches();
+  }
+}
+
+function removeRecentSearch(jobId) {
+  saveRecentSearches(loadRecentSearches().filter((e) => e.jobId !== jobId));
+  renderRecentSearches();
+}
+
+function formatRelativeTime(isoString) {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(isoString).getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+// Resumes a hash-less entry by jobId - only works while the in-memory SearchJob is still alive.
+// A 404 (evicted, or server restarted since) prunes the entry rather than leaving a dead link
+// around forever.
+async function resumeRecentSearch(jobId, payload) {
+  try {
+    const response = await fetch(`/api/search/${encodeURIComponent(jobId)}`);
+    if (!response.ok) {
+      setStatus("That search is no longer available on the server (it finished too long ago).", true);
+      removeRecentSearch(jobId);
+      return;
+    }
+
+    await prefillFormFromPayload(payload);
+    currentSearchSetting = payload.setting;
+    currentSearchPayload = payload;
+    currentJobId = jobId;
+    currentShareHash = null;
+    resetPreviewCache();
+    jobEl.hidden = false;
+    matchesList.innerHTML = "";
+    stopPolling();
+    pollHandle = setInterval(() => pollJob(currentJobId), 1000);
+    await pollJob(currentJobId);
+  } catch {
+    setStatus("Failed to reach the server.", true);
+  }
+}
+
+function renderRecentSearches() {
+  const entries = loadRecentSearches();
+  recentSearchesSection.hidden = entries.length === 0;
+  recentSearchesList.innerHTML = "";
+
+  for (const entry of entries) {
+    const li = document.createElement("li");
+    const label = `${entry.payload?.dishName ?? "?"} / ${entry.payload?.setting ?? "?"} - started ${formatRelativeTime(entry.startedAt)}`;
+
+    if (entry.hash) {
+      const link = document.createElement("a");
+      link.className = "link-button";
+      link.href = `/search/cached#${entry.hash}`;
+      link.textContent = label;
+      li.appendChild(link);
+    } else {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "link-button";
+      button.textContent = label;
+      button.addEventListener("click", () => resumeRecentSearch(entry.jobId, entry.payload));
+      li.appendChild(button);
+    }
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "link-button";
+    removeButton.textContent = "Remove";
+    removeButton.title = "Remove from this list (doesn't cancel the search)";
+    removeButton.addEventListener("click", () => removeRecentSearch(entry.jobId));
+    li.append(" ", removeButton);
+
+    recentSearchesList.appendChild(li);
+  }
 }
 
 // Per-row refresh state (debounce timer + a generation counter to drop stale out-of-order
@@ -946,6 +1079,7 @@ async function loadInit() {
   addDayTargetRow();
   onDishChanged();
   setUpPushNotifications().catch(() => {});
+  renderRecentSearches();
 
   const hash = location.hash.slice(1);
   if (hash) {
@@ -1261,6 +1395,7 @@ copyLinkButton?.addEventListener("click", async () => {
         return;
       }
       currentShareHash = body.hash;
+      attachHashToRecentSearch(currentJobId, currentShareHash);
     }
     const url = `${location.origin}/search/cached#${currentShareHash}`;
     await navigator.clipboard.writeText(url);
@@ -1457,6 +1592,7 @@ form.addEventListener("submit", async (event) => {
     resetPreviewCache(); // a new search - prior seeds' cached previews no longer belong to it
     jobEl.hidden = false;
     matchesList.innerHTML = "";
+    recordRecentSearch(currentJobId, currentShareHash, payload);
 
     if (payload.notifyOnCompletion && currentPushSubscription) {
       // PushSubscription.toJSON() nests endpoint/keys.{p256dh,auth} - flatten to match the

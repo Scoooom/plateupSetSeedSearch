@@ -654,6 +654,22 @@ button[type="submit"]:hover {
   outline: none;
 }
 
+.recent-searches-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.recent-searches-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .ot-badge {
   display: inline-block;
   background: var(--room-garden);
