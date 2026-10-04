@@ -8,6 +8,14 @@ services:
       - "8080:8080"
     volumes:
       - cache-data:/data
+    environment:
+      # VAPID credentials for Web Push ("Notify on completion") - see PushNotificationSender.
+      # Deliberately pulled from a local, untracked .env file (docker compose reads it
+      # automatically from this same directory) rather than hardcoded here, since these are
+      # credentials, not operational config. See .env.example for the required keys.
+      WebPush__PublicKey: ${WEBPUSH_PUBLIC_KEY:-}
+      WebPush__PrivateKey: ${WEBPUSH_PRIVATE_KEY:-}
+      WebPush__Subject: ${WEBPUSH_SUBJECT:-}
     restart: unless-stopped
 
   cli:

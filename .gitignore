@@ -8,6 +8,9 @@ obj/
 *.db-wal
 core.*
 
+# Secrets for local/deployed docker compose runs (VAPID keys etc.) - see .env.example
+.env
+
 # Never accidentally commit raw game data extracted locally
 /PlateUpSourceFiles/
 *.asset
