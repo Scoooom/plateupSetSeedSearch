@@ -47,6 +47,14 @@ public class ShopDaySimulatorGroundTruthTests
     private const int PrepStationId = 1656358740;
     private const int FlowerPotId = 221442949;
 
+    // Pies - this capture predates the SellOnlyIfPlatesNeeded gate (Conditional Staples work) and
+    // never recorded the real run's actual starting dish, so the exact dish is unknown. Pies stands
+    // in deliberately: IsMainThatDoesNotNeedPlates=false like virtually every non-hand-held Main dish,
+    // and the gate is a plain boolean (plates needed: yes/no) - any ordinary plate-needing Main dish
+    // produces the identical MenuRequiresPlates=true result the real capture's Plates-present slots
+    // require, so which specific dish is used here doesn't affect correctness of this assertion.
+    private const int PiesId = -133939790;
+
     [Fact]
     public void MatchesRealCapturedShopSequence()
     {
@@ -54,7 +62,7 @@ public class ShopDaySimulatorGroundTruthTests
         var seed = new Seed("vqrj");
         var (profile, _) = repo.ResolveLayout("normal", seed);
         var kitchen = new KitchenApplianceState(profile.RequiredApplianceIds);
-        var sim = new ShopDaySimulator(repo, seed, kitchen);
+        var sim = new ShopDaySimulator(repo, seed, kitchen, menuDishIds: new HashSet<int> { PiesId });
 
         var day1 = sim.SimulateDay(1);
         Assert.Equal(ResearchDeskId, day1.Slots[0].ApplianceId);

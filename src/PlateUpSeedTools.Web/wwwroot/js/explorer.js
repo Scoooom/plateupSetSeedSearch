@@ -37,7 +37,7 @@ let currentNode = null;
 // night - only relevant for packs with a Day=0 UnlockConditionOnce (santa-workshop's Christmas
 // Special Card) but harmless otherwise, same as the day-0 floor added engine/API-side.
 function makeRootNode() {
-  return { id: "root", day: -1, cardId: null, label: null, sourcePackName: null, rerolled: false, parent: null, children: new Map() };
+  return { id: "root", day: -1, cardId: null, label: null, sourcePackName: null, rerolled: false, parent: null, children: new Map(), shopActions: [] };
 }
 
 function setStatus(message, isError) {
@@ -299,6 +299,7 @@ function resetExploration() {
   layoutPanelImage.removeAttribute("src");
   layoutPanelLink.removeAttribute("href");
   layoutPanelStats.textContent = "";
+  notifyDayShown(null, null);
 }
 
 // Layout (room shapes/appliance placement) depends only on setting+seed, never on the explored
@@ -490,6 +491,7 @@ function getOrCreateChild(parentNode, day, option, sourcePackName, rerolled = fa
       rerolled: option ? rerolled : false, // a skip is never "rerolled" - nothing was picked
       parent: parentNode,
       children: new Map(),
+      shopActions: [], // Blueprints-view buy/toss actions recorded AT this day - see explorer-shop.js
     };
     parentNode.children.set(key, child);
   }
@@ -525,6 +527,7 @@ async function renderFrontier(walkStart, myGeneration) {
       const p = document.createElement("p");
       p.textContent = "Reached day 15 - this is as far as the Explorer goes.";
       dayPanelEl.appendChild(p);
+      notifyDayShown(current, null); // nothing further to show on the Blueprints view either
       return;
     }
 
@@ -546,6 +549,12 @@ async function renderFrontier(walkStart, myGeneration) {
     }
 
     renderDayPanel(current, nextDay, response);
+    // `current` is the PARENT node for this frontier day (pathToNode(current) is every committed
+    // decision strictly before `nextDay`) - the Blueprints view needs exactly this pair, not
+    // currentNode (which can lag behind the shown frontier day - see notifyDayShown's own doc in
+    // explorer-shop.js for why this hook exists at this exact point rather than deriving from
+    // currentNode after the fact).
+    notifyDayShown(current, nextDay);
     return;
   }
 }

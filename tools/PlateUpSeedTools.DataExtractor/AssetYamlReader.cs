@@ -135,6 +135,24 @@ public sealed class AssetYamlReader
     }
 
     /// <summary>
+    /// Reads serializationData.SerializedBytes (the Odin-serialized binary blob, hex-encoded) as an
+    /// OdinFieldReader, or null if absent/empty - see OdinFieldReader's class doc for what it can and
+    /// can't decode from this blob.
+    /// </summary>
+    public OdinFieldReader? OdinBlob()
+    {
+        if (!_root.Children.TryGetValue(new YamlScalarNode("serializationData"), out var sdNode)
+            || sdNode is not YamlMappingNode sd
+            || !sd.Children.TryGetValue(new YamlScalarNode("SerializedBytes"), out var bytesNode)
+            || bytesNode is not YamlScalarNode bytesScalar)
+        {
+            return null;
+        }
+
+        return OdinFieldReader.FromHex(bytesScalar.Value);
+    }
+
+    /// <summary>
     /// Reads an xNode `ports` map, returning, per port field name, the list of (sourcePortName, sourceNodeGuid)
     /// it's connected to (i.e. this node's inputs on that port).
     /// </summary>

@@ -62,3 +62,42 @@ public sealed record ExplorerPreload(
     List<ExplorerPathEntryDto> Path);
 
 public sealed record SaveExplorerPreloadResponse(string Hash);
+
+// --- Blueprints view (shop/appliance offers) - shares the Cards walk's setup fields (Setting/Seed/
+// DishName/SubOptionChoice/Heat/Tier/FranchiseCardNames/CardPack/CardPath) so switching views on the
+// same page doesn't require re-deriving owned-unlock state; see ExplorerEndpoints.SimulateShopDay.
+
+/// <summary>One buy or toss action taken on a given (already-passed) day, applied in day order before simulating a later day's shop.</summary>
+public sealed record ShopActionDto(int Day, int ApplianceId, bool IsToss);
+
+public sealed record ExplorerShopDayRequest(
+    string Setting,
+    string Seed,
+    string DishName,
+    int? SubOptionChoice,
+    int Heat,
+    int Tier,
+    List<string>? FranchiseCardNames,
+    List<ExplorerPathEntryDto> CardPath,
+    string? CardPack,
+    List<ShopActionDto> ShopActions,
+    int Day,
+    int RerollCount,
+    // The live Pref.LettersSpawnInside game setting - user-confirmed from real gameplay that spawn
+    // placement depends ONLY on this (never on player position, and never recomputed by a reroll -
+    // see Engine.Shop.ShopSpawnLocation's doc comment), so one value for the whole day is correct,
+    // not a per-round scenario. Defaults to the game's own default (true).
+    bool IsInside = true);
+
+public sealed record ShopSlotDto(int? ApplianceId, string? ApplianceName);
+
+public sealed record ShopRoundDto(int RerollIndex, IReadOnlyList<ShopSlotDto> Slots);
+
+public sealed record PlacedApplianceDto(int ApplianceId, string ApplianceName);
+
+/// <summary>
+/// PlacedAppliances is the kitchen state heading INTO this day (before any of today's rounds) - what
+/// a "Toss" button can target. Location is a plain-language category (see ShopSpawnLocation) for the
+/// WHOLE day, not per-round - never claim more precision than that in UI copy.
+/// </summary>
+public sealed record ExplorerShopDayResponse(int Day, IReadOnlyList<ShopRoundDto> Rounds, string Location, IReadOnlyList<PlacedApplianceDto> PlacedAppliances);

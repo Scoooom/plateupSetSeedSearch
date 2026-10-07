@@ -1,4 +1,5 @@
 using PlateUpSeedTools.Engine.Data;
+using PlateUpSeedTools.Engine.Seeding;
 using PlateUpSeedTools.Engine.Shop;
 using Xunit;
 
@@ -17,6 +18,12 @@ public class ShopOptionEvaluatorTests
     // Real IDs from data/settings/shop/appliances.json.
     private const int ResearchDeskId = 1139247360; // "Research Desk" (Blueprint Upgrade Desk) - StapleWhenMissing=true
     private const int EnchantingDeskId = -292467039; // "Enchanting Desk" - also BlueprintUpgrader-tagged, StapleWhenMissing=false
+    private const int PlatesId = 1313469794; // "Plates" - StapleWhenMissing=true AND SellOnlyIfPlatesNeeded=true
+    private const int PiesId = -133939790; // "Pies" dish - IsMainThatDoesNotNeedPlates=false, MenuPhases=[Main]
+    private const int FlowerPotsCardId = 1491215862; // "Flower Pots" card - ShopEffect.AddStaple grants Flower Pot
+    private const int FlowerPotApplianceId = 221442949; // "Flower Pot" - the appliance that card grants
+    private const int ExclusiveCardId = -1323758054; // "Exclusive" card - ThemeAddEffect.AddsTheme grants DecorationType.Exclusive (1)
+    private const int CandelabraId = -13481890; // "Candelabra" - ThemeRequired=1 (Exclusive)
 
     private static GameDataRepository LoadRepo() => new(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
 
@@ -99,6 +106,12 @@ public class ShopOptionEvaluatorTests
             SellOnlyAsDuplicate = false,
             SellOnlyAsUnique = false,
             RequiresForShopIds = [],
+            SellOnlyIfPlatesNeeded = false,
+            RequiresPhaseForShopIds = [],
+            RequiresProcessForShopIds = [],
+            RequiresIngredientForShopIds = [],
+            ShopRequirementFilter = 0,
+            ThemeRequired = 0,
             Staple = staple,
         };
 
@@ -111,17 +124,26 @@ public class ShopOptionEvaluatorTests
         var nonStapleMatchingTag = new ShopOptionState
         {
             ApplianceId = 1, Tags = ShoppingTags.Office, SellAsUpgrade = false, StapleWhenMissing = false,
-            SellOnlyAsDuplicate = false, SellOnlyAsUnique = false, RequiresForShopIds = [], Staple = ShopStapleType.NonStaple,
+            SellOnlyAsDuplicate = false, SellOnlyAsUnique = false, RequiresForShopIds = [],
+            SellOnlyIfPlatesNeeded = false, RequiresPhaseForShopIds = [], RequiresProcessForShopIds = [],
+            RequiresIngredientForShopIds = [], ShopRequirementFilter = 0, ThemeRequired = 0,
+            Staple = ShopStapleType.NonStaple,
         };
         var stapleMatchingTag = new ShopOptionState
         {
             ApplianceId = 2, Tags = ShoppingTags.Office, SellAsUpgrade = false, StapleWhenMissing = false,
-            SellOnlyAsDuplicate = false, SellOnlyAsUnique = false, RequiresForShopIds = [], Staple = ShopStapleType.WhenMissing,
+            SellOnlyAsDuplicate = false, SellOnlyAsUnique = false, RequiresForShopIds = [],
+            SellOnlyIfPlatesNeeded = false, RequiresPhaseForShopIds = [], RequiresProcessForShopIds = [],
+            RequiresIngredientForShopIds = [], ShopRequirementFilter = 0, ThemeRequired = 0,
+            Staple = ShopStapleType.WhenMissing,
         };
         var nonStapleNoOverlap = new ShopOptionState
         {
             ApplianceId = 3, Tags = ShoppingTags.Cooking, SellAsUpgrade = false, StapleWhenMissing = false,
-            SellOnlyAsDuplicate = false, SellOnlyAsUnique = false, RequiresForShopIds = [], Staple = ShopStapleType.NonStaple,
+            SellOnlyAsDuplicate = false, SellOnlyAsUnique = false, RequiresForShopIds = [],
+            SellOnlyIfPlatesNeeded = false, RequiresPhaseForShopIds = [], RequiresProcessForShopIds = [],
+            RequiresIngredientForShopIds = [], ShopRequirementFilter = 0, ThemeRequired = 0,
+            Staple = ShopStapleType.NonStaple,
         };
 
         Assert.True(nonStapleMatchingTag.MatchesRequestTags(ShoppingTags.Office));
@@ -212,5 +234,152 @@ public class ShopOptionEvaluatorTests
 
         Assert.Equal(ShopStapleType.WhenMissing, researchDesk.Staple);
         Assert.False(researchDesk.IsRemoved);
+    }
+
+    [Fact]
+    public void BuildDailyOptions_Plates_RemovedWhenMenuHasNoPlateNeedingMainDish()
+    {
+        var repo = LoadRepo();
+        var kitchen = new KitchenApplianceState();
+
+        var options = ShopOptionEvaluator.BuildDailyOptions(repo, kitchen, menuDishIds: new HashSet<int>());
+        var plates = options.Single(o => o.ApplianceId == PlatesId);
+
+        // Step 2 still force-tags it WhenMissing (not currently placed) - step 5's menu check removes
+        // it anyway, demonstrating WhenMissing does NOT exempt an option from FilterByRequiredCourse
+        // (unlike FilterByRequiredAppliances/step 4, which does exempt WhenMissing).
+        Assert.Equal(ShopStapleType.WhenMissing, plates.Staple);
+        Assert.True(plates.IsRemoved);
+    }
+
+    [Fact]
+    public void BuildDailyOptions_Plates_StaysEligibleWhenMenuHasPlateNeedingMainDish()
+    {
+        var repo = LoadRepo();
+        var kitchen = new KitchenApplianceState();
+
+        var options = ShopOptionEvaluator.BuildDailyOptions(repo, kitchen, menuDishIds: new HashSet<int> { PiesId });
+        var plates = options.Single(o => o.ApplianceId == PlatesId);
+
+        Assert.Equal(ShopStapleType.WhenMissing, plates.Staple);
+        Assert.False(plates.IsRemoved);
+    }
+
+    [Fact]
+    public void BuildDailyOptions_Plates_DefaultsToRemovedWhenNoMenuDishIdsSupplied()
+    {
+        // menuDishIds omitted entirely (not just empty) - same result as an explicit empty set, since
+        // ShopDaySimulator/BuildDailyOptions callers that don't track Cards-walk state (e.g.
+        // OtFriendlyChecker) shouldn't silently assume a plate-needing menu.
+        var repo = LoadRepo();
+        var kitchen = new KitchenApplianceState();
+
+        var options = ShopOptionEvaluator.BuildDailyOptions(repo, kitchen);
+        var plates = options.Single(o => o.ApplianceId == PlatesId);
+
+        Assert.True(plates.IsRemoved);
+    }
+
+    [Fact]
+    public void ResolveBonusStapleApplianceIds_OwnedFlowerPotsCard_ResolvesToFlowerPotAppliance()
+    {
+        var repo = LoadRepo();
+
+        var result = ShopOptionEvaluator.ResolveBonusStapleApplianceIds(repo, new HashSet<int> { FlowerPotsCardId });
+
+        Assert.Equal(new HashSet<int> { FlowerPotApplianceId }, result);
+    }
+
+    [Fact]
+    public void BuildDailyOptions_FlowerPot_BecomesBonusStapleWhenGrantingCardOwned()
+    {
+        var repo = LoadRepo();
+        var kitchen = new KitchenApplianceState();
+        var bonusStaples = ShopOptionEvaluator.ResolveBonusStapleApplianceIds(repo, new HashSet<int> { FlowerPotsCardId });
+
+        var options = ShopOptionEvaluator.BuildDailyOptions(repo, kitchen, bonusStapleApplianceIds: bonusStaples);
+        var flowerPot = options.Single(o => o.ApplianceId == FlowerPotApplianceId);
+
+        Assert.Equal(ShopStapleType.BonusStaple, flowerPot.Staple);
+        Assert.False(flowerPot.IsRemoved);
+    }
+
+    [Fact]
+    public void ResolveGrantedThemes_OwnedExclusiveCard_ResolvesToExclusiveFlag()
+    {
+        var repo = LoadRepo();
+
+        var result = ShopOptionEvaluator.ResolveGrantedThemes(repo, new HashSet<int> { ExclusiveCardId });
+
+        Assert.Equal(1, result); // DecorationType.Exclusive
+    }
+
+    [Fact]
+    public void BuildDailyOptions_Candelabra_RemovedUntilExclusiveThemeGranted()
+    {
+        var repo = LoadRepo();
+        var kitchen = new KitchenApplianceState();
+
+        var withoutTheme = ShopOptionEvaluator.BuildDailyOptions(repo, kitchen);
+        Assert.True(withoutTheme.Single(o => o.ApplianceId == CandelabraId).IsRemoved);
+
+        var grantedThemes = ShopOptionEvaluator.ResolveGrantedThemes(repo, new HashSet<int> { ExclusiveCardId });
+        var withTheme = ShopOptionEvaluator.BuildDailyOptions(repo, kitchen, grantedThemes: grantedThemes);
+        Assert.False(withTheme.Single(o => o.ApplianceId == CandelabraId).IsRemoved);
+    }
+
+    [Fact]
+    public void SimulateDayWithRerolls_ZeroRerolls_MatchesPlainSimulateDay()
+    {
+        var repo = LoadRepo();
+        var seed = new Seed("vqrj");
+        var (profile, _) = repo.ResolveLayout("normal", seed);
+
+        var plain = new ShopDaySimulator(repo, seed, new KitchenApplianceState(profile.RequiredApplianceIds)).SimulateDay(2);
+        var rerolled = new ShopDaySimulator(repo, seed, new KitchenApplianceState(profile.RequiredApplianceIds)).SimulateDayWithRerolls(2, rerollCount: 0);
+
+        Assert.Single(rerolled);
+        Assert.Equal(plain.Slots.Select(s => s.ApplianceId), rerolled[0].Slots.Select(s => s.ApplianceId));
+    }
+
+    [Fact]
+    public void SimulateDayWithRerolls_PrefixOfRoundsIsStableRegardlessOfTotalRerollCount()
+    {
+        // A UI that doesn't know the final reroll count upfront (shows "next reroll" incrementally)
+        // needs round N's result to be identical whether it was computed as part of a 1-reroll or a
+        // 3-reroll request - this is the real continuing-stream property, not just "doesn't throw."
+        var repo = LoadRepo();
+        var seed = new Seed("vqrj");
+        var (profile, _) = repo.ResolveLayout("normal", seed);
+
+        var oneReroll = new ShopDaySimulator(repo, seed, new KitchenApplianceState(profile.RequiredApplianceIds)).SimulateDayWithRerolls(2, rerollCount: 1);
+        var threeRerolls = new ShopDaySimulator(repo, seed, new KitchenApplianceState(profile.RequiredApplianceIds)).SimulateDayWithRerolls(2, rerollCount: 3);
+
+        Assert.Equal(2, oneReroll.Count);
+        Assert.Equal(4, threeRerolls.Count);
+        for (var i = 0; i < oneReroll.Count; i++)
+        {
+            Assert.Equal(oneReroll[i].Slots.Select(s => s.ApplianceId), threeRerolls[i].Slots.Select(s => s.ApplianceId));
+        }
+    }
+
+    [Fact]
+    public void SimulateDayWithRerolls_NegativeRerollCount_Throws()
+    {
+        var repo = LoadRepo();
+        var seed = new Seed("vqrj");
+        var sim = new ShopDaySimulator(repo, seed, new KitchenApplianceState());
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => sim.SimulateDayWithRerolls(1, rerollCount: -1));
+    }
+
+    [Theory]
+    [InlineData(ShopSpawnSetting.Outside, ShopSpawnLocation.NearFrontDoor)]
+    [InlineData(ShopSpawnSetting.Inside, ShopSpawnLocation.Inside)]
+    public void ShopSpawnLocationEvaluator_MatchesRealGameplay_IndependentOfPlayerPosition(ShopSpawnSetting setting, ShopSpawnLocation expected)
+    {
+        // User-confirmed from real gameplay: placement depends only on the setting, never on where
+        // the player is standing - see ShopSpawnLocation's doc comment.
+        Assert.Equal(expected, ShopSpawnLocationEvaluator.Evaluate(setting));
     }
 }

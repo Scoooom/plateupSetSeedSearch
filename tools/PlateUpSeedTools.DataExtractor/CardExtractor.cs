@@ -80,6 +80,16 @@ public static class CardExtractor
         var hardcodedBlockedBy = reader.ReferenceList("HardcodedBlockers").Select(g => ResolveReferencedId(resolver, g));
         var plainMenuPhases = isDish ? reader.ScalarListField("ResultingMenuItems", "Phase") : [];
 
+        // ShopEffect.AddStaple / ThemeAddEffect.AddsTheme - both live inside this card's Odin blob
+        // (Effects is a polymorphic List<UnlockEffect>, no plain-YAML representation), decoded via the
+        // OdinFieldReader partial-read technique - see its class doc and game-domain-knowledge.md's
+        // "AddStaple/AddsTheme/AllowRefreshes decode" section for the validation writeup. Null when
+        // the card has no ShopEffect/ThemeAddEffect at all (field absent from the blob), not just when
+        // the granted value happens to be unset.
+        var odin = reader.OdinBlob();
+        var grantsBonusStapleApplianceId = ResolveOdinApplianceReference(resolver, reader, odin, "AddStaple");
+        var grantsTheme = odin is not null && odin.TryReadInt32("AddsTheme", out var themeValue) ? themeValue : (int?)null;
+
         var requiresIds = hardcodedRequires.Where(x => x is not null).Select(x => x!.Value).Concat(graphRequires.GetValueOrDefault(id, [])).Distinct().ToList();
         var blockedByIds = hardcodedBlockedBy.Where(x => x is not null).Select(x => x!.Value).Concat(graphBlockedBy.GetValueOrDefault(id, [])).Distinct().ToList();
         var menuPhases = plainMenuPhases.Concat(graphMenuPhases.GetValueOrDefault(id, [])).Distinct().ToList();
@@ -106,6 +116,13 @@ public static class CardExtractor
             // MenuPhase values this dish provides (FilterBasic/UnlockSelectorMenuPhase need this - e.g.
             // "is this a Starter/Side dish", "does the player already own a Main dish").
             menuPhases = isDish ? menuPhases : null,
+            // Drives the shop's SellOnlyIfPlatesNeeded gate (Plates/Dish Rack/Enchanted Plates) - see
+            // Engine.Shop.ShopOptionEvaluator's FilterByRequiredCourse port.
+            isMainThatDoesNotNeedPlates = isDish ? reader.Bool("IsMainThatDoesNotNeedPlates") : (bool?)null,
+            // Drives the shop's TagStaples bonus-staple mechanism and FilterByTheme gate respectively -
+            // see Engine.Shop.ShopOptionEvaluator.
+            grantsBonusStapleApplianceId,
+            grantsTheme,
         };
     }
 
@@ -599,6 +616,29 @@ public static class CardExtractor
         }
 
         return UnlockSignatureFields.All(f => text.Contains($"\n  {f}:"));
+    }
+
+    /// <summary>
+    /// Resolves an OdinFieldReader reference-index field (e.g. ShopEffect.AddStaple) to the target
+    /// asset's own numeric ID field - the index points into THIS asset's own ReferencedUnityObjects
+    /// list (plain YAML, already resolvable without the Odin blob), so no further blob decoding is
+    /// needed once the index is known.
+    /// </summary>
+    private static int? ResolveOdinApplianceReference(GuidResolver resolver, AssetYamlReader reader, OdinFieldReader? odin, string fieldName)
+    {
+        var index = odin?.TryReadReferenceIndex(fieldName);
+        if (index is null)
+        {
+            return null;
+        }
+
+        var refs = reader.ReferencedUnityObjectGuids();
+        if (index.Value < 0 || index.Value >= refs.Count)
+        {
+            return null;
+        }
+
+        return ResolveReferencedId(resolver, refs[index.Value]);
     }
 
     private static int? ResolveReferencedId(GuidResolver resolver, string? guid)

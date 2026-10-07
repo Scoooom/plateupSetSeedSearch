@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Seed Explorer — PlateUp Seed Tools</title>
+  <title>Card + Blueprint Explorer — PlateUp Seed Tools</title>
   <link rel="stylesheet" href="/css/theme.css" />
 </head>
 <body>
@@ -27,12 +27,11 @@
 
   <main>
     <div class="page-intro">
-      <h1>Seed Explorer</h1>
+      <h1>Card + Blueprint Explorer</h1>
       <p class="subtitle">
-        Walk a seed day-by-day (from the prep day before day 1, up to day 15) and see exactly what cards it offers. Pick a card to
+        Walk a seed day-by-day (from the prep day before day 1, up to day 15) and see exactly what it offers. Pick a card to
         advance, or go back to an earlier day to see what the other option would have led to - both
-        branches stay in the tree below, nothing is thrown away. No blueprint or customer-count data
-        here, just card offers.
+        branches stay in the tree below, nothing is thrown away.
       </p>
     </div>
 
@@ -58,9 +57,10 @@
         <label class="radio-option"><input type="radio" name="sub-option" value="2" /> <span id="sub-option-2-label"></span></label>
       </div>
 
-      <label class="field">
+      <label class="field" id="heat-field">
         <span>Heat level</span>
         <select id="heat-select"></select>
+        <span id="heat-inactive-note" class="field-note" hidden>Heat doesn't affect shop offers - inactive on the Blueprints view.</span>
       </label>
 
       <details class="advanced-fields full-width">
@@ -103,7 +103,52 @@
         <div id="tree-view" class="tree-view"></div>
       </details>
 
+      <div class="view-mode-toggle" role="tablist" aria-label="Explorer view">
+        <button type="button" id="view-mode-cards" class="view-mode-button active" role="tab" aria-selected="true">Cards</button>
+        <button type="button" id="view-mode-blueprints" class="view-mode-button" role="tab" aria-selected="false">Blueprints</button>
+      </div>
+
       <div id="day-panel" class="day-panel"></div>
+
+      <div id="shop-day-panel" class="day-panel" hidden>
+        <h2 id="shop-day-heading">Day</h2>
+
+        <section class="shop-section">
+          <h3>Where it spawns</h3>
+          <p class="field-note">Matches your game's own setting - a reroll never changes where the letter lands, only which appliance is inside it.</p>
+          <div class="shop-location-controls">
+            <label>Letters spawn:
+              <select id="shop-location-setting">
+                <option value="inside">Inside</option>
+                <option value="outside">Outside</option>
+              </select>
+            </label>
+          </div>
+          <p id="shop-location-result" class="shop-location-result"></p>
+        </section>
+
+        <section class="shop-section">
+          <h3>Offers</h3>
+          <div id="shop-rounds" class="shop-rounds"></div>
+          <button type="button" id="shop-add-reroll" class="link-button">🔄 Reroll</button>
+        </section>
+
+        <section class="shop-section">
+          <h3>Owned appliances</h3>
+          <p class="field-note">What's currently placed, heading into this day - toss one to re-trigger a "staple when missing" offer, or mark a shown offer bought.</p>
+          <div id="shop-owned-appliances" class="shop-owned-list"></div>
+        </section>
+
+        <section class="shop-section">
+          <h3>Find this appliance today</h3>
+          <label class="field">
+            <span>Appliance</span>
+            <input id="shop-find-input" type="text" list="shop-find-datalist" autocomplete="off" placeholder="e.g. Research Desk" />
+            <datalist id="shop-find-datalist"></datalist>
+          </label>
+          <p id="shop-find-result" class="field-note"></p>
+        </section>
+      </div>
 
       <div id="layout-panel" class="layout-panel">
         <h2>Layout</h2>
@@ -131,5 +176,6 @@
   <script src="/js/nav.js"></script>
   <script src="/js/shared.js"></script>
   <script src="/js/explorer.js"></script>
+  <script src="/js/explorer-shop.js"></script>
 </body>
 </html>

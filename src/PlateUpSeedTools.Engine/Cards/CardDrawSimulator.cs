@@ -42,6 +42,15 @@ public sealed class CardDrawSimulator
     }
 
     /// <summary>
+    /// The current owned-unlock set (initial setup + every day's accepted card so far) - exposed so
+    /// callers outside the card-draw walk itself (e.g. the Blueprints view's shop simulation, which
+    /// needs "what's on the menu"/"which bonus staples and themes have been granted" as of the same
+    /// day) can read it without re-implementing the day-by-day replay. Read-only - the owned set only
+    /// changes via SimulateDay's own accept/decline bookkeeping.
+    /// </summary>
+    public IReadOnlySet<int> OwnedUnlockIds => _ownedIds;
+
+    /// <summary>
     /// Simulates one night. <paramref name="selectPolicy"/> decides which of the (up to two) offered
     /// cards the simulated player accepts - the accepted card is added to the owned set and affects
     /// every subsequent night's filtering (dedup/Requires/BlockedBy/BlocksAllOtherFood - see

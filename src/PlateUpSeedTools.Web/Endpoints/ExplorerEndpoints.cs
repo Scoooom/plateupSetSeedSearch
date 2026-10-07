@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Seeding;
+using PlateUpSeedTools.Engine.Shop;
 using PlateUpSeedTools.Infrastructure.Cache;
 using PlateUpSeedTools.Web.Contracts;
 
@@ -21,6 +22,7 @@ public static partial class ExplorerEndpoints
     public static void MapExplorerEndpoints(this WebApplication app)
     {
         app.MapPost("/api/explorer/day", SimulateDay);
+        app.MapPost("/api/explorer/shop-day", SimulateShopDay);
         app.MapPost("/api/explorer/preload", SavePreload);
         app.MapGet("/api/explorer/preload/{hash}", GetPreload);
     }
@@ -184,6 +186,185 @@ public static partial class ExplorerEndpoints
         var sourcePackName = result.SourcePackId is int packId ? repo.GetPack(packId).Name : null;
         return Results.Ok(new ExplorerDayResponse(request.Day, options, sourcePackName, result.SelectedId));
     }
+
+    /// <summary>
+    /// Backs the Blueprints view's per-day shop offers, mirroring SimulateDay's "resend the whole
+    /// path, replay from day 0" statelessness. Deliberately NOT refactored to share SimulateDay's
+    /// replay loop - that loop's frontier-day/live-reroll-flag handling doesn't apply here (this only
+    /// ever needs the owned-unlock set as of strictly BEFORE request.Day, never today's own card
+    /// offer), and duplicating the simpler subset was safer than risking SimulateDay's existing,
+    /// ground-truth-tested behavior.
+    /// </summary>
+    private static IResult SimulateShopDay(ExplorerShopDayRequest request, GameDataRepository repo)
+    {
+        if (!repo.ListSettings().Any(s => s.Slug == request.Setting))
+        {
+            return Results.BadRequest(new { error = $"Unknown setting '{request.Setting}'." });
+        }
+
+        if (!ValidSeedPattern().IsMatch(request.Seed))
+        {
+            return Results.BadRequest(new { error = "Seed must be 1-8 alphanumeric characters." });
+        }
+
+        if (request.Day < 0 || request.Day > 15)
+        {
+            return Results.BadRequest(new { error = "day must be between 0 and 15." });
+        }
+
+        if (request.RerollCount < 0)
+        {
+            return Results.BadRequest(new { error = "rerollCount cannot be negative." });
+        }
+
+        if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
+        {
+            return Results.BadRequest(new { error = dishError });
+        }
+
+        var franchiseCarryoverIds = new List<int>();
+        foreach (var cardName in request.FranchiseCardNames ?? [])
+        {
+            if (!TryResolveUnlock(repo, cardName, "franchise card", out var card, out var cardError))
+            {
+                return Results.BadRequest(new { error = cardError });
+            }
+
+            franchiseCarryoverIds.Add(card.Id);
+        }
+
+        var orderedCardPath = request.CardPath.OrderBy(p => p.Day).ToList();
+        if (orderedCardPath.Select(p => p.Day).Distinct().Count() != orderedCardPath.Count)
+        {
+            return Results.BadRequest(new { error = "cardPath must not contain duplicate days." });
+        }
+
+        if (orderedCardPath.Count > 0 && orderedCardPath[^1].Day >= request.Day)
+        {
+            return Results.BadRequest(new { error = "cardPath must only cover days strictly before the requested day." });
+        }
+
+        var setting = repo.GetSetting(request.Setting);
+        ResolvedRunSetup setup;
+        try
+        {
+            var startingUnlockId = string.IsNullOrEmpty(request.CardPack)
+                ? setting.StartingUnlockId
+                : repo.ResolveCardScheduleStartingUnlockId(request.CardPack);
+            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, startingUnlockId, franchiseCarryoverIds);
+        }
+        catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+
+        int settingPackId;
+        try
+        {
+            settingPackId = repo.ResolveCardSchedulePackId(request.CardPack) ?? repo.ResolveUnlockPackId(request.Setting);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+
+        var seed = new Seed(request.Seed.ToLowerInvariant());
+        var cardSim = new CardDrawSimulator(repo, seed, settingPackId, setup, request.Tier);
+
+        // Replay every committed card day strictly before request.Day to arrive at the owned-unlock
+        // set the shop's conditional-staple pipeline needs (menu composition, bonus staples, granted
+        // themes) - no frontier day, no reroll flag, this never needs to know what TODAY'S card offer
+        // is or was.
+        var cardPathByDay = orderedCardPath.ToDictionary(p => p.Day, p => p);
+        for (var day = 0; day < request.Day; day++)
+        {
+            var targetId = cardPathByDay.TryGetValue(day, out var entry) ? entry.CardId : (int?)null;
+            var thisDay = day;
+            try
+            {
+                cardSim.SimulateDay(day, offered =>
+                {
+                    if (targetId is null)
+                    {
+                        return null;
+                    }
+
+                    if (offered.Unlock1Id != targetId && offered.Unlock2Id != targetId)
+                    {
+                        throw new InvalidOperationException($"day {thisDay}'s stored card pick is not a valid offer for this setup.");
+                    }
+
+                    return targetId;
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        }
+
+        var ownedUnlockIds = cardSim.OwnedUnlockIds;
+        var bonusStaples = ShopOptionEvaluator.ResolveBonusStapleApplianceIds(repo, ownedUnlockIds);
+        var grantedThemes = ShopOptionEvaluator.ResolveGrantedThemes(repo, ownedUnlockIds);
+
+        var profile = repo.ResolveLayoutProfile(request.Setting, seed);
+        var kitchen = new KitchenApplianceState(profile.RequiredApplianceIds);
+        var orderedShopActions = request.ShopActions.OrderBy(a => a.Day).ToList();
+        if (orderedShopActions.Count > 0 && orderedShopActions[^1].Day >= request.Day)
+        {
+            return Results.BadRequest(new { error = "shopActions must only cover days strictly before the requested day." });
+        }
+
+        foreach (var action in orderedShopActions)
+        {
+            try
+            {
+                if (action.IsToss)
+                {
+                    kitchen.TossAppliance(action.ApplianceId);
+                }
+                else
+                {
+                    kitchen.PlaceAppliance(action.ApplianceId);
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        }
+
+        var shopSim = new ShopDaySimulator(repo, seed, kitchen, bonusStaples, currentSeason: 0, menuDishIds: ownedUnlockIds, grantedThemes: grantedThemes);
+        var dayRounds = shopSim.SimulateDayWithRerolls(request.Day, request.RerollCount);
+
+        var rounds = dayRounds
+            .Select((round, index) => new ShopRoundDto(
+                index,
+                round.Slots.Select(s => new ShopSlotDto(s.ApplianceId, s.ApplianceId is int id && repo.TryGetShopAppliance(id, out var appliance) ? appliance.Name : null)).ToList()))
+            .ToList();
+
+        // One location for the whole day, not per round - user-confirmed from real gameplay that a
+        // reroll never changes it (see Engine.Shop.ShopSpawnLocation's doc comment).
+        var location = DescribeLocation(ShopSpawnLocationEvaluator.Evaluate(request.IsInside ? ShopSpawnSetting.Inside : ShopSpawnSetting.Outside));
+
+        var placedAppliances = kitchen.PlacedApplianceIds
+            .Select(id => new PlacedApplianceDto(id, repo.TryGetShopAppliance(id, out var appliance) ? appliance.Name : $"#{id}"))
+            .OrderBy(a => a.ApplianceName)
+            .ToList();
+
+        return Results.Ok(new ExplorerShopDayResponse(request.Day, rounds, location, placedAppliances));
+    }
+
+    /// <summary>
+    /// Plain-language only (see ShopSpawnLocation's doc) - never claim exact-tile precision, this
+    /// engine doesn't have ground truth for the exact tile, only the broad setting-driven category.
+    /// </summary>
+    private static string DescribeLocation(ShopSpawnLocation location) => location switch
+    {
+        ShopSpawnLocation.NearFrontDoor => "Near the front door",
+        ShopSpawnLocation.Inside => "Somewhere inside the restaurant",
+        _ => "Unknown",
+    };
 
     private static ExplorerCardOptionDto ToOptionDto(GameDataRepository repo, int id)
     {
