@@ -104,7 +104,23 @@ function recordShopAction(applianceId, isToss) {
     return;
   }
   shopActionsByDay.push({ day: lastShownDay, applianceId, isToss });
-  loadAndRenderShopDay();
+  // The server's response reflects kitchen state HEADING INTO this day (before today's actions -
+  // see ExplorerShopDayResponse's doc comment), by design: a same-day action only actually takes
+  // effect starting the NEXT day's fetch (pathToShopActions filters to `a.day < lastShownDay`), so
+  // re-fetching alone would re-render this exact day identically and look like nothing happened.
+  // Re-render from the ALREADY-loaded response instead, so today's own action-badges above (see
+  // todaysShopAction) update immediately without a round-trip.
+  if (lastShopResponse) {
+    renderShopRounds(lastShopResponse);
+    renderShopOwnedAppliances(lastShopResponse);
+  }
+}
+
+// Returns today's own already-recorded action for this appliance, if any - used to render an
+// immediate "Bought"/"Tossed" confirmation on the current day's own view, since the server's
+// response for THIS day never reflects actions recorded for THIS SAME day (see recordShopAction).
+function todaysShopAction(applianceId) {
+  return shopActionsByDay.find((a) => a.day === lastShownDay && a.applianceId === applianceId);
 }
 
 async function loadAndRenderShopDay() {
@@ -163,124 +179,152 @@ shopLocationSettingSelect.addEventListener("change", () => {
   loadAndRenderShopDay();
 });
 
+// Renders the day's offers as one table - rounds (initial offer, then each reroll) as columns,
+// slots as rows - replacing an earlier one-box-per-round vertical stack that read as a wall of
+// disconnected cards rather than a scannable grid. Each column header carries that round's own
+// location controls (see renderShopRoundHeaderCell) so the per-round "held when rerolled?" state
+// (see ShopRerollInputDto's doc comment on the server) stays visually attached to its column.
 function renderShopRounds(body) {
   shopRoundsEl.innerHTML = "";
+  if (body.rounds.length === 0) {
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "shop-offers-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.appendChild(document.createElement("th"));
   for (const round of body.rounds) {
-    shopRoundsEl.appendChild(renderShopRound(round));
+    headRow.appendChild(renderShopRoundHeaderCell(round));
   }
-}
+  thead.appendChild(headRow);
+  table.appendChild(thead);
 
-function renderShopRound(round) {
-  const container = document.createElement("div");
-  container.className = "shop-round";
-
-  const heading = document.createElement("div");
-  heading.className = "shop-round-heading";
-  heading.textContent = round.rerollIndex === 0 ? "Initial offer" : `Reroll ${round.rerollIndex}`;
-  container.appendChild(heading);
-
-  // Round 0's spawn setting lives in the day-level "Where it spawns" controls above - only reroll
-  // rounds (index > 0) get their own held/setting controls here, since only a HELD letter's position
-  // can change at reroll time (see ShopRerollInputDto's doc comment on the server).
-  if (round.rerollIndex > 0) {
-    container.appendChild(renderShopRerollLocationControls(round));
-  } else {
-    const location = document.createElement("p");
-    location.className = "shop-location-result";
-    location.textContent = `Spawns: ${round.location}`;
-    container.appendChild(location);
-  }
-
-  const slotsEl = document.createElement("div");
-  slotsEl.className = "shop-slots";
-  for (const slot of round.slots) {
-    slotsEl.appendChild(renderShopSlot(slot, round.rerollIndex));
-  }
-  container.appendChild(slotsEl);
-
-  return container;
-}
-
-// scenarioIndex is round.rerollIndex - 1 (shopRerollScenarios has no entry for round 0).
-function renderShopRerollLocationControls(round) {
-  const scenarioIndex = round.rerollIndex - 1;
-  const scenario = shopRerollScenarios[scenarioIndex] ?? { held: false, isInside: shopInitialIsInside };
-
-  const wrap = document.createElement("div");
-  wrap.className = "shop-location-controls";
-
-  const heldLabel = document.createElement("label");
-  const heldCheckbox = document.createElement("input");
-  heldCheckbox.type = "checkbox";
-  heldCheckbox.checked = scenario.held;
-  heldCheckbox.addEventListener("change", () => {
-    shopRerollScenarios[scenarioIndex] = { ...scenario, held: heldCheckbox.checked };
-    loadAndRenderShopDay();
-  });
-  heldLabel.appendChild(heldCheckbox);
-  heldLabel.append(" Held when rerolled?");
-  wrap.appendChild(heldLabel);
-
-  if (scenario.held) {
-    const settingLabel = document.createElement("label");
-    settingLabel.append(" Letters spawn: ");
-    const select = document.createElement("select");
-    for (const [value, text] of [["inside", "Inside"], ["outside", "Outside"]]) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = text;
-      select.appendChild(option);
+  const tbody = document.createElement("tbody");
+  const slotCount = Math.max(...body.rounds.map((r) => r.slots.length));
+  for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
+    const row = document.createElement("tr");
+    const rowHeader = document.createElement("th");
+    rowHeader.scope = "row";
+    rowHeader.textContent = `Slot ${slotIndex + 1}`;
+    row.appendChild(rowHeader);
+    for (const round of body.rounds) {
+      row.appendChild(renderShopSlotCell(round.slots[slotIndex], round.rerollIndex));
     }
-    select.value = scenario.isInside ? "inside" : "outside";
-    select.addEventListener("change", () => {
-      shopRerollScenarios[scenarioIndex] = { ...scenario, isInside: select.value === "inside" };
+    tbody.appendChild(row);
+  }
+  table.appendChild(tbody);
+
+  shopRoundsEl.appendChild(table);
+}
+
+// scenarioIndex is round.rerollIndex - 1 (shopRerollScenarios has no entry for round 0, which uses
+// the day-level shopInitialIsInside control instead).
+function renderShopRoundHeaderCell(round) {
+  const th = document.createElement("th");
+  th.scope = "col";
+
+  const title = document.createElement("div");
+  title.className = "shop-table-round-title";
+  title.textContent = round.rerollIndex === 0 ? "Initial offer" : `Reroll ${round.rerollIndex}`;
+  th.appendChild(title);
+
+  if (round.rerollIndex > 0) {
+    const scenarioIndex = round.rerollIndex - 1;
+    const scenario = shopRerollScenarios[scenarioIndex] ?? { held: false, isInside: shopInitialIsInside };
+
+    const controls = document.createElement("div");
+    controls.className = "shop-table-held-control";
+
+    const heldLabel = document.createElement("label");
+    const heldCheckbox = document.createElement("input");
+    heldCheckbox.type = "checkbox";
+    heldCheckbox.checked = scenario.held;
+    heldCheckbox.addEventListener("change", () => {
+      shopRerollScenarios[scenarioIndex] = { ...scenario, held: heldCheckbox.checked };
       loadAndRenderShopDay();
     });
-    settingLabel.appendChild(select);
-    wrap.appendChild(settingLabel);
+    heldLabel.appendChild(heldCheckbox);
+    heldLabel.append(" Held when rerolled?");
+    controls.appendChild(heldLabel);
+
+    if (scenario.held) {
+      const settingLabel = document.createElement("label");
+      settingLabel.append("Spawn: ");
+      const select = document.createElement("select");
+      for (const [value, text] of [["inside", "Inside"], ["outside", "Outside"]]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      }
+      select.value = scenario.isInside ? "inside" : "outside";
+      select.addEventListener("change", () => {
+        shopRerollScenarios[scenarioIndex] = { ...scenario, isInside: select.value === "inside" };
+        loadAndRenderShopDay();
+      });
+      settingLabel.appendChild(select);
+      controls.appendChild(settingLabel);
+    }
+
+    th.appendChild(controls);
   }
 
-  const location = document.createElement("p");
-  location.className = "shop-location-result";
+  const location = document.createElement("div");
+  location.className = "shop-table-location";
   location.textContent = `Spawns: ${round.location}`;
-  wrap.appendChild(location);
+  th.appendChild(location);
 
-  return wrap;
+  return th;
 }
 
-function renderShopSlot(slot, rerollIndex) {
-  const el = document.createElement("div");
-  el.className = "shop-slot";
+function renderShopSlotCell(slot, rerollIndex) {
+  const td = document.createElement("td");
 
-  if (!slot.applianceName) {
-    const empty = document.createElement("span");
-    empty.textContent = "(nothing offered)";
-    el.appendChild(empty);
-    return el;
+  if (!slot || !slot.applianceName) {
+    td.className = "shop-table-cell-empty";
+    td.textContent = "-";
+    return td;
   }
+
+  td.dataset.applianceName = slot.applianceName;
+
+  const cell = document.createElement("div");
+  cell.className = "shop-table-cell";
 
   const img = document.createElement("img");
   img.src = `/images/appliances/${slugifyApplianceName(slot.applianceName)}.png`;
   img.alt = "";
   img.onerror = () => img.remove(); // most of the 451-appliance catalog has no icon - degrade to name-only, not a broken-image glyph
-  el.appendChild(img);
+  cell.appendChild(img);
 
   const name = document.createElement("span");
   name.textContent = slot.applianceName;
-  el.appendChild(name);
+  cell.appendChild(name);
 
   // "Buy" only on the initial offer - matches the real game (a slot about to be rerolled away isn't
   // purchasable), and keeps this simple rather than modeling "buy mid-reroll-sequence" edge cases.
   if (rerollIndex === 0) {
-    const buyButton = document.createElement("button");
-    buyButton.type = "button";
-    buyButton.className = "link-button";
-    buyButton.textContent = "Buy";
-    buyButton.addEventListener("click", () => recordShopAction(slot.applianceId, false));
-    el.appendChild(buyButton);
+    const action = todaysShopAction(slot.applianceId);
+    if (action && !action.isToss) {
+      const badge = document.createElement("span");
+      badge.className = "shop-action-badge";
+      badge.textContent = "✓ Bought";
+      cell.appendChild(badge);
+    } else {
+      const buyButton = document.createElement("button");
+      buyButton.type = "button";
+      buyButton.className = "link-button";
+      buyButton.textContent = "Buy";
+      buyButton.addEventListener("click", () => recordShopAction(slot.applianceId, false));
+      cell.appendChild(buyButton);
+    }
   }
 
-  return el;
+  td.appendChild(cell);
+  return td;
 }
 
 function addShopRerollRounds(count) {
@@ -317,12 +361,24 @@ function renderShopOwnedAppliances(body) {
     name.textContent = appliance.applianceName;
     pill.appendChild(name);
 
-    const tossButton = document.createElement("button");
-    tossButton.type = "button";
-    tossButton.className = "link-button";
-    tossButton.textContent = "Toss";
-    tossButton.addEventListener("click", () => recordShopAction(appliance.applianceId, true));
-    pill.appendChild(tossButton);
+    // See todaysShopAction's doc comment - a toss recorded for TODAY never disappears from this
+    // list until the NEXT day's fetch (the server's placedAppliances is a pre-today snapshot by
+    // design), so without this check clicking Toss looked like nothing happened.
+    const action = todaysShopAction(appliance.applianceId);
+    if (action && action.isToss) {
+      pill.classList.add("shop-slot-tossed");
+      const badge = document.createElement("span");
+      badge.className = "shop-action-badge";
+      badge.textContent = "✓ Tossed";
+      pill.appendChild(badge);
+    } else {
+      const tossButton = document.createElement("button");
+      tossButton.type = "button";
+      tossButton.className = "link-button";
+      tossButton.textContent = "Toss";
+      tossButton.addEventListener("click", () => recordShopAction(appliance.applianceId, true));
+      pill.appendChild(tossButton);
+    }
 
     shopOwnedAppliancesEl.appendChild(pill);
   }
@@ -353,7 +409,7 @@ function refreshShopFindDatalist() {
 // Pure re-render against whatever's already loaded - never fetches. Fetching (when a search needs
 // more rounds than are currently loaded) is the input handler's job below.
 function applyFindHighlighting() {
-  for (const el of shopRoundsEl.querySelectorAll(".shop-slot.matches-find")) {
+  for (const el of shopRoundsEl.querySelectorAll("td.matches-find")) {
     el.classList.remove("matches-find");
   }
 
@@ -363,9 +419,8 @@ function applyFindHighlighting() {
     return;
   }
 
-  for (const el of shopRoundsEl.querySelectorAll(".shop-slot")) {
-    const name = el.querySelector("span")?.textContent ?? "";
-    if (name.toLowerCase() === query) {
+  for (const el of shopRoundsEl.querySelectorAll("td[data-appliance-name]")) {
+    if (el.dataset.applianceName.toLowerCase() === query) {
       el.classList.add("matches-find");
     }
   }

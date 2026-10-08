@@ -357,8 +357,22 @@ public static partial class ExplorerEndpoints
                 locations[index]))
             .ToList();
 
+        // LayoutProfile.RequiredApplianceIds (what seeds KitchenApplianceState - see
+        // ShopDaySimulatorGroundTruthTests' doc comment) includes real placed starter items
+        // (Starter Sink, Starter Bin, Counter - all non-purchasable but carry a real ShoppingTags
+        // category) alongside internal/structural entities the real game places via the same
+        // CLayoutAppliancePlacement mechanism but that no player would recognize as "an appliance"
+        // (Item Source, Item Source Reservation, Mess markers, tutorial triggers, etc. - none of
+        // these carry ANY shop category). ShoppingTags == 0 combined with non-purchasable is a
+        // reliable, data-verified signal for "not a real player-facing kitchen appliance" (209/451
+        // appliances match this, confirmed by inspection to be exclusively junk/internal/decor
+        // entities, never a legitimate starter item) - filtered here, display-only, so it doesn't
+        // affect KitchenApplianceState's actual simulation correctness (e.g. FilterBlueprintUpgraders
+        // still sees the real full set internally).
         var placedAppliances = kitchen.PlacedApplianceIds
-            .Select(id => new PlacedApplianceDto(id, repo.TryGetShopAppliance(id, out var appliance) ? appliance.Name : $"#{id}"))
+            .Select(id => (Id: id, Found: repo.TryGetShopAppliance(id, out var appliance), Appliance: appliance))
+            .Where(x => !x.Found || x.Appliance.IsPurchasable || x.Appliance.ShoppingTags != 0)
+            .Select(x => new PlacedApplianceDto(x.Id, x.Found ? x.Appliance.Name : $"#{x.Id}"))
             .OrderBy(a => a.ApplianceName)
             .ToList();
 
