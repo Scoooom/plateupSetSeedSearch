@@ -9,7 +9,7 @@ const viewModeBlueprintsButton = document.getElementById("view-mode-blueprints")
 const shopDayPanelEl = document.getElementById("shop-day-panel");
 const heatInactiveNoteEl = document.getElementById("heat-inactive-note");
 const shopDayHeadingEl = document.getElementById("shop-day-heading");
-const shopLocationSettingSelect = document.getElementById("shop-location-setting");
+const shopLocationControlsEl = document.getElementById("shop-location-controls");
 const shopLocationResultEl = document.getElementById("shop-location-result");
 const shopRoundsEl = document.getElementById("shop-rounds");
 const shopAddRerollButton = document.getElementById("shop-add-reroll");
@@ -27,13 +27,15 @@ let lastShownDay = null;
 
 // Per-day-view ephemeral state (reset every time the shown day changes) - NOT part of the Cards
 // tree, since reroll count is a live "how far have I looked" UI state, not a permanent decision.
-// shopRerollScenarios[i] is round i+1's {held, isInside} input (see ShopRerollInputDto on the
-// server) - array length IS the reroll count, no separate counter. CORRECTS an earlier, incomplete
-// model: a reroll does NOT always keep the same position (see ShopSpawnLocationEvaluator.cs's doc
-// comment on the project repo for the full mechanic) - held letters get a fresh placement reading
-// whatever the setting is at THAT moment, unheld letters keep the previous round's spot. Defaulted
-// to {held: false, isInside: shopInitialIsInside} when a new round is added, since "not held" is the
-// common case (most rerolls happen with the letter sitting on the counter, not in-hand).
+// shopRerollScenarios[i] is round i+1's {held, isInside, someoneInside} input (see
+// ShopRerollInputDto on the server) - array length IS the reroll count, no separate counter.
+// CORRECTS an earlier, incomplete model: a reroll does NOT always keep the same position (see
+// ShopSpawnLocationEvaluator.cs's doc comment on the project repo for the full mechanic) - held
+// letters get a fresh placement reading whatever the setting (and, if Inside, player position) is at
+// THAT moment, unheld letters keep the previous round's spot. Defaulted to {held: false, isInside:
+// shopInitialIsInside, someoneInside: shopInitialSomeoneInside} when a new round is added, since
+// "not held" is the common case (most rerolls happen with the letter sitting on the counter, not
+// in-hand).
 let shopRerollScenarios = [];
 let lastShopResponse = null;
 let shopFetchGeneration = 0;
@@ -44,6 +46,12 @@ let shopFetchGeneration = 0;
 // resets on a full exploration reset) rather than resetting per day, since it's the player's actual
 // game setting, not something that changes night to night on its own.
 let shopInitialIsInside = true;
+
+// Whether at least one player was standing on an inside tile at that exact moment - only consulted
+// when shopInitialIsInside is true (see ShopSpawnLocationEvaluator.Evaluate's second parameter).
+// Defaults to false (see ExplorerShopDayRequest.InitialSomeoneInside's doc comment on the server for
+// why false, not true, is the non-breaking default) and persists the same way shopInitialIsInside does.
+let shopInitialSomeoneInside = false;
 
 // Buy/Toss history - deliberately flat/global, NOT attached to Cards-tree nodes. The Cards tree can
 // only create a node for a day once a card decision (pick/skip) is made for it, but a Blueprints
@@ -70,6 +78,15 @@ function notifyDayShown(pathNode, day) {
   if (pathNode === null) {
     shopActionsByDay = []; // full exploration reset (resetExploration), not just a day change
     shopInitialIsInside = true;
+    shopInitialSomeoneInside = false;
+  }
+
+  // Seed the default reroll scenarios regardless of which view is currently active - the state is
+  // shared, and setViewMode's own loadAndRenderShopDay() call (when the user switches INTO
+  // Blueprints later, after already having navigated days in Cards view) must find this already
+  // populated, not empty.
+  if (day !== null) {
+    addShopRerollRounds(3); // show Initial offer + 3 rerolls by default, no manual clicking needed
   }
 
   if (viewMode !== "blueprints") {
@@ -130,7 +147,7 @@ async function loadAndRenderShopDay() {
 
   const myGeneration = ++shopFetchGeneration;
   shopDayHeadingEl.textContent = `Day ${lastShownDay}`;
-  shopLocationSettingSelect.value = shopInitialIsInside ? "inside" : "outside";
+  renderShopLocationControls();
   setShopRoundsMessage(`Loading day ${lastShownDay}...`);
 
   const payload = {
@@ -139,7 +156,8 @@ async function loadAndRenderShopDay() {
     shopActions: pathToShopActions(),
     day: lastShownDay,
     initialIsInside: shopInitialIsInside,
-    rerolls: shopRerollScenarios.map((s) => ({ held: s.held, isInside: s.isInside })),
+    initialSomeoneInside: shopInitialSomeoneInside,
+    rerolls: shopRerollScenarios.map((s) => ({ held: s.held, isInside: s.isInside, someoneInside: s.someoneInside })),
   };
 
   try {
@@ -174,10 +192,86 @@ async function loadAndRenderShopDay() {
   }
 }
 
-shopLocationSettingSelect.addEventListener("change", () => {
-  shopInitialIsInside = shopLocationSettingSelect.value === "inside";
-  loadAndRenderShopDay();
-});
+// Small (2-option) mutually-exclusive toggle - replaces a <select> where a dropdown would hide the
+// options behind an extra click (research: textbook UI guidance treats a <select> as justified at
+// ~5+ options or under real space pressure; for 2-3 options, exposing every choice as always-visible
+// buttons is the standard replacement). Same pill-button visual language as .view-mode-toggle/
+// .view-mode-button (the Cards/Blueprints switch), sized for compact/inline use instead - see
+// .toggle-button-* in theme.css. Flips its own pressed state synchronously on click (not a native
+// form control, so this needs doing by hand) before calling onChange, so the control itself reacts
+// immediately rather than waiting on the day re-fetch to resolve.
+function renderToggleButtonGroup(groupLabel, options, currentValue, onChange) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "toggle-button-wrapper";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "toggle-button-label";
+  labelEl.textContent = groupLabel;
+  wrapper.appendChild(labelEl);
+
+  const group = document.createElement("div");
+  group.className = "toggle-button-group";
+  group.setAttribute("role", "radiogroup");
+  group.setAttribute("aria-label", groupLabel);
+
+  const entries = options.map(([value, text]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "toggle-button";
+    button.textContent = text;
+    button.setAttribute("role", "radio");
+    return { button, value };
+  });
+
+  function setPressed(selected) {
+    for (const { button, value } of entries) {
+      const pressed = value === selected;
+      button.classList.toggle("active", pressed);
+      button.setAttribute("aria-checked", String(pressed));
+    }
+  }
+  setPressed(currentValue);
+
+  for (const { button, value } of entries) {
+    button.addEventListener("click", () => {
+      setPressed(value);
+      onChange(value);
+    });
+    group.appendChild(button);
+  }
+
+  wrapper.appendChild(group);
+  return wrapper;
+}
+
+// Renders the day-level spawn-setting controls into #shop-location-controls - the Inside/Outside
+// toggle, plus (only when Inside is active) a second "someone standing inside?" toggle, since player
+// position is irrelevant in Outside mode (see ShopSpawnLocationEvaluator's doc comment).
+function renderShopLocationControls() {
+  shopLocationControlsEl.innerHTML = "";
+  shopLocationControlsEl.appendChild(renderToggleButtonGroup(
+    "Initial offer - letters spawn:",
+    [["outside", "Outside"], ["inside", "Inside"]],
+    shopInitialIsInside ? "inside" : "outside",
+    (value) => {
+      shopInitialIsInside = value === "inside";
+      renderShopLocationControls(); // rebuild so the someone-inside group appears/disappears immediately
+      loadAndRenderShopDay();
+    },
+  ));
+
+  if (shopInitialIsInside) {
+    shopLocationControlsEl.appendChild(renderToggleButtonGroup(
+      "Someone standing inside right then?",
+      [["no", "No"], ["yes", "Yes"]],
+      shopInitialSomeoneInside ? "yes" : "no",
+      (value) => {
+        shopInitialSomeoneInside = value === "yes";
+        loadAndRenderShopDay();
+      },
+    ));
+  }
+}
 
 // Renders the day's offers as one table - rounds (initial offer, then each reroll) as columns,
 // slots as rows - replacing an earlier one-box-per-round vertical stack that read as a wall of
@@ -233,40 +327,49 @@ function renderShopRoundHeaderCell(round) {
 
   if (round.rerollIndex > 0) {
     const scenarioIndex = round.rerollIndex - 1;
-    const scenario = shopRerollScenarios[scenarioIndex] ?? { held: false, isInside: shopInitialIsInside };
+    const scenario = shopRerollScenarios[scenarioIndex] ?? { held: false, isInside: shopInitialIsInside, someoneInside: shopInitialSomeoneInside };
 
     const controls = document.createElement("div");
     controls.className = "shop-table-held-control";
+
+    // Re-renders this table from whatever's already loaded BEFORE the fetch resolves, so a reveal/
+    // hide of a dependent control (Spawn appearing when Held is checked, Someone-inside appearing
+    // when Spawn=Inside) happens immediately rather than waiting on a round-trip - same "don't make
+    // the user wait to see their own click took effect" principle as recordShopAction's Buy/Toss
+    // badges above.
+    function updateScenario(patch) {
+      shopRerollScenarios[scenarioIndex] = { ...shopRerollScenarios[scenarioIndex] ?? scenario, ...patch };
+      if (lastShopResponse) {
+        renderShopRounds(lastShopResponse);
+      }
+      loadAndRenderShopDay();
+    }
 
     const heldLabel = document.createElement("label");
     const heldCheckbox = document.createElement("input");
     heldCheckbox.type = "checkbox";
     heldCheckbox.checked = scenario.held;
-    heldCheckbox.addEventListener("change", () => {
-      shopRerollScenarios[scenarioIndex] = { ...scenario, held: heldCheckbox.checked };
-      loadAndRenderShopDay();
-    });
+    heldCheckbox.addEventListener("change", () => updateScenario({ held: heldCheckbox.checked }));
     heldLabel.appendChild(heldCheckbox);
     heldLabel.append(" Held when rerolled?");
     controls.appendChild(heldLabel);
 
     if (scenario.held) {
-      const settingLabel = document.createElement("label");
-      settingLabel.append("Spawn: ");
-      const select = document.createElement("select");
-      for (const [value, text] of [["inside", "Inside"], ["outside", "Outside"]]) {
-        const option = document.createElement("option");
-        option.value = value;
-        option.textContent = text;
-        select.appendChild(option);
+      controls.appendChild(renderToggleButtonGroup(
+        "Spawn:",
+        [["outside", "Outside"], ["inside", "Inside"]],
+        scenario.isInside ? "inside" : "outside",
+        (value) => updateScenario({ isInside: value === "inside" }),
+      ));
+
+      if (scenario.isInside) {
+        controls.appendChild(renderToggleButtonGroup(
+          "Someone inside then?",
+          [["no", "No"], ["yes", "Yes"]],
+          scenario.someoneInside ? "yes" : "no",
+          (value) => updateScenario({ someoneInside: value === "yes" }),
+        ));
       }
-      select.value = scenario.isInside ? "inside" : "outside";
-      select.addEventListener("change", () => {
-        shopRerollScenarios[scenarioIndex] = { ...scenario, isInside: select.value === "inside" };
-        loadAndRenderShopDay();
-      });
-      settingLabel.appendChild(select);
-      controls.appendChild(settingLabel);
     }
 
     th.appendChild(controls);
@@ -329,7 +432,7 @@ function renderShopSlotCell(slot, rerollIndex) {
 
 function addShopRerollRounds(count) {
   for (let i = 0; i < count; i++) {
-    shopRerollScenarios.push({ held: false, isInside: shopInitialIsInside });
+    shopRerollScenarios.push({ held: false, isInside: shopInitialIsInside, someoneInside: shopInitialSomeoneInside });
   }
 }
 

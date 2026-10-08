@@ -334,19 +334,23 @@ public static partial class ExplorerEndpoints
         var shopSim = new ShopDaySimulator(repo, seed, kitchen, bonusStaples, currentSeason: 0, menuDishIds: ownedUnlockIds, grantedThemes: grantedThemes);
         var dayRounds = shopSim.SimulateDayWithRerolls(request.Day, rerolls.Count);
 
-        // Per-round location: round 0 uses InitialIsInside. Each later round only gets a FRESH
-        // placement roll if it was held at reroll time (ShopRerollInputDto.Held) - unheld rounds
-        // inherit the previous round's label unchanged, matching HandleShopReroll.cs's FixedLocation
-        // branch (see ShopRerollInputDto's doc for the full mechanic, confirmed from source + a real
-        // controlled gameplay test).
+        // Per-round location: round 0 uses InitialIsInside/InitialSomeoneInside. Each later round only
+        // gets a FRESH placement roll if it was held at reroll time (ShopRerollInputDto.Held) - unheld
+        // rounds inherit the previous round's label unchanged, matching HandleShopReroll.cs's
+        // FixedLocation branch (see ShopRerollInputDto's doc for the full mechanic, confirmed from
+        // source + a real controlled gameplay test).
         var locations = new List<string>(dayRounds.Count)
         {
-            DescribeLocation(ShopSpawnLocationEvaluator.Evaluate(request.InitialIsInside ? ShopSpawnSetting.Inside : ShopSpawnSetting.Outside)),
+            DescribeLocation(ShopSpawnLocationEvaluator.Evaluate(
+                request.InitialIsInside ? ShopSpawnSetting.Inside : ShopSpawnSetting.Outside,
+                request.InitialSomeoneInside)),
         };
         for (var i = 0; i < rerolls.Count; i++)
         {
             locations.Add(rerolls[i].Held
-                ? DescribeLocation(ShopSpawnLocationEvaluator.Evaluate(rerolls[i].IsInside ? ShopSpawnSetting.Inside : ShopSpawnSetting.Outside))
+                ? DescribeLocation(ShopSpawnLocationEvaluator.Evaluate(
+                    rerolls[i].IsInside ? ShopSpawnSetting.Inside : ShopSpawnSetting.Outside,
+                    rerolls[i].SomeoneInside))
                 : locations[^1]);
         }
 
@@ -386,7 +390,8 @@ public static partial class ExplorerEndpoints
     private static string DescribeLocation(ShopSpawnLocation location) => location switch
     {
         ShopSpawnLocation.NearFrontDoor => "Near the front door",
-        ShopSpawnLocation.Inside => "Somewhere inside the restaurant",
+        ShopSpawnLocation.RandomInsideTile => "Somewhere inside the restaurant",
+        ShopSpawnLocation.NearPlayer => "Somewhere inside, near a player",
         _ => "Unknown",
     };
 

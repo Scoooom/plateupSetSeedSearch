@@ -82,7 +82,8 @@ public sealed class ShopDaySimulator
     /// CORRECTION (superseding an earlier, incomplete claim): position is NOT day-constant. Per
     /// HandleShopReroll.cs and a real controlled gameplay test, whether a reroll's letter gets a fresh
     /// placement depends on whether it was held by a player at that exact reroll - held means a fresh
-    /// ShopSpawnLocationEvaluator.Evaluate call against the then-live setting; unheld means the
+    /// ShopSpawnLocationEvaluator.Evaluate call against the then-live setting and the then-live
+    /// someone-standing-inside fact; unheld means the
     /// previous round's location carries over unchanged. This method does NOT compute location at all
     /// (appliance selection and position are source-confirmed independent via GetPostTiles' separate
     /// UseSubcontext(1) draw, so it doesn't perturb this method's RNG stream) - callers must track

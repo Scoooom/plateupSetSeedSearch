@@ -115,15 +115,8 @@
 
         <section class="shop-section">
           <h3>Where it spawns</h3>
-          <p class="field-note">Matches your game's own setting at the moment the day's shop first opens. Rerolling a HELD letter re-checks this setting fresh (it can land somewhere new); an unheld letter keeps its old spot regardless - set each reroll's own "held?" state below.</p>
-          <div class="shop-location-controls">
-            <label>Initial offer - letters spawn:
-              <select id="shop-location-setting">
-                <option value="inside">Inside</option>
-                <option value="outside">Outside</option>
-              </select>
-            </label>
-          </div>
+          <p class="field-note">Matches your game's own setting at the moment the day's shop first opens. When set to Inside, whether a player is standing inside at that exact moment also matters - lands near that player if so, or anywhere inside at random if not. Rerolling a HELD letter re-checks both settings fresh; an unheld letter keeps its old spot regardless - set each reroll's own "held?" state below.</p>
+          <div id="shop-location-controls" class="shop-location-controls"></div>
           <p id="shop-location-result" class="shop-location-result"></p>
         </section>
 

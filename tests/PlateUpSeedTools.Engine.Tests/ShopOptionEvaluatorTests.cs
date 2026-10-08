@@ -374,12 +374,17 @@ public class ShopOptionEvaluatorTests
     }
 
     [Theory]
-    [InlineData(ShopSpawnSetting.Outside, ShopSpawnLocation.NearFrontDoor)]
-    [InlineData(ShopSpawnSetting.Inside, ShopSpawnLocation.Inside)]
-    public void ShopSpawnLocationEvaluator_MatchesRealGameplay_IndependentOfPlayerPosition(ShopSpawnSetting setting, ShopSpawnLocation expected)
+    [InlineData(ShopSpawnSetting.Outside, false, ShopSpawnLocation.NearFrontDoor)]
+    [InlineData(ShopSpawnSetting.Outside, true, ShopSpawnLocation.NearFrontDoor)]
+    [InlineData(ShopSpawnSetting.Inside, true, ShopSpawnLocation.NearPlayer)]
+    [InlineData(ShopSpawnSetting.Inside, false, ShopSpawnLocation.RandomInsideTile)]
+    public void ShopSpawnLocationEvaluator_MatchesRealGameplay_PlayerPositionMattersOnlyWhenInside(
+        ShopSpawnSetting setting, bool someoneStandingInside, ShopSpawnLocation expected)
     {
-        // User-confirmed from real gameplay: placement depends only on the setting, never on where
-        // the player is standing - see ShopSpawnLocation's doc comment.
-        Assert.Equal(expected, ShopSpawnLocationEvaluator.Evaluate(setting));
+        // Source-confirmed (GetPostTiles): Outside mode is pure front-door geometry, player position
+        // never consulted. Inside mode genuinely branches on it - near-player candidates come first
+        // in the shuffled list if someone's standing inside, else it falls through to a random inside
+        // tile - see ShopSpawnLocation's doc comment for the full mechanic.
+        Assert.Equal(expected, ShopSpawnLocationEvaluator.Evaluate(setting, someoneStandingInside));
     }
 }
