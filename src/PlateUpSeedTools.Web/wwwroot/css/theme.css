@@ -152,6 +152,13 @@ main {
   padding: 1.5rem;
 }
 
+/* Explorer-only override - its 3-panel layout (tree/content/layout-image, see .explorer-result)
+   needs more room than every other page's single-column content. Scoped to this one page rather
+   than raised site-wide. */
+main.explorer-page-main {
+  max-width: 1440px;
+}
+
 .page-intro {
   margin-bottom: 1.25rem;
 }
@@ -867,14 +874,24 @@ button[type="submit"]:hover {
   display: none;
 }
 
+/* Named grid, not a flex row - lets .view-mode-toggle sit at the top of the content column via
+   grid-template-areas (grid placement is independent of DOM source order, unlike flexbox) without
+   needing to move it in the DOM, and gives the content column a real minmax() floor instead of
+   whatever's left over after the two fixed-width sidebars. See the matching @media blocks below for
+   how this collapses at medium/narrow widths. */
 .explorer-result {
-  display: flex;
+  display: grid;
+  grid-template-columns: 260px minmax(480px, 1fr) 240px;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "tree toggle layout"
+    "tree content layout";
   gap: 1.5rem;
-  align-items: flex-start;
+  align-items: start;
 }
 
 .explorer-tree-panel {
-  flex: 0 0 260px;
+  grid-area: tree;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 8px;
@@ -928,7 +945,7 @@ button[type="submit"]:hover {
 }
 
 .day-panel {
-  flex: 1;
+  grid-area: content;
   min-width: 0;
   background: var(--panel);
   border: 1px solid var(--panel-border);
@@ -943,7 +960,7 @@ button[type="submit"]:hover {
 /* Read-only reference view of the seed's layout (see Rendering/LayoutImageRenderer.cs) - same image
    the Seed Previewer page shows, embedded here so switching pages isn't needed while exploring. */
 .layout-panel {
-  flex: 0 0 240px;
+  grid-area: layout;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 8px;
@@ -989,6 +1006,7 @@ button[type="submit"]:hover {
 }
 
 .view-mode-toggle {
+  grid-area: toggle;
   display: flex;
   gap: 0.5rem;
   margin-bottom: 1rem;
@@ -1055,6 +1073,7 @@ button[type="submit"]:hover {
   border-radius: 8px;
   padding: 0.5rem 0.75rem;
   font-size: 0.9rem;
+  min-width: 12rem;
 }
 
 .shop-slot img {
@@ -1085,6 +1104,20 @@ button[type="submit"]:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
+}
+
+/* Intermediate step between the full 3-column layout and the 640px full-stack below - drops the
+   fixed-width layout-image column out of the row (the single biggest space-saver at medium widths)
+   while keeping the tree sidebar docked beside the content column. */
+@media (max-width: 1100px) {
+  .explorer-result {
+    grid-template-columns: 260px minmax(280px, 1fr);
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "tree toggle"
+      "tree content"
+      "layout layout";
+  }
 }
 
 @media (max-width: 640px) {
@@ -1152,22 +1185,17 @@ button[type="submit"]:hover {
      (current offer) stays the primary, full-width view. Not styled for beauty on mobile, just
      kept usable per the project's "don't neglect, don't polish" mobile guidance. */
   .explorer-result {
-    flex-direction: column;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto;
+    grid-template-areas:
+      "tree"
+      "toggle"
+      "content"
+      "layout";
   }
 
   .explorer-tree-panel {
-    flex: none;
-    width: 100%;
     max-height: 40vh;
-  }
-
-  .day-panel {
-    width: 100%;
-  }
-
-  .layout-panel {
-    flex: none;
-    width: 100%;
   }
 
   .day-options {
