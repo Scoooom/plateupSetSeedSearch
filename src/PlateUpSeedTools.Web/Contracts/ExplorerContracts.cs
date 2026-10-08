@@ -107,7 +107,13 @@ public sealed record ExplorerShopDayRequest(
     bool InitialSomeoneInside = false,
     // One entry per reroll beyond the initial offer - Rerolls.Count IS the reroll count (no separate
     // count field). See ShopRerollInputDto for how each entry affects that round's location.
-    List<ShopRerollInputDto>? Rerolls = null);
+    List<ShopRerollInputDto>? Rerolls = null,
+    // Day 0 (the Jasmine plant's one-time prep-day shop, before day 1 properly begins) only exists
+    // if Jasmine is owned - see ExplorerEndpoints.SimulateShopDay's day-0 gating. Best-effort/
+    // unverified: community-sourced, not yet ground-truth-captured (CGrantsFirstDayShop.cs /
+    // CreateShopRequests.cs in the decompiled source). Defaults false (no day-0 shop) so a caller
+    // that never thinks about this sees unchanged behavior for every setup not deliberately opting in.
+    bool HasJasmine = false);
 
 public sealed record ShopSlotDto(int? ApplianceId, string? ApplianceName);
 

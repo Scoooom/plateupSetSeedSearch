@@ -212,6 +212,17 @@ public static partial class ExplorerEndpoints
             return Results.BadRequest(new { error = "day must be between 0 and 15." });
         }
 
+        // Day 0 only has a shop at all if Jasmine granted one (CGrantsFirstDayShop) - without it,
+        // day 0 is purely a card-draw prep day (see CardDrawSimulator's own, unrelated day-0
+        // handling for the Christmas/February special card - not this gate). A 200 with empty
+        // Rounds/PlacedAppliances, not a 400: "no shop today" is a legitimate answer, not a
+        // malformed request - see explorer-shop.js's loadAndRenderShopDay for the client-side
+        // explanatory message this produces.
+        if (request.Day == 0 && !request.HasJasmine)
+        {
+            return Results.Ok(new ExplorerShopDayResponse(0, [], []));
+        }
+
         var rerolls = request.Rerolls ?? [];
 
         if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))

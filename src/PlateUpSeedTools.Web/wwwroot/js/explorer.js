@@ -5,6 +5,7 @@ const subOptionField = document.getElementById("sub-option-field");
 const subOption1Label = document.getElementById("sub-option-1-label");
 const subOption2Label = document.getElementById("sub-option-2-label");
 const heatSelect = document.getElementById("heat-select");
+const jasmineCheckbox = document.getElementById("jasmine-checkbox");
 const cardPackSelect = document.getElementById("card-pack-select");
 const tierInput = document.getElementById("tier-input");
 const franchiseCardRowsEl = document.getElementById("franchise-card-rows");
@@ -279,6 +280,7 @@ tierInput.addEventListener("input", () => {
   resetExploration();
   refreshAllFranchiseRows();
 });
+jasmineCheckbox.addEventListener("change", resetExploration);
 settingSelect.addEventListener("change", () => {
   updateCardPackLock(settingSelect, cardPackSelect);
   loadUnlocksForSetting(settingSelect.value).catch(() => setStatus("Failed to load cards for this setting.", true));
@@ -382,6 +384,10 @@ function currentSetupPayload() {
     tier: Number(tierInput.value),
     franchiseCardNames: getFranchiseCardNames(),
     cardPack: cardPackSelect.value || null,
+    // Run-wide fact, not a per-day one - joins every request the same way heat/tier/etc. already do,
+    // including /api/explorer/day where it's simply unused (card draws don't read it). Only
+    // /api/explorer/shop-day's HasJasmine actually consumes it - see explorer-shop.js.
+    hasJasmine: jasmineCheckbox.checked,
   };
 }
 
@@ -513,7 +519,15 @@ async function viewNode(walkStart, highlightNode) {
 // real offers, or runs out of days. Each auto-skipped day still becomes a real tree node (so back-
 // navigation/branching stays correct) - it's just not shown as an interactive step. Does NOT touch
 // `currentNode`/tree highlighting - that's fixed once by the caller (viewNode) and must stay put
-// regardless of which internal node this walk passes through or stops on.
+// regardless of which internal node this walk passes through or stops on. Also does NOT touch the
+// Blueprints view's own day position (notifyDayShown) - Blueprints has its own independent
+// Previous/Next navigation (see walkShopViewToDay) and must not get silently dragged along every
+// time Cards-view navigation moves, including the very first "Start exploring" auto-skip - a real
+// bug found while building this: Blueprints defaulting to Day 1 (via walkShopViewToDay(1), called
+// right before this function) was immediately overwritten by this function's OWN day-sync call the
+// instant it found Cards' first real card-choice day. The two views are independent in both
+// directions now, not just the one (Blueprints navigation never touching Cards) documented where
+// walkShopViewToDay is defined.
 async function renderFrontier(walkStart, myGeneration) {
   let current = walkStart;
 
@@ -527,7 +541,6 @@ async function renderFrontier(walkStart, myGeneration) {
       const p = document.createElement("p");
       p.textContent = "Reached day 15 - this is as far as the Explorer goes.";
       dayPanelEl.appendChild(p);
-      notifyDayShown(current, null); // nothing further to show on the Blueprints view either
       return;
     }
 
@@ -549,14 +562,45 @@ async function renderFrontier(walkStart, myGeneration) {
     }
 
     renderDayPanel(current, nextDay, response);
-    // `current` is the PARENT node for this frontier day (pathToNode(current) is every committed
-    // decision strictly before `nextDay`) - the Blueprints view needs exactly this pair, not
-    // currentNode (which can lag behind the shown frontier day - see notifyDayShown's own doc in
-    // explorer-shop.js for why this hook exists at this exact point rather than deriving from
-    // currentNode after the fact).
-    notifyDayShown(current, nextDay);
     return;
   }
+}
+
+// Advances `current` by exactly one day for the BLUEPRINTS view's own navigation - unlike
+// renderFrontier, this never stops early, never touches dayPanelEl/currentNode, and (unlike
+// renderFrontier) needs no network call at all: Blueprints doesn't need a day's actual card-offer
+// data to move past it, only a settled "what, if anything, was picked" fact for cardPath purposes -
+// and a day simply absent from cardPath is already correctly treated as "declined" server-side
+// (ExplorerEndpoints.SimulateShopDay's replay loop). Reuses an already-explored day's existing node
+// (real pick or skip - whichever already exists; every child of a given parent is necessarily for
+// the same day, parent.day+1, so there's no ambiguity about which day an existing child represents)
+// if the Cards view already has one, so a real card pick already made isn't silently discarded;
+// otherwise creates a fresh skip node, same key `getOrCreateChild` would use for an auto-skipped
+// empty day.
+function stepShopDayForward(current) {
+  if (current.children.size > 0) {
+    return current.children.values().next().value;
+  }
+  return getOrCreateChild(current, current.day + 1, null, null);
+}
+
+// Walks the Blueprints view's OWN day position forward to `targetDay`, independent of wherever the
+// Cards view's frontier/currentNode currently sit (see explorer-shop.js's notifyDayShown for how the
+// two views' state stays decoupled). Bumps explorationGeneration purely so any still-in-flight
+// Cards-view renderFrontier walk correctly notices it's been superseded and stops touching
+// dayPanelEl with stale data - this walk itself has no await points, so it never needs to check the
+// counter itself.
+function walkShopViewToDay(targetDay) {
+  ++explorationGeneration;
+  if (targetDay > 15) {
+    return; // defensive only - the Next-day button is disabled at day 15, this should be unreachable
+  }
+
+  let current = rootNode;
+  while (current.day + 1 < targetDay) {
+    current = stepShopDayForward(current);
+  }
+  notifyDayShown(current, targetDay);
 }
 
 function renderDayPanel(node, day, response, rerollView = false) {
@@ -706,6 +750,7 @@ form.addEventListener("submit", async (event) => {
   rootNode = makeRootNode();
   explorerResultEl.hidden = false;
   loadLayoutPreview().catch(() => {});
+  walkShopViewToDay(1); // Blueprints always starts at Day 1, never wherever Cards' auto-skip lands
   await viewNode(rootNode, null);
 });
 
@@ -749,6 +794,7 @@ async function applyPreload(preload) {
   rootNode = makeRootNode();
   explorerResultEl.hidden = false;
   loadLayoutPreview().catch(() => {});
+  walkShopViewToDay(1); // same Day-1 default as a fresh "Start exploring" - independent of the Cards replay below
 
   let node = rootNode;
   for (const step of preload.path ?? []) {

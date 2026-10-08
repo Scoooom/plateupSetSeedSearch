@@ -957,6 +957,23 @@ button[type="submit"]:hover {
   margin: 0 0 0.3rem;
 }
 
+.shop-day-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.shop-day-nav h2 {
+  margin: 0;
+}
+
+.shop-day-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* Read-only reference view of the seed's layout (see Rendering/LayoutImageRenderer.cs) - same image
    the Seed Previewer page shows, embedded here so switching pages isn't needed while exploring. */
 .layout-panel {

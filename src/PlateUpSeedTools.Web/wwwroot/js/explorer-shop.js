@@ -9,6 +9,8 @@ const viewModeBlueprintsButton = document.getElementById("view-mode-blueprints")
 const shopDayPanelEl = document.getElementById("shop-day-panel");
 const heatInactiveNoteEl = document.getElementById("heat-inactive-note");
 const shopDayHeadingEl = document.getElementById("shop-day-heading");
+const shopDayPrevButton = document.getElementById("shop-day-prev");
+const shopDayNextButton = document.getElementById("shop-day-next");
 const shopLocationControlsEl = document.getElementById("shop-location-controls");
 const shopLocationResultEl = document.getElementById("shop-location-result");
 const shopRoundsEl = document.getElementById("shop-rounds");
@@ -66,10 +68,15 @@ function slugifyApplianceName(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-// Called from explorer.js whenever its OWN shown day changes (new frontier day loaded, a tree node
-// clicked, or a full reset) - pathNode is the Cards-tree node whose pathToNode() gives every
+// Sets the Blueprints view's own day position. Called from exactly two places now: explorer.js's
+// resetExploration() with (null, null) on a genuine full reset, and Blueprints' own navigation
+// (walkShopViewToDay, the Previous-day click handler below) - NOT from Cards-view navigation
+// (renderFrontier/tree-node clicks no longer call this at all - see renderFrontier's doc comment for
+// the real bug this fixed: Cards' own frontier-sync call was clobbering Blueprints' independent Day-1
+// default the instant it fired). pathNode is the Cards-tree node whose pathToNode() gives every
 // committed card decision strictly before `day` (the exact shape ExplorerShopDayRequest.cardPath
-// needs). day === null means "nothing to show" (day 15 reached, or a full reset).
+// needs). day === null means "nothing to show" (a full reset only, now - day 15 is reachable but
+// Next is simply disabled there, not routed through this null-day path anymore).
 function notifyDayShown(pathNode, day) {
   lastShownPathNode = pathNode;
   lastShownDay = day;
@@ -89,6 +96,8 @@ function notifyDayShown(pathNode, day) {
     addShopRerollRounds(3); // show Initial offer + 3 rerolls by default, no manual clicking needed
   }
 
+  updateShopDayNavButtons();
+
   if (viewMode !== "blueprints") {
     return;
   }
@@ -104,6 +113,34 @@ function notifyDayShown(pathNode, day) {
 
   loadAndRenderShopDay();
 }
+
+// Lower bound is 0 only when Jasmine is enabled (Day 0 has no shop at all otherwise - see
+// ExplorerEndpoints.SimulateShopDay's gating); upper bound 15 matches the server's own day-range
+// validation. Disabling both while nothing is explored yet (lastShownDay === null) falls out of the
+// same comparisons without a separate check.
+function updateShopDayNavButtons() {
+  const lowerBound = jasmineCheckbox.checked ? 0 : 1;
+  shopDayPrevButton.disabled = lastShownDay === null || lastShownDay <= lowerBound;
+  shopDayNextButton.disabled = lastShownDay === null || lastShownDay >= 15;
+}
+
+shopDayPrevButton.addEventListener("click", () => {
+  // lastShownPathNode already IS the previous day's own node - every child of a given parent is
+  // necessarily for parent.day + 1, so lastShownPathNode.day === lastShownDay - 1 always. No walk,
+  // no fetch of a new tree node, just move the pointer back (see walkShopViewToDay's doc comment in
+  // explorer.js for why this is safe/cheap).
+  if (shopDayPrevButton.disabled || lastShownPathNode === null) {
+    return;
+  }
+  notifyDayShown(lastShownPathNode.parent, lastShownPathNode.day);
+});
+
+shopDayNextButton.addEventListener("click", () => {
+  if (shopDayNextButton.disabled) {
+    return;
+  }
+  walkShopViewToDay(lastShownDay + 1);
+});
 
 function setShopRoundsMessage(message) {
   shopRoundsEl.innerHTML = "";
@@ -180,7 +217,13 @@ async function loadAndRenderShopDay() {
 
     lastShopResponse = body;
     shopLocationResultEl.textContent = body.rounds.length > 0 ? `Spawns: ${body.rounds[0].location}` : "";
-    renderShopRounds(body);
+    if (lastShownDay === 0 && body.rounds.length === 0) {
+      // See ExplorerEndpoints.SimulateShopDay's day-0 gating - this isn't an error, day 0 just has
+      // no shop without Jasmine. Explain it rather than leaving a silently blank table.
+      setShopRoundsMessage("Day 0 has no shop for this run - enable the Jasmine checkbox above to model its prep-day shop.");
+    } else {
+      renderShopRounds(body);
+    }
     renderShopOwnedAppliances(body);
     refreshShopFindDatalist();
     applyFindHighlighting();
