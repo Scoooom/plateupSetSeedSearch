@@ -27,18 +27,23 @@ let lastShownDay = null;
 
 // Per-day-view ephemeral state (reset every time the shown day changes) - NOT part of the Cards
 // tree, since reroll count is a live "how far have I looked" UI state, not a permanent decision.
-let shopRerollCount = 0;
+// shopRerollScenarios[i] is round i+1's {held, isInside} input (see ShopRerollInputDto on the
+// server) - array length IS the reroll count, no separate counter. CORRECTS an earlier, incomplete
+// model: a reroll does NOT always keep the same position (see ShopSpawnLocationEvaluator.cs's doc
+// comment on the project repo for the full mechanic) - held letters get a fresh placement reading
+// whatever the setting is at THAT moment, unheld letters keep the previous round's spot. Defaulted
+// to {held: false, isInside: shopInitialIsInside} when a new round is added, since "not held" is the
+// common case (most rerolls happen with the letter sitting on the counter, not in-hand).
+let shopRerollScenarios = [];
 let lastShopResponse = null;
 let shopFetchGeneration = 0;
 
-// Whether letters spawn inside the restaurant (vs. outside, near the front door) - mirrors the
-// player's own live Pref.LettersSpawnInside game setting (a toggleable option, not seed-derived).
-// Deliberately PERSISTS across day navigation (only resets on a full exploration reset) rather than
-// resetting per day, since it's the player's actual game setting, not something that changes night
-// to night. User-confirmed from real gameplay: this is the ONLY input that affects where a letter
-// spawns - player position never matters, and a reroll never changes it (see
-// Engine.Shop.ShopSpawnLocation's doc comment) - so this is one flat flag, not a per-round scenario.
-let shopIsInside = true;
+// Whether letters spawn inside the restaurant (vs. outside, near the front door) at the moment THIS
+// day's shop first opens (round 0 only) - mirrors the player's own live Pref.LettersSpawnInside game
+// setting (a toggleable option, not seed-derived). Deliberately PERSISTS across day navigation (only
+// resets on a full exploration reset) rather than resetting per day, since it's the player's actual
+// game setting, not something that changes night to night on its own.
+let shopInitialIsInside = true;
 
 // Buy/Toss history - deliberately flat/global, NOT attached to Cards-tree nodes. The Cards tree can
 // only create a node for a day once a card decision (pick/skip) is made for it, but a Blueprints
@@ -60,11 +65,11 @@ function slugifyApplianceName(name) {
 function notifyDayShown(pathNode, day) {
   lastShownPathNode = pathNode;
   lastShownDay = day;
-  shopRerollCount = 0;
+  shopRerollScenarios = [];
   lastShopResponse = null;
   if (pathNode === null) {
     shopActionsByDay = []; // full exploration reset (resetExploration), not just a day change
-    shopIsInside = true;
+    shopInitialIsInside = true;
   }
 
   if (viewMode !== "blueprints") {
@@ -109,7 +114,7 @@ async function loadAndRenderShopDay() {
 
   const myGeneration = ++shopFetchGeneration;
   shopDayHeadingEl.textContent = `Day ${lastShownDay}`;
-  shopLocationSettingSelect.value = shopIsInside ? "inside" : "outside";
+  shopLocationSettingSelect.value = shopInitialIsInside ? "inside" : "outside";
   setShopRoundsMessage(`Loading day ${lastShownDay}...`);
 
   const payload = {
@@ -117,8 +122,8 @@ async function loadAndRenderShopDay() {
     cardPath: pathToNode(lastShownPathNode),
     shopActions: pathToShopActions(),
     day: lastShownDay,
-    rerollCount: shopRerollCount,
-    isInside: shopIsInside,
+    initialIsInside: shopInitialIsInside,
+    rerolls: shopRerollScenarios.map((s) => ({ held: s.held, isInside: s.isInside })),
   };
 
   try {
@@ -140,7 +145,7 @@ async function loadAndRenderShopDay() {
     }
 
     lastShopResponse = body;
-    shopLocationResultEl.textContent = `Spawns: ${body.location}`;
+    shopLocationResultEl.textContent = body.rounds.length > 0 ? `Spawns: ${body.rounds[0].location}` : "";
     renderShopRounds(body);
     renderShopOwnedAppliances(body);
     refreshShopFindDatalist();
@@ -154,7 +159,7 @@ async function loadAndRenderShopDay() {
 }
 
 shopLocationSettingSelect.addEventListener("change", () => {
-  shopIsInside = shopLocationSettingSelect.value === "inside";
+  shopInitialIsInside = shopLocationSettingSelect.value === "inside";
   loadAndRenderShopDay();
 });
 
@@ -174,6 +179,18 @@ function renderShopRound(round) {
   heading.textContent = round.rerollIndex === 0 ? "Initial offer" : `Reroll ${round.rerollIndex}`;
   container.appendChild(heading);
 
+  // Round 0's spawn setting lives in the day-level "Where it spawns" controls above - only reroll
+  // rounds (index > 0) get their own held/setting controls here, since only a HELD letter's position
+  // can change at reroll time (see ShopRerollInputDto's doc comment on the server).
+  if (round.rerollIndex > 0) {
+    container.appendChild(renderShopRerollLocationControls(round));
+  } else {
+    const location = document.createElement("p");
+    location.className = "shop-location-result";
+    location.textContent = `Spawns: ${round.location}`;
+    container.appendChild(location);
+  }
+
   const slotsEl = document.createElement("div");
   slotsEl.className = "shop-slots";
   for (const slot of round.slots) {
@@ -182,6 +199,53 @@ function renderShopRound(round) {
   container.appendChild(slotsEl);
 
   return container;
+}
+
+// scenarioIndex is round.rerollIndex - 1 (shopRerollScenarios has no entry for round 0).
+function renderShopRerollLocationControls(round) {
+  const scenarioIndex = round.rerollIndex - 1;
+  const scenario = shopRerollScenarios[scenarioIndex] ?? { held: false, isInside: shopInitialIsInside };
+
+  const wrap = document.createElement("div");
+  wrap.className = "shop-location-controls";
+
+  const heldLabel = document.createElement("label");
+  const heldCheckbox = document.createElement("input");
+  heldCheckbox.type = "checkbox";
+  heldCheckbox.checked = scenario.held;
+  heldCheckbox.addEventListener("change", () => {
+    shopRerollScenarios[scenarioIndex] = { ...scenario, held: heldCheckbox.checked };
+    loadAndRenderShopDay();
+  });
+  heldLabel.appendChild(heldCheckbox);
+  heldLabel.append(" Held when rerolled?");
+  wrap.appendChild(heldLabel);
+
+  if (scenario.held) {
+    const settingLabel = document.createElement("label");
+    settingLabel.append(" Letters spawn: ");
+    const select = document.createElement("select");
+    for (const [value, text] of [["inside", "Inside"], ["outside", "Outside"]]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      select.appendChild(option);
+    }
+    select.value = scenario.isInside ? "inside" : "outside";
+    select.addEventListener("change", () => {
+      shopRerollScenarios[scenarioIndex] = { ...scenario, isInside: select.value === "inside" };
+      loadAndRenderShopDay();
+    });
+    settingLabel.appendChild(select);
+    wrap.appendChild(settingLabel);
+  }
+
+  const location = document.createElement("p");
+  location.className = "shop-location-result";
+  location.textContent = `Spawns: ${round.location}`;
+  wrap.appendChild(location);
+
+  return wrap;
 }
 
 function renderShopSlot(slot, rerollIndex) {
@@ -219,8 +283,14 @@ function renderShopSlot(slot, rerollIndex) {
   return el;
 }
 
+function addShopRerollRounds(count) {
+  for (let i = 0; i < count; i++) {
+    shopRerollScenarios.push({ held: false, isInside: shopInitialIsInside });
+  }
+}
+
 shopAddRerollButton.addEventListener("click", () => {
-  shopRerollCount++;
+  addShopRerollRounds(1);
   loadAndRenderShopDay();
 });
 
@@ -305,8 +375,8 @@ function applyFindHighlighting() {
 
   if (matchingRounds.length > 0) {
     const descriptions = matchingRounds.map((round) =>
-      round.rerollIndex === 0 ? "the initial offer" : `reroll ${round.rerollIndex}`);
-    shopFindResultEl.textContent = `Found in: ${descriptions.join(", ")}. (Spawns: ${lastShopResponse.location.toLowerCase()})`;
+      (round.rerollIndex === 0 ? "the initial offer" : `reroll ${round.rerollIndex}`) + ` (spawns: ${round.location.toLowerCase()})`);
+    shopFindResultEl.textContent = `Found in: ${descriptions.join(", ")}.`;
     return;
   }
 
@@ -319,7 +389,7 @@ function applyFindHighlighting() {
   more.className = "link-button";
   more.textContent = "Search 5 more rerolls";
   more.addEventListener("click", () => {
-    shopRerollCount += 5;
+    addShopRerollRounds(5);
     loadAndRenderShopDay();
   });
   shopFindResultEl.appendChild(more);
@@ -331,8 +401,8 @@ shopFindInput.addEventListener("input", () => {
   // (5 rounds: the initial offer + 4 rerolls) rather than only searching whatever happens to already
   // be on screen - lazy, same "only compute rounds the user actually asks to see" spirit as the
   // Explorer's existing tree-node convention, just triggered by typing instead of a button click.
-  if (query && shopRerollCount < 4 && lastShownDay !== null) {
-    shopRerollCount = 4;
+  if (query && shopRerollScenarios.length < 4 && lastShownDay !== null) {
+    addShopRerollRounds(4 - shopRerollScenarios.length);
     loadAndRenderShopDay();
   } else {
     applyFindHighlighting();

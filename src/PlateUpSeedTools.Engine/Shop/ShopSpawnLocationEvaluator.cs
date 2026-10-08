@@ -16,10 +16,19 @@ public enum ShopSpawnSetting
 /// Pref.LettersSpawnInside setting, never on player position - GetPostTiles' Inside branch does read
 /// live player position in source (a per-player IsInside check feeding a "candidate tiles near that
 /// player" vs. "shuffled list of every inside tile" split), but this has no user-visible effect in
-/// practice, so this port does not model that split. Also user-confirmed: a reroll never changes
-/// position either way, held or sitting on the ground - it only redraws the appliance in place (see
-/// ShopDaySimulator.SimulateDayWithRerolls's doc comment) - so this evaluator is called once per day,
-/// not once per reroll round.
+/// practice, so this port does not model that split.
+///
+/// CORRECTION (superseding an earlier, incomplete claim): a reroll does NOT always keep the same
+/// position. HandleShopReroll.cs branches per letter on whether it's currently held by a player
+/// (CHeldBy+CPlayer) at the moment of reroll: held -> FixedLocation=false -> the letter gets a FRESH
+/// placement roll reading whatever ShopSpawnSetting is live at that instant; unheld/on the ground ->
+/// FixedLocation=true -> the old position is kept verbatim, the live setting is never consulted.
+/// Confirmed both from source and from a real controlled two-part test (toggle the setting mid-day,
+/// then reroll once holding the letter and once not): the held case visibly moved outside->inside,
+/// the unheld case stayed put. So this evaluator must be called once per reroll round that was held,
+/// not once per day - see ShopDaySimulator.SimulateDayWithRerolls's doc comment for how callers should
+/// thread this (an unheld round should inherit the previous round's location unchanged, not
+/// re-evaluate).
 /// </summary>
 public enum ShopSpawnLocation
 {

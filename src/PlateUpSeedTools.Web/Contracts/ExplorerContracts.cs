@@ -70,6 +70,17 @@ public sealed record SaveExplorerPreloadResponse(string Hash);
 /// <summary>One buy or toss action taken on a given (already-passed) day, applied in day order before simulating a later day's shop.</summary>
 public sealed record ShopActionDto(int Day, int ApplianceId, bool IsToss);
 
+/// <summary>
+/// One reroll round's held/live-setting scenario. CORRECTS an earlier, incomplete model: a reroll
+/// does NOT always keep the previous round's position. HandleShopReroll.cs branches per letter on
+/// whether it's held by a player at the moment of reroll (confirmed both from source and a real
+/// controlled gameplay test - toggling the setting mid-day then rerolling once held, once not): held
+/// -> a FRESH placement roll reading whatever IsInside is right then; unheld -> the previous round's
+/// location carries over unchanged and IsInside is ignored for that round (still required on the DTO
+/// so the client always has a definite value to send, even for an unheld round).
+/// </summary>
+public sealed record ShopRerollInputDto(bool Held, bool IsInside);
+
 public sealed record ExplorerShopDayRequest(
     string Setting,
     string Seed,
@@ -82,22 +93,20 @@ public sealed record ExplorerShopDayRequest(
     string? CardPack,
     List<ShopActionDto> ShopActions,
     int Day,
-    int RerollCount,
-    // The live Pref.LettersSpawnInside game setting - user-confirmed from real gameplay that spawn
-    // placement depends ONLY on this (never on player position, and never recomputed by a reroll -
-    // see Engine.Shop.ShopSpawnLocation's doc comment), so one value for the whole day is correct,
-    // not a per-round scenario. Defaults to the game's own default (true).
-    bool IsInside = true);
+    // The live Pref.LettersSpawnInside setting at the moment this day's shop first opens (round 0).
+    // Defaults to the game's own default (true).
+    bool InitialIsInside = true,
+    // One entry per reroll beyond the initial offer - Rerolls.Count IS the reroll count (no separate
+    // count field). See ShopRerollInputDto for how each entry affects that round's location.
+    List<ShopRerollInputDto>? Rerolls = null);
 
 public sealed record ShopSlotDto(int? ApplianceId, string? ApplianceName);
 
-public sealed record ShopRoundDto(int RerollIndex, IReadOnlyList<ShopSlotDto> Slots);
+/// <summary>Location is THIS round's own plain-language spawn-area label (see ShopSpawnLocation) -
+/// per-round, not day-level, since a held reroll can genuinely change it mid-day.</summary>
+public sealed record ShopRoundDto(int RerollIndex, IReadOnlyList<ShopSlotDto> Slots, string Location);
 
 public sealed record PlacedApplianceDto(int ApplianceId, string ApplianceName);
 
-/// <summary>
-/// PlacedAppliances is the kitchen state heading INTO this day (before any of today's rounds) - what
-/// a "Toss" button can target. Location is a plain-language category (see ShopSpawnLocation) for the
-/// WHOLE day, not per-round - never claim more precision than that in UI copy.
-/// </summary>
-public sealed record ExplorerShopDayResponse(int Day, IReadOnlyList<ShopRoundDto> Rounds, string Location, IReadOnlyList<PlacedApplianceDto> PlacedAppliances);
+/// <summary>PlacedAppliances is the kitchen state heading INTO this day (before any of today's rounds) - what a "Toss" button can target.</summary>
+public sealed record ExplorerShopDayResponse(int Day, IReadOnlyList<ShopRoundDto> Rounds, IReadOnlyList<PlacedApplianceDto> PlacedAppliances);

@@ -212,10 +212,7 @@ public static partial class ExplorerEndpoints
             return Results.BadRequest(new { error = "day must be between 0 and 15." });
         }
 
-        if (request.RerollCount < 0)
-        {
-            return Results.BadRequest(new { error = "rerollCount cannot be negative." });
-        }
+        var rerolls = request.Rerolls ?? [];
 
         if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))
         {
@@ -335,24 +332,37 @@ public static partial class ExplorerEndpoints
         }
 
         var shopSim = new ShopDaySimulator(repo, seed, kitchen, bonusStaples, currentSeason: 0, menuDishIds: ownedUnlockIds, grantedThemes: grantedThemes);
-        var dayRounds = shopSim.SimulateDayWithRerolls(request.Day, request.RerollCount);
+        var dayRounds = shopSim.SimulateDayWithRerolls(request.Day, rerolls.Count);
+
+        // Per-round location: round 0 uses InitialIsInside. Each later round only gets a FRESH
+        // placement roll if it was held at reroll time (ShopRerollInputDto.Held) - unheld rounds
+        // inherit the previous round's label unchanged, matching HandleShopReroll.cs's FixedLocation
+        // branch (see ShopRerollInputDto's doc for the full mechanic, confirmed from source + a real
+        // controlled gameplay test).
+        var locations = new List<string>(dayRounds.Count)
+        {
+            DescribeLocation(ShopSpawnLocationEvaluator.Evaluate(request.InitialIsInside ? ShopSpawnSetting.Inside : ShopSpawnSetting.Outside)),
+        };
+        for (var i = 0; i < rerolls.Count; i++)
+        {
+            locations.Add(rerolls[i].Held
+                ? DescribeLocation(ShopSpawnLocationEvaluator.Evaluate(rerolls[i].IsInside ? ShopSpawnSetting.Inside : ShopSpawnSetting.Outside))
+                : locations[^1]);
+        }
 
         var rounds = dayRounds
             .Select((round, index) => new ShopRoundDto(
                 index,
-                round.Slots.Select(s => new ShopSlotDto(s.ApplianceId, s.ApplianceId is int id && repo.TryGetShopAppliance(id, out var appliance) ? appliance.Name : null)).ToList()))
+                round.Slots.Select(s => new ShopSlotDto(s.ApplianceId, s.ApplianceId is int id && repo.TryGetShopAppliance(id, out var appliance) ? appliance.Name : null)).ToList(),
+                locations[index]))
             .ToList();
-
-        // One location for the whole day, not per round - user-confirmed from real gameplay that a
-        // reroll never changes it (see Engine.Shop.ShopSpawnLocation's doc comment).
-        var location = DescribeLocation(ShopSpawnLocationEvaluator.Evaluate(request.IsInside ? ShopSpawnSetting.Inside : ShopSpawnSetting.Outside));
 
         var placedAppliances = kitchen.PlacedApplianceIds
             .Select(id => new PlacedApplianceDto(id, repo.TryGetShopAppliance(id, out var appliance) ? appliance.Name : $"#{id}"))
             .OrderBy(a => a.ApplianceName)
             .ToList();
 
-        return Results.Ok(new ExplorerShopDayResponse(request.Day, rounds, location, placedAppliances));
+        return Results.Ok(new ExplorerShopDayResponse(request.Day, rounds, placedAppliances));
     }
 
     /// <summary>

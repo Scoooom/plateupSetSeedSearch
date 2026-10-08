@@ -72,16 +72,22 @@ public sealed class ShopDaySimulator
     /// Simulates a day's shop offers, then re-runs the SAME resolution rerollCount more times,
     /// CONTINUING the same per-day RNG stream rather than resetting it - matches HandleShopReroll's
     /// real behavior: a reroll recreates every existing shop slot and re-runs the identical
-    /// appliance-selection logic against whatever PRNG state the day's stream has reached. Position
-    /// never changes on a reroll (user-confirmed from real gameplay - held or sitting on the ground,
-    /// the new letter lands in the exact same spot as the old one; see
-    /// Engine.Shop.ShopSpawnLocation's doc comment), only the appliance inside it does, which is why
-    /// ShopSpawnLocationEvaluator is called once per day rather than once per round. Source-confirmed
-    /// this has NO dependency on prior days' reroll activity or the real game's escalating gold-cost
-    /// counter (SRerollCost) - appliance selection is seeded purely from (seed, day), see class doc and
-    /// game-domain-knowledge.md's reroll section for the full trace. Result[0] is the day's initial
-    /// offer (identical to calling SimulateDay(day)); Result[i] for i&gt;0 is the state after the i-th
-    /// reroll that same day.
+    /// appliance-selection logic against whatever PRNG state the day's stream has reached.
+    /// Source-confirmed this has NO dependency on prior days' reroll activity or the real game's
+    /// escalating gold-cost counter (SRerollCost) - appliance selection is seeded purely from
+    /// (seed, day), see class doc and game-domain-knowledge.md's reroll section for the full trace.
+    /// Result[0] is the day's initial offer (identical to calling SimulateDay(day)); Result[i] for
+    /// i&gt;0 is the state after the i-th reroll that same day.
+    ///
+    /// CORRECTION (superseding an earlier, incomplete claim): position is NOT day-constant. Per
+    /// HandleShopReroll.cs and a real controlled gameplay test, whether a reroll's letter gets a fresh
+    /// placement depends on whether it was held by a player at that exact reroll - held means a fresh
+    /// ShopSpawnLocationEvaluator.Evaluate call against the then-live setting; unheld means the
+    /// previous round's location carries over unchanged. This method does NOT compute location at all
+    /// (appliance selection and position are source-confirmed independent via GetPostTiles' separate
+    /// UseSubcontext(1) draw, so it doesn't perturb this method's RNG stream) - callers must track
+    /// held/unheld per round themselves and call ShopSpawnLocationEvaluator.Evaluate only for rounds
+    /// marked held, carrying the prior round's label forward otherwise.
     /// </summary>
     public IReadOnlyList<ShopDayResult> SimulateDayWithRerolls(int day, int rerollCount)
     {
