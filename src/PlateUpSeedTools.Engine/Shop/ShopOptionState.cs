@@ -49,10 +49,11 @@ public sealed class ShopOptionState
     public required int ShopRequirementFilter { get; init; }
 
     /// <summary>
-    /// Step 9 input (FilterByTheme) - NOT YET WIRED: the dynamic side (which owned unlocks grant which
-    /// theme, KitchenData.ThemeAddEffect.AddsTheme) lives inside an Unlock's Odin-serialized Effects
-    /// list, confirmed not present as plain text in any .asset (zero hits for "AddsTheme") - same class
-    /// of problem as ShopEffect.AddStaple (step 3), needs dedicated decode work, not a quick field read.
+    /// Step 9 input (FilterByTheme) - fully implemented (this comment used to say "NOT YET WIRED";
+    /// that was stale - see ShopOptionEvaluator.FilterByTheme/ResolveGrantedThemes, which ARE wired
+    /// into BuildDailyOptions's pipeline). The dynamic side (which owned unlocks grant which theme,
+    /// KitchenData.ThemeAddEffect.AddsTheme) decodes as a simple scalar from the card's Odin blob via
+    /// OdinFieldReader, same as ShopEffect.AddStaple (step 3) - see UnlockData.GrantsTheme.
     /// </summary>
     public required int ThemeRequired { get; init; }
 
