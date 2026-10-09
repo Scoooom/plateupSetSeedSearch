@@ -139,7 +139,7 @@ public sealed class ShopDaySimulator
     public ShopDayRoundState BeginDayRounds(int day)
     {
         var rng = new FixedSeedContext(_seed, unchecked(ShopCategorySeed * 1231231 + day)).CreateRandom();
-        var options = ShopOptionEvaluator.BuildDailyOptions(_repo, _kitchen, _bonusStapleApplianceIds, _currentSeason, _menuDishIds, _grantedThemes);
+        var options = ShopOptionEvaluator.BuildDailyOptions(_repo, _kitchen, _bonusStapleApplianceIds, _currentSeason, _menuDishIds, _grantedThemes, anyMenuItemActive: day > 0);
         var availableStapleCount = options.Count(o => o.TakesStapleSlot);
         var requestedSlots = ShopDifficultyHelpers.GetSlotRequests(day, availableStapleCount);
         return new ShopDayRoundState(this, day, rng, requestedSlots);
@@ -165,7 +165,7 @@ public sealed class ShopDaySimulator
     /// </summary>
     internal ShopDayResult SimulateRoundCore(int day, UnityRandom rng, IReadOnlyList<ShoppingTags> requestedSlots, IReadOnlyList<int> activeSlotIndexes, bool isReroll)
     {
-        var options = ShopOptionEvaluator.BuildDailyOptions(_repo, _kitchen, _bonusStapleApplianceIds, _currentSeason, _menuDishIds, _grantedThemes);
+        var options = ShopOptionEvaluator.BuildDailyOptions(_repo, _kitchen, _bonusStapleApplianceIds, _currentSeason, _menuDishIds, _grantedThemes, anyMenuItemActive: day > 0);
         var upgradedChance = ShopDifficultyHelpers.BaseUpgradedShopChance(day);
         var rerollTag = day % 5 != 0 ? ShoppingTagsExtensions.DefaultShoppingTag : ShoppingTags.Decoration;
 

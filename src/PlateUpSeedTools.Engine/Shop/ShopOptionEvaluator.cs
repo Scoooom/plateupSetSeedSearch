@@ -9,10 +9,11 @@ namespace PlateUpSeedTools.Engine.Shop;
 /// FilterBlueprintUpgraders -&gt; FilterByTheme), verified against source in this exact order. See
 /// docs/game-domain-knowledge.md's "Shop / appliance purchase RNG" section for the full writeup.
 ///
-/// v1 implements steps 2/3/4/5(partial)/8/9 fully. Only step 5's RequiresPhaseForShop half, step 6,
-/// and step 7 remain stubbed to always-pass - each needs a dynamic input that genuinely requires new
-/// Odin-blob decode work (see OdinFieldReader's class doc and game-domain-knowledge.md's
-/// "AddStaple/AddsTheme/AllowRefreshes decode" section for what was and wasn't solvable):
+/// v1 implements steps 2/3/4/5(partial)/6(partial, see below)/8/9 fully. Only step 5's
+/// RequiresPhaseForShop half and step 7 remain stubbed to always-pass - each needs a dynamic input
+/// that genuinely requires new Odin-blob decode work (see OdinFieldReader's class doc and
+/// game-domain-knowledge.md's "AddStaple/AddsTheme/AllowRefreshes decode" section for what was and
+/// wasn't solvable):
 /// - Step 3 (TagStaples' card-driven bonus-staple list, UnlockCard.Effects' ShopEffect.AddStaple) and
 ///   step 9 (FilterByTheme, KitchenData.ThemeAddEffect.AddsTheme) are BOTH fully implemented - both
 ///   fields decode as simple scalars from the card's Odin blob via OdinFieldReader, validated against
@@ -24,16 +25,25 @@ namespace PlateUpSeedTools.Engine.Shop;
 ///   a HashSet&lt;Item&gt; Unity doesn't natively serialize - a genuinely harder decode problem than
 ///   AddStaple/AddsTheme, see OdinFieldReader's class doc) - RequiresPhaseForShop is 0/451 anyway so
 ///   this is currently a dormant gap, not an active one.
-/// - Step 6 (FilterByRequiredProcessOrIngredient): needs Dish.RequiredProcesses/BeneficialIngredients -
-///   same HashSet&lt;T&gt; decode problem as above. 27/451 appliances use RequiresProcessForShopIds -
-///   an ACTIVE, still-open gap, the highest-value one remaining.
+/// - Step 6 (FilterByRequiredProcessOrIngredient) is now PARTIALLY implemented (2026-10-09), see
+///   <see cref="FilterByRequiredProcessOrIngredient"/>'s own doc comment for the full real-game
+///   mechanic this is based on and exactly what's still missing (the general "is this specific
+///   requirement satisfied by the active dish" case - still needs the Dish.RequiredProcesses/
+///   BeneficialIngredients Odin-HashSet decode, genuinely unsolved). What IS now modeled: the one
+///   case real ground-truth captures could fully confirm WITHOUT that decode - before any dish is
+///   actually on the menu (day 0, the prep day before day 1 - confirmed via 5 independent real
+///   captures, 100% reproducible, not timing noise), NOTHING can satisfy a process/ingredient
+///   requirement, so any appliance with a non-empty RequiresProcessForShopIds/
+///   RequiresIngredientForShopIds is deterministically excluded. This exactly explains a real day-0
+///   divergence (Hob/Sink wrongly offered - both have real, non-empty requirements; Counter/Dining
+///   Table have none and were never affected).
 /// - Step 7 (FilterByRequirements/ShopRequirementFilter): needs Kitchen.CItemProvider.AllowRefreshes -
 ///   confirmed to decode as a simple scalar too (validated against 114 real appliance assets), but its
 ///   companion CRequiresSpecificRefresher check wasn't investigated (low priority, only 1/451
 ///   appliances affected) - not wired up yet.
 /// ShopOptionState still carries every appliance-side field for the stubbed steps (plainly extracted,
-/// present in shop/appliances.json) so finishing step 6/7 later only needs the dynamic input, not
-/// another pass over this pipeline.
+/// present in shop/appliances.json) so finishing step 6's general case/step 7 later only needs the
+/// dynamic input, not another pass over this pipeline.
 /// </summary>
 public static class ShopOptionEvaluator
 {
@@ -57,13 +67,21 @@ public static class ShopOptionEvaluator
     /// DecorationType flags granted so far this run (permanent, OR'd, never cleared - matches the real
     /// game's SGlobalStatusList.Theme). Resolve via <see cref="ResolveGrantedThemes"/>.
     /// </param>
+    /// <param name="anyMenuItemActive">
+    /// Step 6 input - false only before any dish is genuinely on the menu (day 0, the prep day
+    /// before day 1 - see <see cref="FilterByRequiredProcessOrIngredient"/>'s doc comment). Defaults
+    /// true (preserves this step's old always-pass behavior) so every existing caller that doesn't
+    /// know about day 0 specifically is unaffected - only ShopDaySimulator's day-0 call site passes
+    /// false.
+    /// </param>
     public static List<ShopOptionState> BuildDailyOptions(
         GameDataRepository repo,
         KitchenApplianceState kitchen,
         IReadOnlySet<int>? bonusStapleApplianceIds = null,
         int currentSeason = 0 /* Season.Normal - real game drives this from wall-clock time, not the seed; v1 always builds the Normal-season pool */,
         IReadOnlySet<int>? menuDishIds = null,
-        int grantedThemes = 0)
+        int grantedThemes = 0,
+        bool anyMenuItemActive = true)
     {
         var bonusStaples = bonusStapleApplianceIds ?? new HashSet<int>();
         var requiresPlates = MenuRequiresPlates(repo, menuDishIds ?? new HashSet<int>());
@@ -109,7 +127,12 @@ public static class ShopOptionEvaluator
             FilterByRequiredCourse(option, requiresPlates);
         }
 
-        // Steps 6, 7 (FilterByRequiredProcessOrIngredient/FilterByRequirements) stubbed - see class doc.
+        foreach (var option in options)
+        {
+            FilterByRequiredProcessOrIngredient(option, anyMenuItemActive);
+        }
+
+        // Step 7 (FilterByRequirements) stubbed - see class doc.
 
         foreach (var option in options)
         {
@@ -261,6 +284,45 @@ public static class ShopOptionEvaluator
         {
             option.IsRemoved = true;
         }
+    }
+
+    /// <summary>
+    /// Step 6, PARTIAL port of FilterByRequiredProcessOrIngredient.OriginalLambdaBody/IsRequired -
+    /// source-confirmed real mechanic: the real game's RequiredProcesses/BeneficialIngredients sets
+    /// (NativeHashSet&lt;int&gt;) are rebuilt once per day from live CMenuItem entities
+    /// (OnStartOfDay -&gt; BuildProcessCache/BuildIngredientCache) - i.e. whichever processes/
+    /// ingredients the CURRENTLY ACTIVE menu dish(es) actually provide. IsRequired(app, ...) returns
+    /// true immediately if the appliance has NO requirement at all, otherwise true only if at least
+    /// one of its required processes/ingredients is in that day's live set, else false - a false
+    /// result sets IsRemoved.
+    ///
+    /// Before ANY dish is genuinely on the menu (confirmed via 5 independent real ground-truth
+    /// captures, 2026-10-09: day 0, the prep day before day 1, 100% reproducible across every
+    /// attempt - not timing noise), no CMenuItem exists yet, so both sets are provably EMPTY - this
+    /// is the one case this port can model with full confidence without the dish-side decode: ANY
+    /// appliance with a non-empty requirement is unconditionally removed. <paramref
+    /// name="anyMenuItemActive"/> is exactly that one bit of information, not a full port of
+    /// BuildProcessCache/BuildIngredientCache - once a dish genuinely IS on the menu (day 1+), this
+    /// deliberately does NOT attempt to determine whether THIS SPECIFIC requirement is satisfied
+    /// (that still needs Dish.RequiredProcesses/BeneficialIngredients - a HashSet&lt;T&gt; Unity
+    /// doesn't natively serialize, confirmed not plain-text in any .asset, genuinely unsolved) - it
+    /// just preserves this step's previous always-pass behavior for that case, matching the real
+    /// day-1+ captures that already show these appliances correctly re-included.
+    /// </summary>
+    private static void FilterByRequiredProcessOrIngredient(ShopOptionState option, bool anyMenuItemActive)
+    {
+        if (option.IsRemoved || option.Staple is ShopStapleType.BonusStaple or ShopStapleType.WhenMissing)
+        {
+            return;
+        }
+
+        var hasRequirement = option.RequiresProcessForShopIds.Count > 0 || option.RequiresIngredientForShopIds.Count > 0;
+        if (!hasRequirement || anyMenuItemActive)
+        {
+            return;
+        }
+
+        option.IsRemoved = true;
     }
 
     /// <summary>

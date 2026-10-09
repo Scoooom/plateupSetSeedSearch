@@ -91,4 +91,49 @@ public class ShopDaySimulatorGroundTruthTests
             new int?[] { SinkId, ResearchDeskId, PlatesId, HobId, FlowerPotId },
             day4.Slots.Select(s => s.ApplianceId).ToArray());
     }
+
+    private const int CombinerId = -1906799936;
+
+    /// <summary>
+    /// Pins a SEPARATE real capture (2026-10-09, same seed "vqrj"/"normal" setting, GroundTruthLogger
+    /// v1.9.0-v1.13.0's Jasmine-injection toggle + SHOP_STAPLE_COUNT/SHOP_OPTION_RAW_STATE captures):
+    /// day 0 (the prep day before day 1, only reachable at all with Jasmine present - see
+    /// JasmineInjectionSystem in the GroundTruthLogger repo). Real root cause, found and fixed same
+    /// day: step 6 (FilterByRequiredProcessOrIngredient) was entirely unwired (see
+    /// ShopOptionEvaluator's class doc) - the real game's RequiredProcesses/BeneficialIngredients sets
+    /// are rebuilt once per day from live CMenuItem entities, which provably don't exist yet on day 0
+    /// (5 independent real captures, 100% reproducible: Hob and Sink - both with real, non-empty
+    /// RequiresProcessForShopIds/RequiresIngredientForShopIds - were NEVER staple-eligible on day 0,
+    /// while Counter/Dining Table, which have no such requirement, always were). Confirmed via
+    /// SHOP_OPTION_RAW_STATE that Hob/Sink's Tags/Staple fields are byte-identical to Counter/Dining
+    /// Table's (FixedStaple, correctly tagged) - IsRemoved is the only field that differs, and only on
+    /// day 0. Fixed by modeling the one case this project can be fully confident about without the
+    /// still-unsolved Dish.RequiredProcesses/BeneficialIngredients Odin-HashSet decode: before any
+    /// dish is genuinely on the menu, nothing can satisfy a process/ingredient requirement, so any
+    /// appliance with one is unconditionally removed (<see cref="ShopOptionEvaluator.BuildDailyOptions"/>'s
+    /// new anyMenuItemActive parameter, threaded from ShopDaySimulator as `day > 0`). The general
+    /// "is THIS SPECIFIC requirement satisfied once a dish IS active" case (days 1+) remains
+    /// unmodeled/always-pass, same as before - this fix only ever removes an option, never adds one
+    /// back, so it cannot regress any already-passing day 1/2/4 assertion above.
+    ///
+    /// menuDishIds is deliberately EMPTY here, matching the real production caller
+    /// (ExplorerEndpoints.SimulateShopDay's `for (day = 0; day &lt; request.Day; day++)` loop never
+    /// executes for request.Day==0, so CardDrawSimulator.OwnedUnlockIds is never advanced past its
+    /// initial state) - NOT the PiesId placeholder the day-1/2/4 test above uses, which predates this
+    /// capture and was never meant to represent day 0's actual (dish-less) state.
+    /// </summary>
+    [Fact]
+    public void MatchesRealCapturedDay0ShopSequence()
+    {
+        var repo = new GameDataRepository(Path.Combine(AppContext.BaseDirectory, "data", "settings"));
+        var seed = new Seed("vqrj");
+        var (profile, _) = repo.ResolveLayout("normal", seed);
+        var kitchen = new KitchenApplianceState(profile.RequiredApplianceIds);
+        var sim = new ShopDaySimulator(repo, seed, kitchen, menuDishIds: new HashSet<int>());
+
+        var day0 = sim.SimulateDay(0);
+        Assert.Equal(
+            new int?[] { ResearchDeskId, DiningTableId, CounterId, CombinerId, FlowerPotId },
+            day0.Slots.Select(s => s.ApplianceId).ToArray());
+    }
 }
