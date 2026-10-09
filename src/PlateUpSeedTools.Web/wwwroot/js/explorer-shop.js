@@ -92,8 +92,19 @@ function notifyDayShown(pathNode, day) {
   // shared, and setViewMode's own loadAndRenderShopDay() call (when the user switches INTO
   // Blueprints later, after already having navigated days in Cards view) must find this already
   // populated, not empty.
+  //
+  // Real bug fixed here: this used to always seed exactly 3 rounds, even when shopActionsByDay
+  // already has a recorded action at a LATER round for this day (e.g. the user expanded past round
+  // 3 with "Add another reroll", bought something at round 6, then navigated away and back). Since
+  // shopRerollScenarios.length IS the reroll count sent to the server (rerolls: [...]), collapsing
+  // back to 3 made the next request's round-by-round loop never reach round 6 at all - the buy was
+  // silently dropped from server-side kitchen state while shopActionsByDay (and therefore the
+  // rendered "Bought" badge, once rounds re-expand) still claimed it happened. Seed at least enough
+  // rounds to cover every already-recorded action for this exact day, not a flat 3.
   if (day !== null) {
-    addShopRerollRounds(3); // show Initial offer + 3 rerolls by default, no manual clicking needed
+    const recordedRoundsForDay = shopActionsByDay.filter((a) => a.day === day).map((a) => a.round);
+    const minRounds = Math.max(3, ...recordedRoundsForDay, 0);
+    addShopRerollRounds(minRounds); // show Initial offer + at least `minRounds` rerolls
   }
 
   updateShopDayNavButtons();
@@ -150,31 +161,51 @@ function setShopRoundsMessage(message) {
 }
 
 function pathToShopActions() {
-  return shopActionsByDay.filter((a) => a.day < lastShownDay).map((a) => ({ day: a.day, applianceId: a.applianceId, isToss: a.isToss }));
+  // Prior days: unchanged, day-level only - by the time a LATER day is requested, that whole day's
+  // rounds are moot, only the final kitchen-state effect matters (see ShopActionDto's doc comment).
+  const priorDay = shopActionsByDay
+    .filter((a) => a.day < lastShownDay)
+    .map((a) => ({ day: a.day, applianceId: a.applianceId, isToss: a.isToss }));
+  // Today: round (and, for a buy, slotIndex) are required - see ShopActionDto's doc comment for why.
+  const today = shopActionsByDay
+    .filter((a) => a.day === lastShownDay)
+    .map((a) => ({ day: a.day, applianceId: a.applianceId, isToss: a.isToss, round: a.round, slotIndex: a.slotIndex }));
+  return [...priorDay, ...today];
 }
 
-function recordShopAction(applianceId, isToss) {
+// round is which round (0 = initial offer) this action happened during; slotIndex is REQUIRED for a
+// Buy (null for a Toss - see ShopActionDto's doc comment on the server for why).
+function recordShopAction(applianceId, isToss, round, slotIndex = null) {
   if (lastShownDay === null) {
     return;
   }
-  shopActionsByDay.push({ day: lastShownDay, applianceId, isToss });
-  // The server's response reflects kitchen state HEADING INTO this day (before today's actions -
-  // see ExplorerShopDayResponse's doc comment), by design: a same-day action only actually takes
-  // effect starting the NEXT day's fetch (pathToShopActions filters to `a.day < lastShownDay`), so
-  // re-fetching alone would re-render this exact day identically and look like nothing happened.
-  // Re-render from the ALREADY-loaded response instead, so today's own action-badges above (see
-  // todaysShopAction) update immediately without a round-trip.
+  shopActionsByDay.push({ day: lastShownDay, round, applianceId, isToss, slotIndex });
+  // A same-day Buy now genuinely changes THIS day's own later rounds (it permanently removes that
+  // slot from every round after `round` - see ShopDayRoundState's doc comment on the server for the
+  // real mechanic this models), and a same-day Toss can too (re-evaluates staple eligibility for
+  // later rounds' candidate pool). So, unlike before this fix, a real re-fetch is required, not just
+  // a local re-render. Still do an optimistic local re-render first (from whatever's already loaded)
+  // so the clicked cell's Bought/Tossed badge appears instantly, not just after the round-trip.
   if (lastShopResponse) {
     renderShopRounds(lastShopResponse);
     renderShopOwnedAppliances(lastShopResponse);
   }
+  loadAndRenderShopDay();
 }
 
-// Returns today's own already-recorded action for this appliance, if any - used to render an
-// immediate "Bought"/"Tossed" confirmation on the current day's own view, since the server's
-// response for THIS day never reflects actions recorded for THIS SAME day (see recordShopAction).
-function todaysShopAction(applianceId) {
-  return shopActionsByDay.find((a) => a.day === lastShownDay && a.applianceId === applianceId);
+// Returns today's own already-recorded BUY for this exact (round, slotIndex), if any - scoped to a
+// specific cell, not just an appliance ID, since once Buy exists on every round the SAME appliance
+// name can legitimately appear in multiple different (round, slot) cells the same day (e.g. Sink in
+// round 2's slot 0 AND independently again in round 5's slot 3) - an appliance-only lookup would
+// incorrectly badge every matching-name cell as bought.
+function todaysShopBuyAction(round, slotIndex) {
+  return shopActionsByDay.find((a) => a.day === lastShownDay && !a.isToss && a.round === round && a.slotIndex === slotIndex);
+}
+
+// Returns today's own already-recorded TOSS for this appliance, if any - Toss targets an OWNED
+// appliance by ID (not a shop slot), so appliance-ID lookup is correct here, unlike Buy above.
+function todaysShopTossAction(applianceId) {
+  return shopActionsByDay.find((a) => a.day === lastShownDay && a.isToss && a.applianceId === applianceId);
 }
 
 async function loadAndRenderShopDay() {
@@ -340,15 +371,22 @@ function renderShopRounds(body) {
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  const slotCount = Math.max(...body.rounds.map((r) => r.slots.length));
-  for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
+  // Slot identity is ShopSlotDto.slotIndex, NOT list position - once a slot is bought it disappears
+  // from every later round's list ENTIRELY (no placeholder entry - see ShopSlotDto's doc comment on
+  // the server), so a round's Nth list entry does not reliably mean "slot N" once any round has fewer
+  // entries than an earlier one. Row count/order comes from the FIRST round (the initial offer),
+  // which always has the full, never-yet-shrunk set - every later round's row just looks up its own
+  // slot by index, or renders as sold-out if that index is no longer present.
+  const slotIndexes = body.rounds[0].slots.map((s) => s.slotIndex);
+  for (const slotIndex of slotIndexes) {
     const row = document.createElement("tr");
     const rowHeader = document.createElement("th");
     rowHeader.scope = "row";
     rowHeader.textContent = `Slot ${slotIndex + 1}`;
     row.appendChild(rowHeader);
     for (const round of body.rounds) {
-      row.appendChild(renderShopSlotCell(round.slots[slotIndex], round.rerollIndex));
+      const slot = round.slots.find((s) => s.slotIndex === slotIndex);
+      row.appendChild(renderShopSlotCell(slot, round.rerollIndex, slotIndex));
     }
     tbody.appendChild(row);
   }
@@ -426,10 +464,21 @@ function renderShopRoundHeaderCell(round) {
   return th;
 }
 
-function renderShopSlotCell(slot, rerollIndex) {
+function renderShopSlotCell(slot, rerollIndex, slotIndex) {
   const td = document.createElement("td");
 
-  if (!slot || !slot.applianceName) {
+  if (!slot) {
+    // Distinct from the "nothing offered" empty case below - this slot was BOUGHT in an earlier
+    // round THIS day and, per the real game's mechanic (buying permanently removes that slot, no
+    // backfill - see ShopDayRoundState's doc comment on the server), it simply no longer exists from
+    // this round onward. Not the same concept as "RNG produced nothing for this slot" - don't reuse
+    // shop-table-cell-empty's styling/text for it.
+    td.className = "shop-table-cell-closed";
+    td.textContent = "— sold —";
+    return td;
+  }
+
+  if (!slot.applianceName) {
     td.className = "shop-table-cell-empty";
     td.textContent = "-";
     return td;
@@ -450,23 +499,23 @@ function renderShopSlotCell(slot, rerollIndex) {
   name.textContent = slot.applianceName;
   cell.appendChild(name);
 
-  // "Buy" only on the initial offer - matches the real game (a slot about to be rerolled away isn't
-  // purchasable), and keeps this simple rather than modeling "buy mid-reroll-sequence" edge cases.
-  if (rerollIndex === 0) {
-    const action = todaysShopAction(slot.applianceId);
-    if (action && !action.isToss) {
-      const badge = document.createElement("span");
-      badge.className = "shop-action-badge";
-      badge.textContent = "✓ Bought";
-      cell.appendChild(badge);
-    } else {
-      const buyButton = document.createElement("button");
-      buyButton.type = "button";
-      buyButton.className = "link-button";
-      buyButton.textContent = "Buy";
-      buyButton.addEventListener("click", () => recordShopAction(slot.applianceId, false));
-      cell.appendChild(buyButton);
-    }
+  // Buy is now available on EVERY round, not just the initial offer - the real game lets you buy
+  // from whatever letters are CURRENTLY on display, right up until a later reroll destroys them (see
+  // ShopDayRoundState's doc comment on the server for the full mechanic this corrects - an earlier
+  // version of this code incorrectly restricted Buy to round 0 only).
+  const action = todaysShopBuyAction(rerollIndex, slotIndex);
+  if (action) {
+    const badge = document.createElement("span");
+    badge.className = "shop-action-badge";
+    badge.textContent = "✓ Bought";
+    cell.appendChild(badge);
+  } else {
+    const buyButton = document.createElement("button");
+    buyButton.type = "button";
+    buyButton.className = "link-button";
+    buyButton.textContent = "Buy";
+    buyButton.addEventListener("click", () => recordShopAction(slot.applianceId, false, rerollIndex, slotIndex));
+    cell.appendChild(buyButton);
   }
 
   td.appendChild(cell);
@@ -507,11 +556,11 @@ function renderShopOwnedAppliances(body) {
     name.textContent = appliance.applianceName;
     pill.appendChild(name);
 
-    // See todaysShopAction's doc comment - a toss recorded for TODAY never disappears from this
+    // See todaysShopTossAction's doc comment - a toss recorded for TODAY never disappears from this
     // list until the NEXT day's fetch (the server's placedAppliances is a pre-today snapshot by
     // design), so without this check clicking Toss looked like nothing happened.
-    const action = todaysShopAction(appliance.applianceId);
-    if (action && action.isToss) {
+    const action = todaysShopTossAction(appliance.applianceId);
+    if (action) {
       pill.classList.add("shop-slot-tossed");
       const badge = document.createElement("span");
       badge.className = "shop-action-badge";
@@ -522,7 +571,15 @@ function renderShopOwnedAppliances(body) {
       tossButton.type = "button";
       tossButton.className = "link-button";
       tossButton.textContent = "Toss";
-      tossButton.addEventListener("click", () => recordShopAction(appliance.applianceId, true));
+      // This panel isn't rendered per-round, so there's no natural "which round was I looking at"
+      // anchor for a Toss click - record it against the most-recently-loaded round. An approximation
+      // (a toss conceptually happens "right now", and "now" isn't well-defined in a UI previewing
+      // many future rounds at once simultaneously) but a reasonable one: staple re-eligibility from a
+      // toss can only ever matter for a FUTURE day's round 0 anyway (every round after THIS day's own
+      // round 0 is a reroll, and a reroll can never produce a staple at all regardless of ownership -
+      // see ShopDaySimulator's reroll-tag doc comment on the server), so which round within today a
+      // toss is anchored to has no observable effect on today's own output.
+      tossButton.addEventListener("click", () => recordShopAction(appliance.applianceId, true, (lastShopResponse?.rounds.length ?? 1) - 1));
       pill.appendChild(tossButton);
     }
 

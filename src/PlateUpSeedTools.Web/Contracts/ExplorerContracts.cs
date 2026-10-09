@@ -67,8 +67,20 @@ public sealed record SaveExplorerPreloadResponse(string Hash);
 // DishName/SubOptionChoice/Heat/Tier/FranchiseCardNames/CardPack/CardPath) so switching views on the
 // same page doesn't require re-deriving owned-unlock state; see ExplorerEndpoints.SimulateShopDay.
 
-/// <summary>One buy or toss action taken on a given (already-passed) day, applied in day order before simulating a later day's shop.</summary>
-public sealed record ShopActionDto(int Day, int ApplianceId, bool IsToss);
+/// <summary>
+/// One buy or toss action. For a PRIOR day's action (Day &lt; the request's Day), Round/SlotIndex are
+/// ignored - by the time a later day is requested, that whole earlier day's rounds are moot, only the
+/// final kitchen-state effect matters, same as before this field existed. For a SAME-day action
+/// (Day == request.Day), Round (which round this happened during - 0 = initial offer) is REQUIRED,
+/// so the server can replay today's rounds in order, applying each action between the rounds it
+/// actually falls between - see ExplorerEndpoints.SimulateShopDay. SlotIndex is additionally REQUIRED
+/// for a same-day Buy (IsToss == false): buying a shop letter permanently removes that SPECIFIC SLOT
+/// from the rest of the day, with no backfill (source-confirmed - see
+/// PlateUpSeedTools.Engine.Shop.ShopDayRoundState's doc comment for the full mechanic), so the server
+/// needs to know which of that round's ShopSlotDto.SlotIndex values was bought. Toss never carries a
+/// SlotIndex - it targets an OWNED appliance by ID, not a shop slot, and never removes one.
+/// </summary>
+public sealed record ShopActionDto(int Day, int ApplianceId, bool IsToss, int? Round = null, int? SlotIndex = null);
 
 /// <summary>
 /// One reroll round's held/live-setting/someone-inside scenario. CORRECTS an earlier, incomplete
@@ -115,7 +127,12 @@ public sealed record ExplorerShopDayRequest(
     // that never thinks about this sees unchanged behavior for every setup not deliberately opting in.
     bool HasJasmine = false);
 
-public sealed record ShopSlotDto(int? ApplianceId, string? ApplianceName);
+/// <summary>SlotIndex is the slot's position in the day's ORIGINAL (round-0) template - stable across
+/// rounds even once a slot is bought and disappears from later rounds entirely (it simply won't
+/// appear in a later ShopRoundDto.Slots list at all - there is no "empty placeholder" entry for it;
+/// the client must track slot identity by SlotIndex, not by list position, once a day has any rounds
+/// beyond the initial offer).</summary>
+public sealed record ShopSlotDto(int SlotIndex, int? ApplianceId, string? ApplianceName);
 
 /// <summary>Location is THIS round's own plain-language spawn-area label (see ShopSpawnLocation) -
 /// per-round, not day-level, since a held reroll can genuinely change it mid-day.</summary>

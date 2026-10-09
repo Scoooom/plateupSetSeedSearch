@@ -317,13 +317,41 @@ public static partial class ExplorerEndpoints
 
         var profile = repo.ResolveLayoutProfile(request.Setting, seed);
         var kitchen = new KitchenApplianceState(profile.RequiredApplianceIds);
-        var orderedShopActions = request.ShopActions.OrderBy(a => a.Day).ToList();
-        if (orderedShopActions.Count > 0 && orderedShopActions[^1].Day >= request.Day)
+
+        // Same-day actions (Day == request.Day) are now allowed, unlike before - see ShopActionDto's
+        // doc comment. A same-day action must say which round it happened during so it can be applied
+        // at the right point in the round-by-round loop below, not just "sometime today."
+        var orderedShopActions = request.ShopActions.OrderBy(a => a.Day).ThenBy(a => a.Round ?? -1).ToList();
+        if (orderedShopActions.Count > 0 && orderedShopActions[^1].Day > request.Day)
         {
-            return Results.BadRequest(new { error = "shopActions must only cover days strictly before the requested day." });
+            return Results.BadRequest(new { error = "shopActions must not cover a day after the requested day." });
         }
 
         foreach (var action in orderedShopActions)
+        {
+            if (action.Day == request.Day && action.Round is null)
+            {
+                return Results.BadRequest(new { error = "today's shopActions must specify which round they happened during." });
+            }
+
+            if (action.Day == request.Day && !action.IsToss && action.SlotIndex is null)
+            {
+                return Results.BadRequest(new { error = "today's buy actions must specify which slot index was bought." });
+            }
+
+            // Defends against a stale client (recorded an action at a round beyond what this exact
+            // request's `rerolls` list will simulate - e.g. the client's own reroll-count state was
+            // collapsed back down after a day re-view) - without this check the round-by-round loop
+            // below simply never reaches that round and the action silently never applies, with no
+            // error at all. Same "fail loudly instead of silently diverging" principle as the
+            // slot/appliance staleness check further down.
+            if (action.Day == request.Day && action.Round > rerolls.Count)
+            {
+                return Results.BadRequest(new { error = $"shopActions includes round {action.Round}, but only {rerolls.Count} reroll(s) were requested for today - reload this day's shop and retry." });
+            }
+        }
+
+        foreach (var action in orderedShopActions.Where(a => a.Day < request.Day))
         {
             try
             {
@@ -342,8 +370,67 @@ public static partial class ExplorerEndpoints
             }
         }
 
+        var todayActionsByRound = orderedShopActions
+            .Where(a => a.Day == request.Day)
+            .GroupBy(a => a.Round!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // Round-by-round, not one SimulateDayWithRerolls call: a same-day buy must (a) mutate kitchen
+        // state before the NEXT round is simulated (so TagStapleWhenMissing etc. see it) and (b)
+        // permanently remove that slot from every later round (ShopDayRoundState.RemoveSlot) - neither
+        // is possible with the all-at-once API. See ShopDayRoundState's doc comment for the full
+        // source-confirmed mechanic this models (buying removes the slot with no backfill).
         var shopSim = new ShopDaySimulator(repo, seed, kitchen, bonusStaples, currentSeason: 0, menuDishIds: ownedUnlockIds, grantedThemes: grantedThemes);
-        var dayRounds = shopSim.SimulateDayWithRerolls(request.Day, rerolls.Count);
+        var roundState = shopSim.BeginDayRounds(request.Day);
+        var dayRounds = new List<ShopDayResult>(rerolls.Count + 1);
+        for (var round = 0; round <= rerolls.Count; round++)
+        {
+            var result = roundState.SimulateNextRound();
+            dayRounds.Add(result);
+
+            if (!todayActionsByRound.TryGetValue(round, out var roundActions))
+            {
+                continue;
+            }
+
+            foreach (var action in roundActions)
+            {
+                if (!action.IsToss)
+                {
+                    // Defends against a stale cached table (the browser acting on a round it no longer
+                    // matches, e.g. after the setup changed underneath it) - a buy against a slot that
+                    // no longer offers that exact appliance is a real, now-reachable failure mode this
+                    // change introduces (previously Buy only ever targeted round 0, which could never
+                    // go stale relative to itself).
+                    var matchingSlot = result.Slots.FirstOrDefault(s => s.SlotIndex == action.SlotIndex);
+                    if (matchingSlot is null || matchingSlot.ApplianceId != action.ApplianceId)
+                    {
+                        return Results.BadRequest(new { error = $"Round {round} slot {action.SlotIndex} no longer matches appliance {action.ApplianceId} - reload this day's shop and retry." });
+                    }
+                }
+
+                try
+                {
+                    if (action.IsToss)
+                    {
+                        kitchen.TossAppliance(action.ApplianceId);
+                    }
+                    else
+                    {
+                        kitchen.PlaceAppliance(action.ApplianceId);
+                    }
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+
+                if (!action.IsToss)
+                {
+                    roundState.RemoveSlot(action.SlotIndex!.Value);
+                }
+            }
+        }
 
         // Per-round location: round 0 uses InitialIsInside/InitialSomeoneInside. Each later round only
         // gets a FRESH placement roll if it was held at reroll time (ShopRerollInputDto.Held) - unheld
@@ -368,7 +455,7 @@ public static partial class ExplorerEndpoints
         var rounds = dayRounds
             .Select((round, index) => new ShopRoundDto(
                 index,
-                round.Slots.Select(s => new ShopSlotDto(s.ApplianceId, s.ApplianceId is int id && repo.TryGetShopAppliance(id, out var appliance) ? appliance.Name : null)).ToList(),
+                round.Slots.Select(s => new ShopSlotDto(s.SlotIndex, s.ApplianceId, s.ApplianceId is int id && repo.TryGetShopAppliance(id, out var appliance) ? appliance.Name : null)).ToList(),
                 locations[index]))
             .ToList();
 

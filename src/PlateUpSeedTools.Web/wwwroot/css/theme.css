@@ -1147,6 +1147,13 @@ button[type="submit"]:hover {
   color: var(--text-muted);
 }
 
+/* Distinct from .shop-table-cell-empty - this slot was bought in an earlier round and is gone for
+   the rest of the day, not just "nothing offered" (see renderShopSlotCell's doc comment). */
+.shop-table-cell-closed {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .shop-table-cell {
   display: flex;
   align-items: center;
