@@ -12,12 +12,22 @@ public sealed class AssetYamlReader
 {
     private readonly YamlMappingNode _root;
 
+    // The root MonoBehaviour's own local fileID within this one asset file (Unity's `&11400000`
+    // anchor on the `--- !u!114 &11400000` document-start line - confirmed universal across every
+    // single-MonoBehaviour-root ScriptableObject .asset in this game's export, always 11400000, but
+    // read from the actual document rather than hardcoded in case that ever isn't true). A
+    // guid-less `{fileID: <this value>}` reference is Unity's "local/same-file reference" form -
+    // i.e. this field points at the asset's OWN object, not a different asset - see Reference's doc
+    // comment for why this matters and the real bug this fixes.
+    private readonly string _ownFileId;
+
     public string Guid { get; }
 
-    private AssetYamlReader(YamlMappingNode root, string guid)
+    private AssetYamlReader(YamlMappingNode root, string guid, string ownFileId)
     {
         _root = root;
         Guid = guid;
+        _ownFileId = ownFileId;
     }
 
     public static AssetYamlReader Load(string assetPath, string guid)
@@ -26,8 +36,10 @@ public sealed class AssetYamlReader
         using var reader = new StreamReader(assetPath);
         stream.Load(reader);
         var doc = stream.Documents.Single();
-        var monoBehaviour = (YamlMappingNode)((YamlMappingNode)doc.RootNode)["MonoBehaviour"];
-        return new AssetYamlReader(monoBehaviour, guid);
+        var rootNode = (YamlMappingNode)doc.RootNode;
+        var monoBehaviour = (YamlMappingNode)rootNode["MonoBehaviour"];
+        var ownFileId = rootNode.Anchor.Value ?? "";
+        return new AssetYamlReader(monoBehaviour, guid, ownFileId);
     }
 
     public string GetName() => Scalar("m_Name");
@@ -50,7 +62,22 @@ public sealed class AssetYamlReader
 
     public bool Bool(string key) => Scalar(key) != "0";
 
-    /// <summary>Reads a Unity object reference field ({fileID, guid, type}) and returns its guid, or null if unset (fileID: 0).</summary>
+    /// <summary>
+    /// Reads a Unity object reference field ({fileID, guid, type}) and returns its guid, or null if
+    /// unset (fileID: 0). A reference with NO `guid:` key is NOT automatically "unset" - Unity omits
+    /// `guid`/`type` entirely for a "local" reference (one pointing at another object inside the
+    /// SAME .asset file, by local fileID) - confirmed real: "Serving Board Stack.asset"'s
+    /// `RequiresForShop` self-references its own root object this way (`{fileID: 11400000}`, no
+    /// guid), which a prior version of this method silently treated as unset, producing an empty
+    /// `requiresForShopIds` for an appliance that actually DOES require one of itself already owned
+    /// - found from a real ground-truth divergence (day-1 5th shop slot: real game picks "Wellies",
+    /// port predicted "Serving Boards" - both looked field-identical in extracted data until this
+    /// was found). The only local fileID this code path ever needs to resolve is the asset's OWN
+    /// root object (every Appliance .asset here is single-MonoBehaviour-root, so a self-reference
+    /// is the only local reference shape that occurs) - resolved to this asset's own guid, which
+    /// GuidResolver then naturally maps back to this same appliance's own ID downstream, same as any
+    /// other reference.
+    /// </summary>
     public string? Reference(string key)
     {
         var node = (YamlMappingNode)_root[key];
@@ -59,19 +86,41 @@ public sealed class AssetYamlReader
             return ((YamlScalarNode)guidNode).Value;
         }
 
+        if (node.Children.TryGetValue(new YamlScalarNode("fileID"), out var fileIdNode)
+            && ((YamlScalarNode)fileIdNode).Value == _ownFileId && _ownFileId != "0")
+        {
+            return Guid;
+        }
+
         return null;
     }
 
-    /// <summary>Reads a list of Unity object references, e.g. RequiredAppliances.</summary>
+    /// <summary>Reads a list of Unity object references, e.g. RequiredAppliances. See Reference's doc comment for the local/self-reference case this also handles.</summary>
     public List<string> ReferenceList(string key)
     {
         var seq = (YamlSequenceNode)_root[key];
         return seq.Children
             .Select(c => (YamlMappingNode)c)
-            .Select(m => m.Children.TryGetValue(new YamlScalarNode("guid"), out var g) ? ((YamlScalarNode)g).Value : null)
+            .Select(ResolveReferenceGuid)
             .Where(g => !string.IsNullOrEmpty(g))
             .Select(g => g!)
             .ToList();
+    }
+
+    private string? ResolveReferenceGuid(YamlMappingNode entry)
+    {
+        if (entry.Children.TryGetValue(new YamlScalarNode("guid"), out var guidNode))
+        {
+            return ((YamlScalarNode)guidNode).Value;
+        }
+
+        if (entry.Children.TryGetValue(new YamlScalarNode("fileID"), out var fileIdNode)
+            && ((YamlScalarNode)fileIdNode).Value == _ownFileId && _ownFileId != "0")
+        {
+            return Guid;
+        }
+
+        return null;
     }
 
     /// <summary>

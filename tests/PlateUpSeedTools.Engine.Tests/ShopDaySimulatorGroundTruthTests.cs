@@ -22,19 +22,26 @@ namespace PlateUpSeedTools.Engine.Tests;
 /// by seeding KitchenApplianceState from GameDataRepository.ResolveLayout(...).Profile.
 /// RequiredApplianceIds instead of constructing it empty - see OtFriendlyChecker for the same pattern.
 ///
-/// Days 2 and 4 now match the real capture exactly, all 5 slots. Day 1's four Basic (staple) slots
-/// also match exactly - this is the part that actually matters for Research Desk eligibility, since
-/// Research Desk always competes for a Basic slot, never the 5th slot. Day 1's 5th slot (the single
-/// non-staple "DefaultShoppingTag" random pick) is a KNOWN, NOT YET RESOLVED discrepancy - real
-/// capture shows "Wellies" (1796077718), the simulator currently produces "Serving Boards"
-/// (235423916). Both appliances are byte-identical in every filterable field (ShoppingTags,
-/// RestrictedToSeason, ThemeRequired, all Requires* lists, StapleWhenMissing, IsPurchasableAsUpgrade)
-/// - differ only by ID - so this isn't an eligibility/filter bug, more likely a narrow remaining
-/// candidate-list-ordering nuance (a guid-collision in GuidResolver's plain-overwrite guid-&gt;path
-/// map is one live hypothesis, unconfirmed). Deliberately left as a documented gap rather than
-/// asserted-and-silently-wrong or investigated further right now, since it doesn't affect Research
-/// Desk's own eligibility (already proven exact) - the 5th slot's own ApplianceId is intentionally
-/// NOT asserted below.
+/// Days 2 and 4 match the real capture exactly, all 5 slots. Day 1's 5th slot (the single non-staple
+/// "DefaultShoppingTag" random pick) was a real, now-RESOLVED discrepancy (2026-10-09): real capture
+/// showed "Wellies" (1796077718), the simulator predicted "Serving Boards" (235423916). Both looked
+/// byte-identical across every extracted field - the actual root cause was in the DATA EXTRACTOR, not
+/// this class: `AssetYamlReader.Reference`/`ReferenceList` (tools/PlateUpSeedTools.DataExtractor)
+/// treated any Unity object reference lacking a `guid:` key as unset, but Unity omits `guid`/`type`
+/// entirely for a LOCAL reference (one pointing at another object inside the SAME .asset file, by
+/// local fileID) - "Serving Board Stack.asset"'s own `RequiresForShop` field self-references its own
+/// root object this way (`{fileID: 11400000}`, no guid), which silently extracted as `[]` instead of
+/// `[235423916]`. The real game's `FilterByRequiredAppliances.HasRequirements` (ShopOptionEvaluator.cs)
+/// was already correctly ported and correctly excludes Serving Boards once this is fixed - nothing in
+/// the engine itself needed changing, only the extractor (now resolves a guid-less local reference to
+/// the asset's own guid) and the regenerated `data/settings/shop/appliances.json` /
+/// `data/settings/cards/unlocks.json` (13 appliances' `requiresForShopIds` and a 4-card mutually-
+/// exclusive tier group's `blockedByIds` were affected by the same bug - see
+/// `AssetYamlReader.Reference`'s doc comment for the full list/writeup). Confirmed via a real
+/// ground-truth capture of the exact post-shuffle candidate order for this slot (GroundTruthLogger
+/// v1.10.0's `SHOP_SHUFFLED`) that the port's own shuffle/RNG stream was ALREADY correct before this
+/// fix - walking the real post-shuffle order with the port's (then-wrong) filter state reproduced
+/// "Serving Boards" exactly, proving the bug was purely in filter data, not RNG.
 /// </summary>
 public class ShopDaySimulatorGroundTruthTests
 {
@@ -46,6 +53,7 @@ public class ShopDaySimulatorGroundTruthTests
     private const int DiningTableId = 209074140;
     private const int PrepStationId = 1656358740;
     private const int FlowerPotId = 221442949;
+    private const int WelliesId = 1796077718;
 
     // Pies - this capture predates the SellOnlyIfPlatesNeeded gate (Conditional Staples work) and
     // never recorded the real run's actual starting dish, so the exact dish is unknown. Pies stands
@@ -65,11 +73,9 @@ public class ShopDaySimulatorGroundTruthTests
         var sim = new ShopDaySimulator(repo, seed, kitchen, menuDishIds: new HashSet<int> { PiesId });
 
         var day1 = sim.SimulateDay(1);
-        Assert.Equal(ResearchDeskId, day1.Slots[0].ApplianceId);
-        Assert.Equal(HobId, day1.Slots[1].ApplianceId);
-        Assert.Equal(SinkId, day1.Slots[2].ApplianceId);
-        Assert.Equal(CounterId, day1.Slots[3].ApplianceId);
-        // Slots[4] (the day's single non-staple slot) deliberately not asserted - see class doc.
+        Assert.Equal(
+            new int?[] { ResearchDeskId, HobId, SinkId, CounterId, WelliesId },
+            day1.Slots.Select(s => s.ApplianceId).ToArray());
 
         var day2 = sim.SimulateDay(2);
         Assert.Equal(

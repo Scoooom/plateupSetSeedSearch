@@ -2630,7 +2630,9 @@
     "themeRequired": 0,
     "shoppingTags": 8,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -965827229
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -2710,7 +2712,9 @@
     "themeRequired": 0,
     "shoppingTags": 8,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -117356585
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -3210,7 +3214,9 @@
     "themeRequired": 0,
     "shoppingTags": 32,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -957949759
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -3230,7 +3236,9 @@
     "themeRequired": 0,
     "shoppingTags": 256,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      235423916
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -3250,7 +3258,9 @@
     "themeRequired": 0,
     "shoppingTags": 0,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      314862254
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -5976,7 +5986,9 @@
     "themeRequired": 0,
     "shoppingTags": 8,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -471813067
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -6336,7 +6348,9 @@
     "themeRequired": 0,
     "shoppingTags": 8,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      143484231
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -6616,7 +6630,9 @@
     "themeRequired": 0,
     "shoppingTags": 32,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -217313684
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -7319,7 +7335,9 @@
     "themeRequired": 0,
     "shoppingTags": 32,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -1541798751
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -7339,7 +7357,9 @@
     "themeRequired": 0,
     "shoppingTags": 32,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -2077197906
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -7359,7 +7379,9 @@
     "themeRequired": 0,
     "shoppingTags": 32,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -1339944542
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -7379,7 +7401,9 @@
     "themeRequired": 0,
     "shoppingTags": 32,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -215543585
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
@@ -7399,7 +7423,9 @@
     "themeRequired": 0,
     "shoppingTags": 32,
     "shopRequirementFilter": 0,
-    "requiresForShopIds": [],
+    "requiresForShopIds": [
+      -182748008
+    ],
     "requiresProcessForShopIds": [],
     "requiresIngredientForShopIds": [],
     "requiresPhaseForShopIds": [],
