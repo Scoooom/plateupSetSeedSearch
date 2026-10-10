@@ -220,7 +220,7 @@ public static partial class ExplorerEndpoints
         // explanatory message this produces.
         if (request.Day == 0 && !request.HasJasmine)
         {
-            return Results.Ok(new ExplorerShopDayResponse(0, [], []));
+            return Results.Ok(new ExplorerShopDayResponse(0, [], [], []));
         }
 
         var rerolls = request.Rerolls ?? [];
@@ -329,6 +329,14 @@ public static partial class ExplorerEndpoints
 
         foreach (var action in orderedShopActions)
         {
+            // A manual ownership toggle (the "appliances you might already own" panel) is never tied
+            // to a round or slot - skip all the round/slot validation below regardless of which day
+            // it's recorded against.
+            if (action.IsManual)
+            {
+                continue;
+            }
+
             if (action.Day == request.Day && action.Round is null)
             {
                 return Results.BadRequest(new { error = "today's shopActions must specify which round they happened during." });
@@ -351,7 +359,10 @@ public static partial class ExplorerEndpoints
             }
         }
 
-        foreach (var action in orderedShopActions.Where(a => a.Day < request.Day))
+        // A same-day manual toggle applies here too, alongside every prior day's actions - it's not
+        // round-scoped like a buy/toss, so it takes effect before today's own rounds are simulated
+        // (see ShopActionDto.IsManual's doc comment).
+        foreach (var action in orderedShopActions.Where(a => a.Day < request.Day || (a.Day == request.Day && a.IsManual)))
         {
             try
             {
@@ -371,7 +382,7 @@ public static partial class ExplorerEndpoints
         }
 
         var todayActionsByRound = orderedShopActions
-            .Where(a => a.Day == request.Day)
+            .Where(a => a.Day == request.Day && !a.IsManual)
             .GroupBy(a => a.Round!.Value)
             .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -478,7 +489,18 @@ public static partial class ExplorerEndpoints
             .OrderBy(a => a.ApplianceName)
             .ToList();
 
-        return Results.Ok(new ExplorerShopDayResponse(request.Day, rounds, placedAppliances));
+        // Appliances whose shop eligibility depends on current ownership (see
+        // ConditionalStapleApplianceDto's doc comment) - drives the "appliances you might already own"
+        // panel, which lets a caller toggle ownership directly without waiting for the shop RNG to
+        // offer it. Same kitchen snapshot/timing as placedAppliances above (post-loop, reflects
+        // everything recorded for today too).
+        var conditionalStapleAppliances = repo.AllShopAppliances
+            .Where(a => a.StapleWhenMissing)
+            .Select(a => new ConditionalStapleApplianceDto(a.Id, a.Name, kitchen.IsPlaced(a.Id)))
+            .OrderBy(a => a.ApplianceName)
+            .ToList();
+
+        return Results.Ok(new ExplorerShopDayResponse(request.Day, rounds, placedAppliances, conditionalStapleAppliances));
     }
 
     /// <summary>

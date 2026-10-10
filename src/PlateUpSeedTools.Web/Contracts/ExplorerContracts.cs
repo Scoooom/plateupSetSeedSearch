@@ -79,8 +79,21 @@ public sealed record SaveExplorerPreloadResponse(string Hash);
 /// PlateUpSeedTools.Engine.Shop.ShopDayRoundState's doc comment for the full mechanic), so the server
 /// needs to know which of that round's ShopSlotDto.SlotIndex values was bought. Toss never carries a
 /// SlotIndex - it targets an OWNED appliance by ID, not a shop slot, and never removes one.
+/// IsManual marks a direct ownership toggle from the "appliances you might already own" panel (see
+/// ConditionalStapleApplianceDto) rather than a real shop interaction - it is never tied to a round or
+/// slot, regardless of which day it's recorded against, and applies unconditionally before that day's
+/// own rounds are simulated (same timing as a PRIOR day's action, even when Day == request.Day).
 /// </summary>
-public sealed record ShopActionDto(int Day, int ApplianceId, bool IsToss, int? Round = null, int? SlotIndex = null);
+public sealed record ShopActionDto(int Day, int ApplianceId, bool IsToss, int? Round = null, int? SlotIndex = null, bool IsManual = false);
+
+/// <summary>
+/// One appliance whose shop eligibility is gated on current ownership (ShopApplianceData.StapleWhenMissing
+/// - see ShopOptionEvaluator.TagStapleWhenMissing) - i.e. it only appears as a guaranteed staple offer
+/// when NOT already owned. Exposed so the "appliances you might already own" panel can let a caller
+/// mark one owned/not-owned directly, without needing the shop RNG to actually offer it first. IsOwned
+/// reflects KitchenApplianceState as of the end of the requested day (same timing as PlacedAppliances).
+/// </summary>
+public sealed record ConditionalStapleApplianceDto(int ApplianceId, string ApplianceName, bool IsOwned);
 
 /// <summary>
 /// One reroll round's held/live-setting/someone-inside scenario. CORRECTS an earlier, incomplete
@@ -141,4 +154,8 @@ public sealed record ShopRoundDto(int RerollIndex, IReadOnlyList<ShopSlotDto> Sl
 public sealed record PlacedApplianceDto(int ApplianceId, string ApplianceName);
 
 /// <summary>PlacedAppliances is the kitchen state heading INTO this day (before any of today's rounds) - what a "Toss" button can target.</summary>
-public sealed record ExplorerShopDayResponse(int Day, IReadOnlyList<ShopRoundDto> Rounds, IReadOnlyList<PlacedApplianceDto> PlacedAppliances);
+public sealed record ExplorerShopDayResponse(
+    int Day,
+    IReadOnlyList<ShopRoundDto> Rounds,
+    IReadOnlyList<PlacedApplianceDto> PlacedAppliances,
+    IReadOnlyList<ConditionalStapleApplianceDto> ConditionalStapleAppliances);

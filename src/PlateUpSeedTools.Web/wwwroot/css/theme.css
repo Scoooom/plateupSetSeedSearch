@@ -1199,6 +1199,10 @@ td.matches-find {
   opacity: 0.6;
 }
 
+.shop-slot-owned {
+  border: 1px solid var(--accent-strong);
+}
+
 .shop-location-controls {
   display: flex;
   flex-wrap: wrap;
@@ -1216,6 +1220,13 @@ td.matches-find {
 .shop-owned-list {
   display: flex;
   flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.shop-find-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 0.6rem;
 }
 

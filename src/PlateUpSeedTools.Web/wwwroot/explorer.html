@@ -150,12 +150,22 @@
         </section>
 
         <section class="shop-section">
+          <h3>Appliances you might already own</h3>
+          <p class="field-note">These only appear as a guaranteed offer when you don't already own them - toggle one here to simulate owning it, without waiting for the shop to actually offer it.</p>
+          <div id="shop-conditional-staples" class="shop-owned-list"></div>
+        </section>
+
+        <section class="shop-section">
           <h3>Find this appliance today</h3>
-          <label class="field">
-            <span>Appliance</span>
-            <input id="shop-find-input" type="text" list="shop-find-datalist" autocomplete="off" placeholder="e.g. Research Desk" />
-            <datalist id="shop-find-datalist"></datalist>
-          </label>
+          <form id="shop-find-form" class="shop-find-form">
+            <label class="field">
+              <span>Appliance</span>
+              <input id="shop-find-input" type="text" list="shop-find-datalist" autocomplete="off" placeholder="e.g. Research Desk" />
+              <datalist id="shop-find-datalist"></datalist>
+            </label>
+            <button type="submit" id="shop-find-button" class="link-button">Search</button>
+            <button type="button" id="shop-find-clear-button" class="link-button">Clear</button>
+          </form>
           <p id="shop-find-result" class="field-note"></p>
         </section>
       </div>

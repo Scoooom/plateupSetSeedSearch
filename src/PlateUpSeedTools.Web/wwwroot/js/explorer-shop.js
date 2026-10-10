@@ -16,8 +16,11 @@ const shopLocationResultEl = document.getElementById("shop-location-result");
 const shopRoundsEl = document.getElementById("shop-rounds");
 const shopAddRerollButton = document.getElementById("shop-add-reroll");
 const shopOwnedAppliancesEl = document.getElementById("shop-owned-appliances");
+const shopConditionalStaplesEl = document.getElementById("shop-conditional-staples");
+const shopFindForm = document.getElementById("shop-find-form");
 const shopFindInput = document.getElementById("shop-find-input");
 const shopFindDatalist = document.getElementById("shop-find-datalist");
+const shopFindClearButton = document.getElementById("shop-find-clear-button");
 const shopFindResultEl = document.getElementById("shop-find-result");
 
 let viewMode = "cards";
@@ -117,6 +120,7 @@ function notifyDayShown(pathNode, day) {
     shopDayHeadingEl.textContent = "Day";
     setShopRoundsMessage(lastShownPathNode === null ? "Nothing explored yet." : "Reached day 15 - this is as far as the Explorer goes.");
     shopOwnedAppliancesEl.innerHTML = "";
+    shopConditionalStaplesEl.innerHTML = "";
     shopLocationResultEl.textContent = "";
     shopFindResultEl.innerHTML = "";
     return;
@@ -165,11 +169,12 @@ function pathToShopActions() {
   // rounds are moot, only the final kitchen-state effect matters (see ShopActionDto's doc comment).
   const priorDay = shopActionsByDay
     .filter((a) => a.day < lastShownDay)
-    .map((a) => ({ day: a.day, applianceId: a.applianceId, isToss: a.isToss }));
+    .map((a) => ({ day: a.day, applianceId: a.applianceId, isToss: a.isToss, isManual: !!a.isManual }));
   // Today: round (and, for a buy, slotIndex) are required - see ShopActionDto's doc comment for why.
+  // A manual ownership toggle never carries round/slotIndex, even for today.
   const today = shopActionsByDay
     .filter((a) => a.day === lastShownDay)
-    .map((a) => ({ day: a.day, applianceId: a.applianceId, isToss: a.isToss, round: a.round, slotIndex: a.slotIndex }));
+    .map((a) => ({ day: a.day, applianceId: a.applianceId, isToss: a.isToss, round: a.round, slotIndex: a.slotIndex, isManual: !!a.isManual }));
   return [...priorDay, ...today];
 }
 
@@ -179,16 +184,54 @@ function recordShopAction(applianceId, isToss, round, slotIndex = null) {
   if (lastShownDay === null) {
     return;
   }
-  shopActionsByDay.push({ day: lastShownDay, round, applianceId, isToss, slotIndex });
-  // A same-day Buy now genuinely changes THIS day's own later rounds (it permanently removes that
-  // slot from every round after `round` - see ShopDayRoundState's doc comment on the server for the
-  // real mechanic this models), and a same-day Toss can too (re-evaluates staple eligibility for
-  // later rounds' candidate pool). So, unlike before this fix, a real re-fetch is required, not just
-  // a local re-render. Still do an optimistic local re-render first (from whatever's already loaded)
-  // so the clicked cell's Bought/Tossed badge appears instantly, not just after the round-trip.
+  shopActionsByDay.push({ day: lastShownDay, round, applianceId, isToss, slotIndex, isManual: false });
+  reRenderShopPanelsOptimisticallyThenRefetch();
+}
+
+// Click-to-toggle purchase state for a shop-grid slot cell (requests 1+5: Buy becomes a two-way
+// toggle, not a one-way action). If this exact (round, slotIndex) cell was already bought this
+// session, splice that action back out - un-doing it needs no server-side support, since the whole
+// day is always re-simulated from shopActionsByDay from scratch (see this file's header comment);
+// removing the entry just means ShopDayRoundState.RemoveSlot never gets called for it, so the slot
+// naturally reappears in later rounds exactly as if it had never been bought.
+function toggleShopBuyAction(applianceId, round, slotIndex) {
+  if (lastShownDay === null) {
+    return;
+  }
+  const existing = todaysShopBuyAction(round, slotIndex);
+  if (existing) {
+    shopActionsByDay.splice(shopActionsByDay.indexOf(existing), 1);
+  } else {
+    shopActionsByDay.push({ day: lastShownDay, round, applianceId, isToss: false, slotIndex, isManual: false });
+  }
+  reRenderShopPanelsOptimisticallyThenRefetch();
+}
+
+// Always-append toggle for the "appliances you might already own" panel (request 2): marks/un-marks
+// ownership directly via a manual action (IsManual: true on the wire - see ShopActionDto's doc
+// comment), bypassing the shop-offer round/slot machinery entirely. Deliberately doesn't try to
+// splice/undo like toggleShopBuyAction above - repeated toggles just accumulate place/toss pairs that
+// replay correctly in recorded order, which is simpler and correct even when the appliance was
+// already owned via something other than this panel (a required layout item, or a real shop buy).
+function recordManualOwnershipAction(applianceId, markOwned) {
+  if (lastShownDay === null) {
+    return;
+  }
+  shopActionsByDay.push({ day: lastShownDay, round: null, applianceId, isToss: !markOwned, slotIndex: null, isManual: true });
+  reRenderShopPanelsOptimisticallyThenRefetch();
+}
+
+// A same-day Buy/Toss/manual-toggle now genuinely changes THIS day's own later rounds (buying
+// permanently removes that slot from every round after `round` - see ShopDayRoundState's doc comment
+// on the server for the real mechanic this models; a toss or manual toggle can too, by re-evaluating
+// staple eligibility for later rounds' candidate pool). So a real re-fetch is required, not just a
+// local re-render. Still do an optimistic local re-render first (from whatever's already loaded) so
+// the clicked control's new state appears instantly, not just after the round-trip.
+function reRenderShopPanelsOptimisticallyThenRefetch() {
   if (lastShopResponse) {
     renderShopRounds(lastShopResponse);
     renderShopOwnedAppliances(lastShopResponse);
+    renderConditionalStapleAppliances(lastShopResponse);
   }
   loadAndRenderShopDay();
 }
@@ -242,6 +285,7 @@ async function loadAndRenderShopDay() {
     if (!response.ok) {
       setShopRoundsMessage(body.error ?? "Failed to load that day's shop.");
       shopOwnedAppliancesEl.innerHTML = "";
+      shopConditionalStaplesEl.innerHTML = "";
       shopLocationResultEl.textContent = "";
       return;
     }
@@ -256,6 +300,7 @@ async function loadAndRenderShopDay() {
       renderShopRounds(body);
     }
     renderShopOwnedAppliances(body);
+    renderConditionalStapleAppliances(body);
     refreshShopFindDatalist();
     applyFindHighlighting();
   } catch {
@@ -503,20 +548,18 @@ function renderShopSlotCell(slot, rerollIndex, slotIndex) {
   // from whatever letters are CURRENTLY on display, right up until a later reroll destroys them (see
   // ShopDayRoundState's doc comment on the server for the full mechanic this corrects - an earlier
   // version of this code incorrectly restricted Buy to round 0 only).
+  //
+  // Click-to-toggle purchase state (requests 1+5): one button, flips between "Buy" and "✓ Bought" -
+  // clicking either state calls the same toggle, which un-does a purchase on a second click rather
+  // than only ever recording a one-way action.
   const action = todaysShopBuyAction(rerollIndex, slotIndex);
-  if (action) {
-    const badge = document.createElement("span");
-    badge.className = "shop-action-badge";
-    badge.textContent = "✓ Bought";
-    cell.appendChild(badge);
-  } else {
-    const buyButton = document.createElement("button");
-    buyButton.type = "button";
-    buyButton.className = "link-button";
-    buyButton.textContent = "Buy";
-    buyButton.addEventListener("click", () => recordShopAction(slot.applianceId, false, rerollIndex, slotIndex));
-    cell.appendChild(buyButton);
-  }
+  const buyButton = document.createElement("button");
+  buyButton.type = "button";
+  buyButton.className = action ? "link-button shop-action-badge" : "link-button";
+  buyButton.textContent = action ? "✓ Bought" : "Buy";
+  buyButton.title = action ? "Click to undo this purchase" : "Click to mark as purchased";
+  buyButton.addEventListener("click", () => toggleShopBuyAction(slot.applianceId, rerollIndex, slotIndex));
+  cell.appendChild(buyButton);
 
   td.appendChild(cell);
   return td;
@@ -587,6 +630,49 @@ function renderShopOwnedAppliances(body) {
   }
 }
 
+// Request 2: "appliances you might already own" - a standalone panel for appliances whose shop
+// eligibility is ownership-gated (ShopApplianceData.StapleWhenMissing, see
+// ConditionalStapleApplianceDto's doc comment on the server), with a toggle button per appliance that
+// sets ownership directly via recordManualOwnershipAction - deliberately decoupled from the shop grid's
+// Buy flow above, so ownership can be simulated without needing the shop RNG to actually offer it.
+function renderConditionalStapleAppliances(body) {
+  shopConditionalStaplesEl.innerHTML = "";
+  if (body.conditionalStapleAppliances.length === 0) {
+    const p = document.createElement("p");
+    p.textContent = "No ownership-gated appliances found.";
+    shopConditionalStaplesEl.appendChild(p);
+    return;
+  }
+
+  for (const appliance of body.conditionalStapleAppliances) {
+    const pill = document.createElement("div");
+    pill.className = "shop-slot";
+    if (appliance.isOwned) {
+      pill.classList.add("shop-slot-owned");
+    }
+
+    const img = document.createElement("img");
+    img.src = `/images/appliances/${slugifyApplianceName(appliance.applianceName)}.png`;
+    img.alt = "";
+    img.onerror = () => img.remove();
+    pill.appendChild(img);
+
+    const name = document.createElement("span");
+    name.textContent = appliance.applianceName;
+    pill.appendChild(name);
+
+    const toggleButton = document.createElement("button");
+    toggleButton.type = "button";
+    toggleButton.className = appliance.isOwned ? "link-button shop-action-badge" : "link-button";
+    toggleButton.textContent = appliance.isOwned ? "✓ Owned" : "Mark as owned";
+    toggleButton.title = appliance.isOwned ? "Click to un-mark as owned" : "Click to mark as owned";
+    toggleButton.addEventListener("click", () => recordManualOwnershipAction(appliance.applianceId, !appliance.isOwned));
+    pill.appendChild(toggleButton);
+
+    shopConditionalStaplesEl.appendChild(pill);
+  }
+}
+
 function refreshShopFindDatalist() {
   shopFindDatalist.innerHTML = "";
   if (!lastShopResponse) {
@@ -610,7 +696,7 @@ function refreshShopFindDatalist() {
 }
 
 // Pure re-render against whatever's already loaded - never fetches. Fetching (when a search needs
-// more rounds than are currently loaded) is the input handler's job below.
+// more rounds than are currently loaded) is the Search form's submit handler's job below.
 function applyFindHighlighting() {
   for (const el of shopRoundsEl.querySelectorAll("td.matches-find")) {
     el.classList.remove("matches-find");
@@ -653,18 +739,27 @@ function applyFindHighlighting() {
   shopFindResultEl.appendChild(more);
 }
 
-shopFindInput.addEventListener("input", () => {
+// Request 4: explicit Search control, not auto-search-on-keystroke - typing alone no longer triggers
+// a (sometimes network-bound) search, so old results stay visible/stable until the user deliberately
+// re-searches or clears, and nothing resets mid-type.
+shopFindForm.addEventListener("submit", (event) => {
+  event.preventDefault();
   const query = shopFindInput.value.trim();
   // First real search this day-view: reuse the reroll machinery to ensure a useful default depth
   // (5 rounds: the initial offer + 4 rerolls) rather than only searching whatever happens to already
   // be on screen - lazy, same "only compute rounds the user actually asks to see" spirit as the
-  // Explorer's existing tree-node convention, just triggered by typing instead of a button click.
+  // Explorer's existing tree-node convention.
   if (query && shopRerollScenarios.length < 4 && lastShownDay !== null) {
     addShopRerollRounds(4 - shopRerollScenarios.length);
     loadAndRenderShopDay();
   } else {
     applyFindHighlighting();
   }
+});
+
+shopFindClearButton.addEventListener("click", () => {
+  shopFindInput.value = "";
+  applyFindHighlighting(); // clears matches-find highlighting + shopFindResultEl, same as an empty query
 });
 
 function setViewMode(mode) {
