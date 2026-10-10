@@ -3,12 +3,13 @@ using PlateUpSeedTools.DataExtractor;
 
 if (args.Length < 2)
 {
-    Console.WriteLine("Usage: DataExtractor <PlateUpSourceFiles path> <output data/settings path>");
+    Console.WriteLine("Usage: DataExtractor <PlateUpSourceFiles path> <output data/settings path> [appliance-models output path]");
     return 1;
 }
 
 var sourceRoot = args[0];
 var outputRoot = args[1];
+var modelsOutputDir = args.Length >= 3 ? args[2] : null;
 var assetsRoot = Path.Combine(sourceRoot, "AssetRipper", "ExportedProject", "Assets");
 
 Console.WriteLine("Indexing asset GUIDs...");
@@ -59,6 +60,9 @@ CardExtractor.WritePacksFile(resolver, assetsRoot, outputRoot);
 
 Console.WriteLine("Extracting shop/appliance purchase data...");
 ApplianceExtractor.ExtractShopAppliances(resolver, assetsRoot, outputRoot);
+
+Console.WriteLine("Extracting appliance icon-render manifest (for tools/IconRenderer)...");
+ApplianceIconManifestExtractor.ExtractIconManifest(resolver, assetsRoot, outputRoot, modelsOutputDir);
 
 Console.WriteLine($"Done. Wrote index with {indexEntries.Count} setting(s) to {indexPath}");
 Console.WriteLine($"Wrote {SettingExtractor.KnownAppliances.Count} known appliance(s) to {Path.Combine(outputRoot, "appliances.json")}");

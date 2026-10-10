@@ -3,6 +3,8 @@ obj/
 *.user
 .vs/
 .idea/
+__pycache__/
+*.pyc
 *.db
 *.db-shm
 *.db-wal
