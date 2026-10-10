@@ -532,7 +532,7 @@ function renderShopSlotCell(slot, rerollIndex, slotIndex) {
   td.dataset.applianceName = slot.applianceName;
 
   const cell = document.createElement("div");
-  cell.className = "shop-table-cell";
+  cell.className = "shop-table-cell shop-table-cell-clickable";
 
   const img = document.createElement("img");
   img.src = `/images/appliances/${slugifyApplianceName(slot.applianceName)}.png`;
@@ -549,17 +549,14 @@ function renderShopSlotCell(slot, rerollIndex, slotIndex) {
   // ShopDayRoundState's doc comment on the server for the full mechanic this corrects - an earlier
   // version of this code incorrectly restricted Buy to round 0 only).
   //
-  // Click-to-toggle purchase state (requests 1+5): one button, flips between "Buy" and "✓ Bought" -
-  // clicking either state calls the same toggle, which un-does a purchase on a second click rather
-  // than only ever recording a one-way action.
+  // Click-to-toggle purchase state (requests 1+5): clicking the whole cell flips bought state,
+  // un-doing a purchase on a second click rather than only ever recording a one-way action. No
+  // separate button element - the cell itself is the click target (per explicit user request, a
+  // dedicated Buy/Bought button read as visual clutter next to the appliance icon/name).
   const action = todaysShopBuyAction(rerollIndex, slotIndex);
-  const buyButton = document.createElement("button");
-  buyButton.type = "button";
-  buyButton.className = action ? "link-button shop-action-badge" : "link-button";
-  buyButton.textContent = action ? "✓ Bought" : "Buy";
-  buyButton.title = action ? "Click to undo this purchase" : "Click to mark as purchased";
-  buyButton.addEventListener("click", () => toggleShopBuyAction(slot.applianceId, rerollIndex, slotIndex));
-  cell.appendChild(buyButton);
+  cell.classList.toggle("shop-table-cell-bought", !!action);
+  cell.title = action ? "Click to undo this purchase" : "Click to mark as purchased";
+  cell.addEventListener("click", () => toggleShopBuyAction(slot.applianceId, rerollIndex, slotIndex));
 
   td.appendChild(cell);
   return td;

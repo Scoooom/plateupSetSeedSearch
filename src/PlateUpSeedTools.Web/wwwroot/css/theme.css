@@ -1167,6 +1167,24 @@ button[type="submit"]:hover {
   object-fit: contain;
 }
 
+/* The whole cell is the click target for toggling purchased state (no separate Buy button - see
+   renderShopSlotCell in explorer-shop.js). */
+.shop-table-cell-clickable {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 0.2rem 0.3rem;
+  margin: -0.2rem -0.3rem;
+}
+
+.shop-table-cell-clickable:hover {
+  background: var(--panel);
+}
+
+.shop-table-cell-bought {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
 td.matches-find {
   outline: 2px solid var(--accent-strong);
   outline-offset: -2px;
