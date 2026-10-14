@@ -7,6 +7,7 @@ const resultTitle = document.getElementById("result-title");
 const gridEl = document.getElementById("grid");
 const legendEl = document.getElementById("legend");
 const copyLinkButton = document.getElementById("copy-link");
+const speedrunLinkEl = document.getElementById("speedrun-link");
 const colorPanelRowsEl = document.getElementById("color-panel-rows");
 const colorPanelResetAllButton = document.getElementById("color-panel-reset-all");
 
@@ -638,6 +639,15 @@ function renderLayout(layout) {
 
   currentLayout = layout;
   updateLegendAndPanel(layout);
+
+  speedrunLinkEl.href = buildSpeedRunToolsUrl({
+    seed: layout.seed,
+    settingSlug: layout.settingSlug,
+    cardPackSlug: null,
+    dishName: null,
+    heat: null,
+    day: null,
+  });
 
   const frontDoor = layout.features.find((f) => f.type === "FrontDoor");
   const frontDoorText = frontDoor ? `, front door at (${frontDoor.tile1X}, ${frontDoor.tile1Y})` : "";

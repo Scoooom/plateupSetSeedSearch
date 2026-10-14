@@ -16,6 +16,7 @@ const treeViewEl = document.getElementById("tree-view");
 const dayPanelEl = document.getElementById("day-panel");
 const deleteBranchButton = document.getElementById("delete-branch");
 const copyLinkButton = document.getElementById("copy-link");
+const speedrunLinkEl = document.getElementById("speedrun-link");
 const layoutPanelLink = document.getElementById("layout-panel-link");
 const layoutPanelImage = document.getElementById("layout-panel-image");
 const layoutPanelStats = document.getElementById("layout-panel-stats");
@@ -410,6 +411,16 @@ function nodeLabel(node) {
 function renderTree() {
   deleteBranchButton.disabled = !currentNode || !currentNode.parent;
   copyLinkButton.disabled = !currentNode || !currentNode.parent;
+
+  const setupPayload = currentSetupPayload();
+  speedrunLinkEl.href = buildSpeedRunToolsUrl({
+    seed: setupPayload.seed,
+    settingSlug: setupPayload.setting,
+    cardPackSlug: setupPayload.cardPack,
+    dishName: setupPayload.dishName,
+    heat: setupPayload.heat,
+    day: currentNode ? currentNode.day : null,
+  }) + "&tab=blueprints";
 
   treeViewEl.innerHTML = "";
   if (!rootNode) {
