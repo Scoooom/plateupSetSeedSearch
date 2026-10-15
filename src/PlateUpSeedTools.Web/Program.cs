@@ -11,7 +11,9 @@ builder.Services.Configure<CacheOptions>(builder.Configuration.GetSection(CacheO
 builder.Services.AddSingleton<ICacheStore<LayoutResponse>, SqliteCacheStore<LayoutResponse>>();
 builder.Services.AddSingleton<ICacheStore<CachedSearchResult>, SqliteCacheStore<CachedSearchResult>>();
 builder.Services.AddSingleton<ICacheStore<ExplorerPreload>, SqliteCacheStore<ExplorerPreload>>();
+builder.Services.AddSingleton<ICacheStore<SavedSearchResult>, SqliteCacheStore<SavedSearchResult>>();
 builder.Services.AddSingleton(sp => new CacheAdmin(sp.GetRequiredService<IOptions<CacheOptions>>().Value));
+builder.Services.AddHostedService<SavedSearchExpiryMonitor>();
 
 builder.Services.Configure<WebPushOptions>(builder.Configuration.GetSection(WebPushOptions.SectionName));
 builder.Services.AddSingleton<PushNotificationSender>();

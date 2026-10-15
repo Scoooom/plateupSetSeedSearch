@@ -36,6 +36,7 @@ const jobStats = document.getElementById("job-stats");
 const matchesList = document.getElementById("matches-list");
 const copyMatchesButton = document.getElementById("copy-matches");
 const copyLinkButton = document.getElementById("copy-link");
+const saveSearchButton = document.getElementById("save-search");
 const previewDialog = document.getElementById("preview-dialog");
 const previewDialogTitle = document.getElementById("preview-dialog-title");
 const previewDialogClose = document.getElementById("preview-dialog-close");
@@ -47,6 +48,7 @@ const previewDialogEquivalents = document.getElementById("preview-dialog-equival
 const previewDialogPathTabs = document.getElementById("preview-dialog-path-tabs");
 const previewDialogPath = document.getElementById("preview-dialog-path");
 const previewDialogExplorerLink = document.getElementById("preview-dialog-explorer-link");
+const previewDialogSaveFavorite = document.getElementById("preview-dialog-save-favorite");
 const previewDialogPrev = document.getElementById("preview-dialog-prev");
 const previewDialogNext = document.getElementById("preview-dialog-next");
 const previewDialogPosition = document.getElementById("preview-dialog-position");
@@ -1081,6 +1083,16 @@ async function loadInit() {
   setUpPushNotifications().catch(() => {});
   renderRecentSearches();
 
+  // Saved Searches use a distinct ?saved=<hash> query param, not the #hash fragment /search/
+  // cached links use below - they point at a different server-side table (ICacheStore<
+  // SavedSearchResult>, 7-day expiry) that GET /api/search/link/{hash} (loadSearchLink's endpoint)
+  // never checks, so the two forms can't share a URL shape.
+  const savedHash = new URL(location.href).searchParams.get("saved");
+  if (savedHash) {
+    await loadSavedSearch(savedHash);
+    return;
+  }
+
   const hash = location.hash.slice(1);
   if (hash) {
     await loadSearchLink(hash);
@@ -1222,6 +1234,65 @@ async function loadSearchLink(hash) {
   }
 }
 
+// Resolves a Saved Search (?saved=<hash>, see favorites.js's saveSearch/drawer): tries the live
+// server copy first (GET /api/search/saved/{hash}), upgrading the localStorage entry's snapshot on
+// success so it stays viewable after the server-side row expires (7 days). On a 404 - expected
+// once that happens - falls back to the one-shot local-snapshot handoff the drawer stashed before
+// navigating here (see favorites.js's stashHandoff), if one was ever actually recorded.
+async function loadSavedSearch(hash) {
+  try {
+    const response = await fetch(`/api/search/saved/${encodeURIComponent(hash)}`);
+    if (response.ok) {
+      const saved = await response.json();
+      window.PlateUpFavorites?.upgradeSavedSearchSnapshot(hash, saved);
+      await renderSavedSearchView(saved, false);
+      return;
+    }
+  } catch {
+    // fall through to the local snapshot below
+  }
+
+  const snapshot = window.PlateUpFavorites?.consumeHandoff(`pendingSavedSearchSnapshot:${hash}`);
+  if (snapshot) {
+    await renderSavedSearchView(snapshot, true);
+  } else {
+    setStatus(
+      "This saved search has expired (saved searches are kept 7 days) and no local snapshot from " +
+        "an earlier view was recorded for it.",
+      true
+    );
+  }
+}
+
+async function renderSavedSearchView(data, isStale) {
+  await prefillFormFromPayload(data.request);
+  currentSearchSetting = data.request.setting;
+  currentSearchPayload = data.request;
+  currentJobId = null; // no live job behind this view - Cancel and Save-via-jobId stay unavailable
+  currentShareHash = null; // this hash belongs to the separate Saved-Searches table, not Copy Link's
+  resetPreviewCache();
+
+  renderJobStatus({
+    status: "Completed",
+    checkedCount: data.checkedCount,
+    totalToCheck: data.totalToCheck,
+    seedsPerSecond: 0,
+    elapsedSeconds: 0,
+    matches: data.matches,
+    error: null,
+    matchCapReached: data.matchCapReached,
+    timedOut: data.timedOut,
+  });
+
+  if (isStale) {
+    setStatus(
+      "⚠ Showing a local snapshot from when you last viewed this - the server copy has expired " +
+        "(saved searches are kept 7 days).",
+      true
+    );
+  }
+}
+
 function stopPolling() {
   if (pollHandle !== null) {
     clearInterval(pollHandle);
@@ -1289,6 +1360,9 @@ function renderJobStatus(job) {
   // ShareHash from the moment it started (see the submit handler), so the link is offered
   // immediately rather than waiting for Completed like a regular job's lazy mint-on-click does.
   copyLinkButton.hidden = !currentJobId || (!currentShareHash && job.status !== "Completed");
+  if (saveSearchButton) {
+    saveSearchButton.hidden = job.matches.length === 0 || job.status !== "Completed";
+  }
 
   // Cap how many match badges get rendered as DOM nodes - some target cards are common enough
   // that a search can turn up thousands of matches, and building/reflowing that many elements on
@@ -1320,6 +1394,17 @@ function renderJobStatus(job) {
       badge.title = `${match.equivalentCount} other seed string(s) produce this exact game (same seed hash) - click to see them`;
       li.append(" ", badge);
     }
+    const favoriteButton = document.createElement("button");
+    favoriteButton.type = "button";
+    favoriteButton.className = "favorite-seed-btn";
+    favoriteButton.title = "Save this seed to Favorites";
+    favoriteButton.textContent = "☆";
+    favoriteButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      saveMatchAsFavorite(match.seed);
+    });
+    li.append(" ", favoriteButton);
+
     li.tabIndex = 0;
     li.addEventListener("click", () => openPreviewDialog(match.seed, match.otFriendly));
     li.addEventListener("keydown", (event) => {
@@ -1400,6 +1485,52 @@ copyLinkButton?.addEventListener("click", async () => {
     const url = `${location.origin}/search/cached#${currentShareHash}`;
     await navigator.clipboard.writeText(url);
     setStatus(`Shareable link copied: ${url}`, false);
+  } catch {
+    setStatus("Failed to reach the server.", true);
+  }
+});
+
+// Personal "save this search" action - distinct from Copy Link above, which writes a permanent,
+// unnamed snapshot. This always mints its own hash into the separate, 7-day-expiring Saved-
+// Searches store (see SearchContracts.cs's SavedSearchResult), regardless of whether Copy Link
+// has already been clicked for this job. Works both for a live job (has currentJobId) and a view
+// reached via an already-cached/shared link (currentJobId is null but currentShareHash is set).
+saveSearchButton?.addEventListener("click", async () => {
+  if (!currentSearchPayload || currentMatches.length === 0) return;
+  try {
+    let hash;
+    if (currentJobId) {
+      const response = await fetch(`/api/search/${encodeURIComponent(currentJobId)}/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(currentSearchPayload),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setStatus(body.error ?? "Failed to save this search.", true);
+        return;
+      }
+      hash = body.hash;
+    } else if (currentShareHash) {
+      const response = await fetch(`/api/search/save-from-cached/${encodeURIComponent(currentShareHash)}`, {
+        method: "POST",
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setStatus(body.error ?? "Failed to save this search.", true);
+        return;
+      }
+      hash = body.hash;
+    } else {
+      setStatus("This search can't be saved yet - no shareable link exists for it.", true);
+      return;
+    }
+
+    window.PlateUpFavorites?.saveSearch({
+      hash,
+      request: currentSearchPayload,
+      matchCount: currentMatches.length,
+    });
   } catch {
     setStatus("Failed to reach the server.", true);
   }
@@ -1936,57 +2067,111 @@ function renderPathDays(seed, path) {
   wireExplorerLink(seed, path);
 }
 
-// Lazy by design: no /api/explorer/preload write happens until this button is actually clicked -
-// switching between Path 1/2/3 tabs alone never touches the cache DB. Also idempotent per path:
-// the hash is memoized on the path object itself (path._explorerHash) once created, so clicking
-// the button again for the same path (e.g. after opening the first tab) reuses it instead of
-// minting a new cache row every click.
+// Lazy by design: no /api/explorer/preload write happens until a button that needs it is
+// actually clicked - switching between Path 1/2/3 tabs alone never touches the cache DB. Also
+// idempotent per path: the hash is memoized on the path object itself (path._explorerHash) once
+// created, so clicking a button again for the same path (e.g. after opening the first tab, or
+// clicking both Explorer-link and Save-Favorite) reuses it instead of minting a new cache row.
+async function ensureExplorerHash(path) {
+  if (path._explorerHash) {
+    return path._explorerHash;
+  }
+
+  const steps = path.days
+    .map(({ day, cardName, rerolled }) => {
+      const unlock = unlocksForSetting.find((u) => u.name === cardName);
+      return unlock ? { day, cardId: unlock.id, rerolled: Boolean(rerolled) } : null;
+    })
+    .filter(Boolean);
+
+  const preload = {
+    dishName: currentSearchPayload.dishName,
+    subOptionChoice: currentSearchPayload.subOptionChoice,
+    heat: currentSearchPayload.heat,
+    tier: currentSearchPayload.tier,
+    franchiseCardNames: currentSearchPayload.franchiseCardNames,
+    cardPack: currentSearchPayload.cardPack,
+    path: steps,
+  };
+
+  const response = await fetch("/api/explorer/preload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(preload),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    setStatus(body.error ?? "Failed to open this path in the Seed Explorer.", true);
+    return null;
+  }
+  path._explorerHash = body.hash;
+  return path._explorerHash;
+}
+
 function wireExplorerLink(seed, path) {
   if (!currentSearchPayload || path.days.length === 0) {
     previewDialogExplorerLink.hidden = true;
+    if (previewDialogSaveFavorite) previewDialogSaveFavorite.hidden = true;
     return;
   }
 
   previewDialogExplorerLink.hidden = false;
   previewDialogExplorerLink.onclick = async () => {
     try {
-      if (!path._explorerHash) {
-        const steps = path.days
-          .map(({ day, cardName, rerolled }) => {
-            const unlock = unlocksForSetting.find((u) => u.name === cardName);
-            return unlock ? { day, cardId: unlock.id, rerolled: Boolean(rerolled) } : null;
-          })
-          .filter(Boolean);
-
-        const preload = {
-          dishName: currentSearchPayload.dishName,
-          subOptionChoice: currentSearchPayload.subOptionChoice,
-          heat: currentSearchPayload.heat,
-          tier: currentSearchPayload.tier,
-          franchiseCardNames: currentSearchPayload.franchiseCardNames,
-          cardPack: currentSearchPayload.cardPack,
-          path: steps,
-        };
-
-        const response = await fetch("/api/explorer/preload", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(preload),
-        });
-        const body = await response.json();
-        if (!response.ok) {
-          setStatus(body.error ?? "Failed to open this path in the Seed Explorer.", true);
-          return;
-        }
-        path._explorerHash = body.hash;
-      }
-
-      const url = `/explorer/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}/${path._explorerHash}`;
+      const hash = await ensureExplorerHash(path);
+      if (!hash) return;
+      const url = `/explorer/${encodeURIComponent(currentSearchSetting)}/${encodeURIComponent(seed)}/${hash}`;
+      window.PlateUpFavorites?.stashOriginatingSearch(hash, currentSearchPayload);
       window.open(url, "_blank", "noopener");
     } catch {
       setStatus("Failed to reach the server.", true);
     }
   };
+
+  if (previewDialogSaveFavorite) {
+    previewDialogSaveFavorite.hidden = false;
+    previewDialogSaveFavorite.onclick = async () => {
+      try {
+        const hash = await ensureExplorerHash(path);
+        if (!hash) return;
+        saveSeedAsFavorite(seed, hash);
+      } catch {
+        setStatus("Failed to reach the server.", true);
+      }
+    };
+  }
+}
+
+// Shared by both the preview dialog's "Save this seed" button (already has a resolved path/hash)
+// and the per-match ☆ pill (needs to resolve a path first - see saveMatchAsFavorite below).
+function saveSeedAsFavorite(seed, explorerHash) {
+  window.PlateUpFavorites?.saveFavoriteSeed({
+    setting: currentSearchSetting,
+    seed,
+    explorerHash: explorerHash ?? null,
+    dishName: currentSearchPayload.dishName,
+    subOptionChoice: currentSearchPayload.subOptionChoice,
+    heat: currentSearchPayload.heat,
+    tier: currentSearchPayload.tier,
+    franchiseCardNames: currentSearchPayload.franchiseCardNames,
+    cardPack: currentSearchPayload.cardPack,
+    originatingSearch: currentSearchPayload,
+  });
+}
+
+// Per-match ☆ pill handler - resolves this seed's card path (same endpoint the preview dialog
+// uses) before saving, so the favorite can still reopen Explorer at the right day-by-day state
+// even if the dialog itself was never opened for this match.
+async function saveMatchAsFavorite(seed) {
+  if (!currentSearchPayload) return;
+  try {
+    const paths = await fetchPreviewPaths(seed, currentSearchPayload);
+    const path = paths?.[0] ?? { days: [] };
+    const hash = path.days.length > 0 ? await ensureExplorerHash(path) : null;
+    saveSeedAsFavorite(seed, hash);
+  } catch {
+    setStatus("Failed to reach the server.", true);
+  }
 }
 
 function closePreviewDialog() {

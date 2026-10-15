@@ -16,6 +16,7 @@ const treeViewEl = document.getElementById("tree-view");
 const dayPanelEl = document.getElementById("day-panel");
 const deleteBranchButton = document.getElementById("delete-branch");
 const copyLinkButton = document.getElementById("copy-link");
+const saveFavoriteButton = document.getElementById("save-favorite");
 const speedrunLinkEl = document.getElementById("speedrun-link");
 const layoutPanelLink = document.getElementById("layout-panel-link");
 const layoutPanelImage = document.getElementById("layout-panel-image");
@@ -33,6 +34,10 @@ let datalistCounter = 0;
 // computed - no precomputed full tree.
 let rootNode = null;
 let currentNode = null;
+// The search query that led here, if this page was opened via a Search match's "Open this path in
+// Seed Explorer" link - recovered once (sessionStorage, one-shot) in loadInit below, so a favorite
+// saved from THIS page can still retain it (see favorites.js's stashOriginatingSearch).
+let pendingOriginatingSearch = null;
 
 // day: -1 so the first fetched frontier (day + 1) is day 0, the prep day before the first real
 // night - only relevant for packs with a Day=0 UnlockConditionOnce (santa-workshop's Christmas
@@ -411,6 +416,7 @@ function nodeLabel(node) {
 function renderTree() {
   deleteBranchButton.disabled = !currentNode || !currentNode.parent;
   copyLinkButton.disabled = !currentNode || !currentNode.parent;
+  if (saveFavoriteButton) saveFavoriteButton.disabled = !currentNode || !currentNode.parent;
 
   const setupPayload = currentSetupPayload();
   speedrunLinkEl.href = buildSpeedRunToolsUrl({
@@ -655,36 +661,61 @@ function deleteCurrentBranch() {
 
 deleteBranchButton.addEventListener("click", deleteCurrentBranch);
 
-// Lazy by design: no /api/explorer/preload write happens until this is clicked - exploring a tree
-// and never sharing it never touches the cache DB.
+// Lazy by design: no /api/explorer/preload write happens until Copy Link or Save to Favorites is
+// actually clicked - exploring a tree and never sharing/saving it never touches the cache DB.
 // Idempotent per node: the hash is memoized on the tree node itself (node.shareHash) the first
-// time it's shared, so re-clicking Copy Link while still on the same node (no re-navigation)
+// time either button mints one, so re-clicking while still on the same node (no re-navigation)
 // reuses it instead of minting a new cache row every click.
+async function ensureShareHash(node) {
+  if (node.shareHash) {
+    return node.shareHash;
+  }
+
+  const preload = { ...currentSetupPayload(), path: pathToNode(node) };
+  delete preload.setting; // setting/seed travel as URL path segments, not part of the stored preload
+  delete preload.seed;
+
+  const response = await fetch("/api/explorer/preload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(preload),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    setStatus(body.error ?? "Failed to create a shareable link.", true);
+    return null;
+  }
+  node.shareHash = body.hash;
+  return node.shareHash;
+}
+
 copyLinkButton.addEventListener("click", async () => {
   if (!currentNode || !currentNode.parent) return;
 
   try {
-    if (!currentNode.shareHash) {
-      const preload = { ...currentSetupPayload(), path: pathToNode(currentNode) };
-      delete preload.setting; // setting/seed travel as URL path segments, not part of the stored preload
-      delete preload.seed;
+    const hash = await ensureShareHash(currentNode);
+    if (!hash) return;
 
-      const response = await fetch("/api/explorer/preload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(preload),
-      });
-      const body = await response.json();
-      if (!response.ok) {
-        setStatus(body.error ?? "Failed to create a shareable link.", true);
-        return;
-      }
-      currentNode.shareHash = body.hash;
-    }
-
-    const url = `${location.origin}/explorer/${encodeURIComponent(settingSelect.value)}/${encodeURIComponent(seedInput.value)}/${currentNode.shareHash}`;
+    const url = `${location.origin}/explorer/${encodeURIComponent(settingSelect.value)}/${encodeURIComponent(seedInput.value)}/${hash}`;
     await navigator.clipboard.writeText(url);
     setStatus(`Shareable link copied: ${url}`, false);
+  } catch {
+    setStatus("Failed to reach the server.", true);
+  }
+});
+
+saveFavoriteButton?.addEventListener("click", async () => {
+  if (!currentNode || !currentNode.parent) return;
+
+  try {
+    const hash = await ensureShareHash(currentNode);
+    if (!hash) return;
+
+    window.PlateUpFavorites?.saveFavoriteSeed({
+      ...currentSetupPayload(),
+      explorerHash: hash,
+      originatingSearch: pendingOriginatingSearch,
+    });
   } catch {
     setStatus("Failed to reach the server.", true);
   }
@@ -807,6 +838,9 @@ async function loadInit() {
         return;
       }
       await applyPreload(await response.json());
+      // One-shot handoff from a Search match's "Open this path in Seed Explorer" link, if that's
+      // how this page was reached - see favorites.js's stashOriginatingSearch/consumeOriginatingSearch.
+      pendingOriginatingSearch = window.PlateUpFavorites?.consumeOriginatingSearch(hash) ?? null;
     } catch {
       setStatus("Failed to reach the server.", true);
     }

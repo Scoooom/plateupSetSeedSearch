@@ -100,7 +100,11 @@
         <summary>Explored path <span id="tree-toggle-hint" class="tree-toggle-hint"></span></summary>
         <button type="button" id="delete-branch" class="link-button" disabled>Delete this day &amp; everything after it</button>
         <button type="button" id="copy-link" class="link-button" disabled>Copy Link</button>
-        <a id="speedrun-link" class="link-button" target="_blank" rel="noopener">View on Speed Run Tools</a>
+        <button type="button" id="save-favorite" class="link-button" disabled>☆ Save to Favorites</button>
+        <a id="speedrun-link" class="link-button" target="_blank" rel="noopener">
+          <img src="https://budditec.nz/plateup-speed-run-tools/favicon.png" alt="" class="speedrun-link-icon" />
+          Blueprints
+        </a>
         <div id="tree-view" class="tree-view"></div>
       </details>
 
@@ -133,5 +137,6 @@
   <script src="/js/shared.js"></script>
   <script src="/js/speedrun-link.js"></script>
   <script src="/js/explorer.js"></script>
+  <script src="/js/favorites.js"></script>
 </body>
 </html>

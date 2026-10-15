@@ -209,6 +209,24 @@ public sealed record CachedSearchResult(
 public sealed record ShareSearchResultResponse(string Hash);
 
 /// <summary>
+/// A user-initiated personal save of one completed search's results - distinct from
+/// CachedSearchResult above, which is the permanent, no-expiry "Copy Link" share snapshot. This
+/// type is field-identical by design but stored in its own ICacheStore&lt;SavedSearchResult&gt;/
+/// cache_SavedSearchResult table, swept after ~7 days by SavedSearchExpiryMonitor. Any completed
+/// search can be saved this way (not just notify-enabled/background ones) - see SearchEndpoints'
+/// POST /api/search/{jobId}/save, POST /api/search/save-from-cached/{hash}, and
+/// GET /api/search/saved/{hash}. The nickname a user gives a saved search lives only in their
+/// browser's localStorage (wwwroot/js/favorites.js) - never sent to or stored on the server.
+/// </summary>
+public sealed record SavedSearchResult(
+    SearchStartRequest Request,
+    IReadOnlyList<SearchMatchDto> Matches,
+    long TotalToCheck,
+    long CheckedCount,
+    bool MatchCapReached,
+    bool TimedOut = false);
+
+/// <summary>
 /// Resolves a shareable hash to whichever of the two places it could point at still exists - a
 /// permanent cached snapshot (Kind "cached", any job this age) or a still-running/just-finished
 /// in-memory job (Kind "live", only exists for a notify-enabled job - see

@@ -40,6 +40,9 @@ public static class SearchEndpoints
         app.MapPost("/api/search/{jobId}/share", ShareSearchResult);
         app.MapGet("/api/search/cached/{hash}", GetCachedSearchResult);
         app.MapGet("/api/search/link/{hash}", GetSearchLink);
+        app.MapPost("/api/search/{jobId}/save", SaveSearchResultByJob);
+        app.MapPost("/api/search/save-from-cached/{hash}", SaveSearchResultFromCached);
+        app.MapGet("/api/search/saved/{hash}", GetSavedSearchResult);
         app.MapPost("/api/search/{jobId}/push-subscription", RegisterPushSubscription);
     }
 
@@ -630,6 +633,63 @@ public static class SearchEndpoints
         }
 
         return Results.NotFound(new { error = "This shared search result has expired or doesn't exist." });
+    }
+
+    /// <summary>
+    /// Personal "save this search" action - distinct from ShareSearchResult above, which writes to
+    /// the permanent cache. Any completed job can be saved this way (unlike the permanent cache,
+    /// which notify-enabled jobs also write to automatically - this is always an explicit user
+    /// action). Always mints a fresh hash rather than reusing job.ShareHash, so the same hash string
+    /// never resolves to two different lifetimes depending which cache table is queried.
+    /// </summary>
+    private static async Task<IResult> SaveSearchResultByJob(
+        string jobId, SearchStartRequest request, SearchJobManager jobs, ICacheStore<SavedSearchResult> savedCache)
+    {
+        if (!jobs.TryGetJob(jobId, out var job))
+        {
+            return Results.NotFound(new { error = $"Unknown search job '{jobId}'." });
+        }
+
+        if (job.Status != SearchJobStatus.Completed)
+        {
+            return Results.BadRequest(new { error = "Only a completed search can be saved." });
+        }
+
+        var hash = ShareHash.Generate();
+        var saved = new SavedSearchResult(request, SearchResultProjection.WithEquivalents(job), job.TotalToCheck, job.CheckedCount, job.MatchCapReached, job.TimedOut);
+        await savedCache.SetAsync(hash, saved);
+
+        return Results.Ok(new ShareSearchResultResponse(hash));
+    }
+
+    /// <summary>
+    /// Saves a search that's only reachable via an already-permanent cached/shared hash (e.g. a
+    /// notify-completion push link opened after the originating SearchJob was evicted) - there's no
+    /// jobId in scope client-side for this case, so it copies straight from the permanent cache
+    /// instead of resending a live job's request body.
+    /// </summary>
+    private static async Task<IResult> SaveSearchResultFromCached(
+        string hash, ICacheStore<CachedSearchResult> permanentCache, ICacheStore<SavedSearchResult> savedCache)
+    {
+        var cached = await permanentCache.GetAsync(hash);
+        if (cached is null)
+        {
+            return Results.NotFound(new { error = "This shared search result has expired or doesn't exist." });
+        }
+
+        var newHash = ShareHash.Generate();
+        var saved = new SavedSearchResult(cached.Request, cached.Matches, cached.TotalToCheck, cached.CheckedCount, cached.MatchCapReached, cached.TimedOut);
+        await savedCache.SetAsync(newHash, saved);
+
+        return Results.Ok(new ShareSearchResultResponse(newHash));
+    }
+
+    private static async Task<IResult> GetSavedSearchResult(string hash, ICacheStore<SavedSearchResult> savedCache)
+    {
+        var saved = await savedCache.GetAsync(hash);
+        return saved is null
+            ? Results.NotFound(new { error = "This saved search has expired (saved searches are kept for 7 days) or doesn't exist." })
+            : Results.Ok(saved);
     }
 
     private static IResult RegisterPushSubscription(string jobId, PushSubscriptionDto subscription, SearchJobManager jobs) =>

@@ -295,6 +295,13 @@ button[type="submit"]:hover {
   border-color: var(--accent);
 }
 
+.speedrun-link-icon {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  margin-right: 0.3rem;
+}
+
 .grid {
   position: relative;
   border: 1px solid var(--panel-border);
@@ -1074,4 +1081,130 @@ button[type="submit"]:hover {
   .day-options {
     flex-direction: column;
   }
+}
+
+/* Favorites drawer (wwwroot/js/favorites.js) - a "Favorite Seeds" + "Saved Searches" panel,
+   injected at runtime and shared across every page. */
+
+.favorites-trigger {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.92rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.favorites-trigger:hover {
+  color: var(--text);
+  background: rgba(241, 230, 216, 0.08);
+}
+
+.favorites-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.favorites-drawer-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.favorites-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: min(380px, 90vw);
+  background: var(--panel);
+  border-left: 1px solid var(--panel-border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  padding: 1rem;
+  overflow-y: auto;
+  z-index: 101;
+  transform: translateX(100%);
+  transition: transform 0.2s ease;
+}
+
+.favorites-drawer.open {
+  transform: translateX(0);
+}
+
+.favorites-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.favorites-section {
+  margin-bottom: 1.5rem;
+}
+
+.favorites-section h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
+}
+
+.favorites-section-note {
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.favorites-empty-note {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.favorites-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.favorites-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.favorites-open-btn {
+  text-align: left;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.favorites-row-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.favorite-seed-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  vertical-align: middle;
+}
+
+.favorite-seed-btn:hover {
+  color: var(--accent);
 }

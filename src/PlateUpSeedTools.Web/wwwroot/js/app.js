@@ -7,6 +7,7 @@ const resultTitle = document.getElementById("result-title");
 const gridEl = document.getElementById("grid");
 const legendEl = document.getElementById("legend");
 const copyLinkButton = document.getElementById("copy-link");
+const saveFavoriteButton = document.getElementById("save-favorite");
 const speedrunLinkEl = document.getElementById("speedrun-link");
 const colorPanelRowsEl = document.getElementById("color-panel-rows");
 const colorPanelResetAllButton = document.getElementById("color-panel-reset-all");
@@ -704,6 +705,24 @@ copyLinkButton.addEventListener("click", async () => {
   } catch {
     setStatus("Couldn't copy the link automatically - copy it from the address bar.", true);
   }
+});
+
+// This page has no dish/heat/card-path concept (layout-only), so the favorite it saves is just
+// setting+seed - explorerHash stays null, and Explorer already supports opening with no hash
+// segment at all (just /explorer/<setting>/<seed>, defaults for everything else).
+saveFavoriteButton?.addEventListener("click", () => {
+  window.PlateUpFavorites?.saveFavoriteSeed({
+    setting: settingSelect.value,
+    seed: seedInput.value.trim(),
+    explorerHash: null,
+    dishName: null,
+    subOptionChoice: null,
+    heat: null,
+    tier: null,
+    franchiseCardNames: null,
+    cardPack: null,
+    originatingSearch: null,
+  });
 });
 
 loadSettings().catch(() => setStatus("Failed to load restaurant settings.", true));

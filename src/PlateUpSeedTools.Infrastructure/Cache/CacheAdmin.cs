@@ -47,6 +47,26 @@ public sealed class CacheAdmin(CacheOptions options)
         return stats;
     }
 
+    /// <summary>
+    /// Deletes rows older than maxAge from exactly one named cache_* table - unlike the old,
+    /// generic every-table DeleteExpiredAsync(TimeSpan) removed in commit 38990c2 (specifically
+    /// because the permanent share-link cache shouldn't expire), this is parameterized by table
+    /// name so a caller can scope expiry to just one cache type. tableName must match the
+    /// `cache_{typeof(TValue).Name}` convention SqliteCacheStore&lt;T&gt; uses internally - the two
+    /// aren't wired to a shared constant since there's currently only one caller
+    /// (SavedSearchExpiryMonitor).
+    /// </summary>
+    public async Task<int> DeleteExpiredFromTableAsync(string tableName, TimeSpan maxAge, CancellationToken ct = default)
+    {
+        var cutoff = (DateTime.UtcNow - maxAge).ToString("O");
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync(ct);
+        await using var delete = connection.CreateCommand();
+        delete.CommandText = $"DELETE FROM {tableName} WHERE created_utc < $cutoff";
+        delete.Parameters.AddWithValue("$cutoff", cutoff);
+        return await delete.ExecuteNonQueryAsync(ct);
+    }
+
     private static async Task<List<string>> GetCacheTablesAsync(SqliteConnection connection, CancellationToken ct)
     {
         var tables = new List<string>();
