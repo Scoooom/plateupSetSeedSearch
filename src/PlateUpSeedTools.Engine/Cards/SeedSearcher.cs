@@ -58,7 +58,15 @@ public sealed record SeedSearchRequest(
     // ForceLayoutId is never one of the 5 pool IDs LayoutSeed.TryGetSize knows about. Requires
     // SettingSlug (checked the same way OtFriendly needs it, via ArgumentException). Null/empty
     // means "no size filter", reproducing pre-existing behavior exactly.
-    IReadOnlySet<Layouts.LayoutSeed.LayoutSize>? MapSizes = null);
+    IReadOnlySet<Layouts.LayoutSeed.LayoutSize>? MapSizes = null,
+    // Shop appliance ids that must each be offered by the shop at some point during days 1-15 (not
+    // necessarily the same day, since appliances are kept once bought) - backs the Search page's
+    // achievement presets (e.g. Safety Last needs Sharp Knife + Trainers reachable). Checked via
+    // Engine.Shop.ShopApplianceReachabilityChecker. The day range is fixed at 1-15 regardless of
+    // DayTargets/FlexibleHorizon - this is a separate, independently-day-ranged AND-condition, not
+    // tied to the card-draw walk. Requires SettingSlug (same reason as OtFriendly/MapSizes). Null/
+    // empty means "no achievement filter", reproducing pre-existing behavior exactly.
+    IReadOnlySet<int>? RequiredShopApplianceIds = null);
 
 /// <summary>
 /// Result of a <see cref="SeedSearcher.Search"/> call. <see cref="MatchCapReached"/> distinguishes
@@ -173,6 +181,11 @@ public static class SeedSearcher
             throw new ArgumentException("SettingSlug is required when MapSizes is set - resolving a seed's layout size needs it.", nameof(request));
         }
 
+        if (request.RequiredShopApplianceIds is { Count: > 0 } && string.IsNullOrEmpty(request.SettingSlug))
+        {
+            throw new ArgumentException("SettingSlug is required when RequiredShopApplianceIds is set - ShopApplianceReachabilityChecker needs it to resolve the starting-kitchen layout.", nameof(request));
+        }
+
         var hasFlexibleTargets = request.FlexibleTargets is { Count: > 0 };
         var maxDay = Math.Max(
             request.DayTargets.Count == 0 ? 0 : request.DayTargets.Keys.Max(),
@@ -234,7 +247,7 @@ public static class SeedSearcher
                         var (isMatch, otFriendly) = Matches(
                             repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
                             flexibleTargets, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
-                            request.AllowRerollPerDay, request.MapSizes);
+                            request.AllowRerollPerDay, request.MapSizes, request.RequiredShopApplianceIds);
                         if (isMatch)
                         {
                             // Resolve a displayable seed string only now, not per-candidate. A null
@@ -268,7 +281,7 @@ public static class SeedSearcher
                         var (isMatch, otFriendly) = Matches(
                             repo, seed, request.SettingPackId, request.Setup, request.DayTargets,
                             flexibleTargets, maxDay, request.Tier, request.OtFriendly, request.SettingSlug,
-                            request.AllowRerollPerDay, request.MapSizes);
+                            request.AllowRerollPerDay, request.MapSizes, request.RequiredShopApplianceIds);
                         if (isMatch)
                         {
                             if (groups.TryAdd(seed.IntValue, new SeedGroup { Representative = seedString }))
@@ -335,15 +348,26 @@ public static class SeedSearcher
     /// with it rather than only seeds that were explicitly searched for it. IsMatch is false (and
     /// OtFriendly meaningless/false) for anything that fails the card-target filters.
     /// </summary>
+    // Fixed day range for RequiredShopApplianceIds - independent of DayTargets/FlexibleHorizon, see
+    // SeedSearchRequest.RequiredShopApplianceIds's doc comment.
+    private const int AchievementApplianceMaxDay = 15;
+
     private static (bool IsMatch, bool OtFriendly) Matches(
         GameDataRepository repo, Seed seed, int settingPackId, ResolvedRunSetup setup,
         IReadOnlyDictionary<int, TargetMatcher> dayTargets, IReadOnlyList<TargetMatcher> flexibleTargets, int maxDay, int tier,
-        bool otFriendly, string? settingSlug, bool allowRerollPerDay, IReadOnlySet<Layouts.LayoutSeed.LayoutSize>? mapSizes)
+        bool otFriendly, string? settingSlug, bool allowRerollPerDay, IReadOnlySet<Layouts.LayoutSeed.LayoutSize>? mapSizes,
+        IReadOnlySet<int>? requiredShopApplianceIds)
     {
         // Cheapest possible rejection - a single RNG call, no card-draw simulation at all - so this
         // runs before everything else in this method. A setting with its own ForceLayoutId never
         // matches any requested size (see MapSizes' doc comment).
         if (mapSizes is { Count: > 0 } && !MatchesMapSize(repo, seed, settingSlug!, mapSizes))
+        {
+            return (false, false);
+        }
+
+        if (requiredShopApplianceIds is { Count: > 0 } &&
+            !ShopApplianceReachabilityChecker.AllReachableByDay(repo, seed, settingSlug!, requiredShopApplianceIds, AchievementApplianceMaxDay))
         {
             return (false, false);
         }

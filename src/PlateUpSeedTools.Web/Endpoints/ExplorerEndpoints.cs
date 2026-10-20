@@ -56,9 +56,9 @@ public static partial class ExplorerEndpoints
             return Results.BadRequest(new { error = "Seed must be 1-8 alphanumeric characters." });
         }
 
-        if (request.Day < 0 || request.Day > 15)
+        if (request.Day < 0)
         {
-            return Results.BadRequest(new { error = "day must be between 0 and 15." });
+            return Results.BadRequest(new { error = "day must be 0 or greater." });
         }
 
         if (!TryResolveUnlock(repo, request.DishName, "dish", out var dish, out var dishError))

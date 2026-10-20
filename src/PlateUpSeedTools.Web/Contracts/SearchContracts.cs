@@ -42,6 +42,12 @@ public sealed record SearchStartRequest(
     // disables the checkboxes the same way it already locks the card-pack dropdown for non-normal
     // settings (see shared.js's updateCardPackLock). Null/empty means no size filter.
     List<string>? MapSizes = null,
+    // Additional AND-condition: each required appliance for this named achievement must be
+    // reachable via the shop by day 15 - see Engine.Shop.AchievementPreset/
+    // ShopApplianceReachabilityChecker. Null/empty means no achievement filter. Unlike OtFriendly/
+    // MapSizes this is a slug the server resolves (not a raw appliance-id list) - see
+    // SearchEndpoints.GetAchievementPresets for the available slugs.
+    string? AchievementPreset = null,
     // Opts into: heartbeat-abandonment immunity (see SearchJobHeartbeatMonitor/
     // SearchJobManager.SweepAbandonedJobs), a hard wall-clock deadline instead
     // (Search:MaxJobDurationSeconds, default 1h), an eagerly-minted ShareHash so the job has a
@@ -137,6 +143,9 @@ public sealed record HeatLevelDto(int Level, string Name);
 
 /// <summary>One selectable card-draw schedule (independent of restaurant setting) - see GameDataRepository.ListCardSchedules.</summary>
 public sealed record CardScheduleDto(string Slug, string DisplayName);
+
+/// <summary>One selectable achievement preset for the search form's achievement filter - see Engine.Shop.AchievementPreset.</summary>
+public sealed record AchievementPresetDto(string Slug, string DisplayName, string Explanation);
 
 /// <summary>
 /// Candidate list for one franchise-carryover row - every Unlock in the game (any group, not just

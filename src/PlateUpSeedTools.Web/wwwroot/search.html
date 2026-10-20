@@ -117,6 +117,21 @@
         <p class="field-note">Only the Normal setting draws its layout from this size pool - other settings always use their own fixed layout.</p>
       </div>
 
+      <div class="field-group full-width">
+        <label class="field">
+          <span>Achievement preset</span>
+          <select id="achievement-preset-select">
+            <option value="">None</option>
+          </select>
+        </label>
+        <details class="advanced-fields">
+          <summary>What does this search for?</summary>
+          <div class="advanced-fields-body" id="achievement-preset-explanation">
+            <p>Select a preset above to see what it checks.</p>
+          </div>
+        </details>
+      </div>
+
       <!-- Reroll (Bay Leaves) search temporarily disabled - known-buggy skipChoices mechanic,
            see SearchEndpoints.StartSearch. Remove `hidden` + revert the endpoint flags to re-enable. -->
       <div class="field-group full-width" hidden>

@@ -3,6 +3,7 @@ using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Layouts;
 using PlateUpSeedTools.Engine.Seeding;
+using PlateUpSeedTools.Engine.Shop;
 
 namespace PlateUpSeedTools.Cli;
 
@@ -67,6 +68,17 @@ public static class SearchCommand
                 }
 
                 mapSizes.Add(size);
+            }
+        }
+
+        AchievementPreset.Entry? achievementPreset = null;
+        if (!string.IsNullOrEmpty(options.AchievementPreset))
+        {
+            achievementPreset = AchievementPreset.TryResolve(options.AchievementPreset);
+            if (achievementPreset is null)
+            {
+                Console.WriteLine($"Unknown achievement preset '{options.AchievementPreset}'. Known: {string.Join(", ", AchievementPreset.All.Select(e => e.Slug))}");
+                return 1;
             }
         }
 
@@ -217,7 +229,7 @@ public static class SearchCommand
         var request = new SeedSearchRequest(
             settingPackId, setup, dayTargets, options.Tier, options.Alphabet, options.Length, totalToCheck, options.ExcludedSeeds, flexibleTargets,
             SettingSlug: options.SettingSlug, OtFriendly: options.OtFriendly, AllowRerollPerDay: options.AllowRerollPerDay,
-            MapSizes: mapSizes.Count > 0 ? mapSizes : null);
+            MapSizes: mapSizes.Count > 0 ? mapSizes : null, RequiredShopApplianceIds: achievementPreset?.ApplianceIds);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var matchCount = 0;
@@ -336,6 +348,7 @@ public static class SearchCommand
         public bool OtFriendly { get; init; }
         public bool AllowRerollPerDay { get; init; }
         public required List<string> MapSizeNames { get; init; }
+        public string? AchievementPreset { get; init; }
     }
 
     // Same default/bounds the web UI uses (see SeedSearcher.MinMatchCap/MaxMatchCap) - a genuine
@@ -366,6 +379,7 @@ public static class SearchCommand
         var otFriendly = false;
         var allowRerollPerDay = false;
         var mapSizeNames = new List<string>();
+        string? achievementPreset = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -456,6 +470,9 @@ public static class SearchCommand
                 case "--map-size" when i + 1 < args.Length:
                     mapSizeNames.Add(args[++i]);
                     break;
+                case "--achievement" when i + 1 < args.Length:
+                    achievementPreset = args[++i];
+                    break;
                 case "--reroll-per-day":
                     // Reroll temporarily disabled (known-buggy skipChoices mechanic) - see
                     // SearchEndpoints. Accepted but inert so existing scripts don't hard-fail.
@@ -477,13 +494,13 @@ public static class SearchCommand
         }
 
         if (settingSlug is null || dishName is null ||
-            (dayTargets.Count == 0 && dayClassTargets.Count == 0 && anyDayCardNames.Count == 0 && anyDayClassNames.Count == 0 && !otFriendly && mapSizeNames.Count == 0))
+            (dayTargets.Count == 0 && dayClassTargets.Count == 0 && anyDayCardNames.Count == 0 && anyDayClassNames.Count == 0 && !otFriendly && mapSizeNames.Count == 0 && achievementPreset is null))
         {
             Console.WriteLine("Usage: search --setting <slug> --dish <name> [--sub-option 1|2] [--heat <n>]");
             Console.WriteLine("              [--tier <n>] [--franchise-card <name> ...]");
             Console.WriteLine("              [--day <n>=<card name> ...] [--any-day-card <card name> ...]");
             Console.WriteLine("              [--day-class <n>=<class name> ...] [--any-day-class <class name> ...] [--ot-friendly]");
-            Console.WriteLine("              [--map-size <name> ...]");
+            Console.WriteLine("              [--map-size <name> ...] [--achievement <slug>]");
             Console.WriteLine("              [--reroll-per-day (temporarily disabled)]");
             Console.WriteLine("              [--alphabet <chars>] [--length <n>] [--limit <n>] [--max-results <n>]");
             Console.WriteLine();
@@ -493,7 +510,11 @@ public static class SearchCommand
             Console.WriteLine($"(e.g. --day-class 3=Side matches whichever Side dish is offered day 3). Valid classes:");
             Console.WriteLine($"{string.Join(", ", DishTypeCatalog.Names.Values)}. Repeatable, including duplicates of the");
             Console.WriteLine("same class (e.g. two --any-day-class Side). A day can't have both --day and --day-class.");
-            Console.WriteLine("At least one of --day/--day-class/--any-day-card/--any-day-class/--ot-friendly/--map-size is required.");
+            Console.WriteLine("At least one of --day/--day-class/--any-day-card/--any-day-class/--ot-friendly/--map-size/--achievement is required.");
+            Console.WriteLine($"--achievement <slug> restricts to seeds where the named achievement's enabling shop appliances");
+            Console.WriteLine("are each reachable by day 15 (not necessarily the same day) - an additional AND-condition, or");
+            Console.WriteLine("usable alone. This only checks the appliances are obtainable, not the in-game action itself.");
+            Console.WriteLine($"Known: {string.Join(", ", AchievementPreset.All.Select(e => $"{e.Slug} ({e.DisplayName})"))}");
             Console.WriteLine("--ot-friendly restricts to seeds where days 1, 2, and 4 offer Research Desks - an");
             Console.WriteLine("additional AND-condition layered onto any --day/--any-day-card targets, or usable alone.");
             Console.WriteLine("--map-size <name> (repeatable) restricts to seeds whose layout resolves to one of the named");
@@ -549,6 +570,7 @@ public static class SearchCommand
             OtFriendly = otFriendly,
             AllowRerollPerDay = allowRerollPerDay,
             MapSizeNames = mapSizeNames,
+            AchievementPreset = achievementPreset,
         };
     }
 }

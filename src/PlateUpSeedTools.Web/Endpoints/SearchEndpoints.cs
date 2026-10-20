@@ -3,6 +3,7 @@ using PlateUpSeedTools.Engine.Cards;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Layouts;
 using PlateUpSeedTools.Engine.Seeding;
+using PlateUpSeedTools.Engine.Shop;
 using PlateUpSeedTools.Infrastructure.Cache;
 using PlateUpSeedTools.Web.Contracts;
 using PlateUpSeedTools.Web.Services;
@@ -31,6 +32,7 @@ public static class SearchEndpoints
         app.MapGet("/api/search/unlocks", GetUnlocks);
         app.MapGet("/api/search/heat-levels", GetHeatLevels);
         app.MapGet("/api/search/card-packs", GetCardPacks);
+        app.MapGet("/api/search/achievement-presets", GetAchievementPresets);
         app.MapPost("/api/search/possible-cards", GetPossibleCards);
         app.MapPost("/api/search/franchise-candidates", GetFranchiseCandidates);
         app.MapPost("/api/search", StartSearch);
@@ -157,6 +159,10 @@ public static class SearchEndpoints
     // (see GameDataRepository.ListCardSchedules's doc comment).
     private static IResult GetCardPacks(GameDataRepository repo) =>
         Results.Ok(repo.ListCardSchedules().Select(s => new CardScheduleDto(s.Slug, s.DisplayName)).ToList());
+
+    // Static, not data-driven - see Engine.Shop.AchievementPreset's doc comment for why only these two exist.
+    private static IResult GetAchievementPresets() =>
+        Results.Ok(AchievementPreset.All.Select(e => new AchievementPresetDto(e.Slug, e.DisplayName, e.Explanation)).ToList());
 
     private static IResult GetPossibleCards(PossibleCardsRequest request, GameDataRepository repo)
     {
@@ -319,9 +325,19 @@ public static class SearchEndpoints
             return Results.BadRequest(new { error = $"'{dish.Name}' has sub-options - subOptionChoice must be 1 or 2. 1) {opt1}   2) {opt2}" });
         }
 
-        if (request.DayTargets is not { Count: > 0 } && request.OtFriendly != true && request.MapSizes is not { Count: > 0 })
+        AchievementPreset.Entry? achievementPreset = null;
+        if (!string.IsNullOrEmpty(request.AchievementPreset))
         {
-            return Results.BadRequest(new { error = "At least one card target is required (or check OT Friendly / a map size)." });
+            achievementPreset = AchievementPreset.TryResolve(request.AchievementPreset);
+            if (achievementPreset is null)
+            {
+                return Results.BadRequest(new { error = $"Unknown achievement preset '{request.AchievementPreset}'." });
+            }
+        }
+
+        if (request.DayTargets is not { Count: > 0 } && request.OtFriendly != true && request.MapSizes is not { Count: > 0 } && achievementPreset is null)
+        {
+            return Results.BadRequest(new { error = "At least one card target is required (or check OT Friendly / a map size / an achievement preset)." });
         }
 
         var dayTargets = new Dictionary<int, TargetMatcher>();
@@ -437,7 +453,8 @@ public static class SearchEndpoints
             // Reroll temporarily disabled (known-buggy skipChoices mechanic) - re-enable by
             // restoring `request.AllowRerollPerDay == true` here and in GetSearchPath, and
             // un-hiding the checkbox in search.html.
-            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true, AllowRerollPerDay: false, MapSizes: mapSizes);
+            SettingSlug: request.Setting, OtFriendly: request.OtFriendly == true, AllowRerollPerDay: false, MapSizes: mapSizes,
+            RequiredShopApplianceIds: achievementPreset?.ApplianceIds);
         long matchCap;
         if (request.StopAfterFirstMatch == true)
         {

@@ -21,6 +21,8 @@ const notifyPermissionWarning = document.getElementById("notify-permission-warni
 const otFriendlyInput = document.getElementById("ot-friendly");
 const mapSizeFieldGroup = document.getElementById("map-size-field-group");
 const mapSizeCheckboxes = [...document.querySelectorAll(".map-size-checkbox")];
+const achievementPresetSelect = document.getElementById("achievement-preset-select");
+const achievementPresetExplanation = document.getElementById("achievement-preset-explanation");
 const allowRerollInput = document.getElementById("allow-reroll");
 const excludeSeedsInput = document.getElementById("exclude-seeds-input");
 const recentSearchesSection = document.getElementById("recent-searches");
@@ -659,6 +661,19 @@ for (const checkbox of mapSizeCheckboxes) {
   });
 }
 
+achievementPresetSelect.addEventListener("change", () => {
+  if (achievementPresetSelect.value) {
+    relaxEmptyDayTargetRows();
+  }
+
+  const option = achievementPresetSelect.selectedOptions[0];
+  const explanationText = option?.dataset.explanation || "Select a preset above to see what it checks.";
+  achievementPresetExplanation.innerHTML = "";
+  const p = document.createElement("p");
+  p.textContent = explanationText;
+  achievementPresetExplanation.appendChild(p);
+});
+
 // Runs the permission+subscribe sequence right on the checkbox's own change event (not deferred to
 // form submit) specifically to stay inside the same user-gesture window Notification.requestPermission
 // relies on in some browsers. Un-checking (or any failure below) clears currentPushSubscription, so
@@ -1012,6 +1027,22 @@ async function loadCardPacks() {
   }
 }
 
+// Static presets (not setting-scoped) - loaded once like loadHeatLevels/loadCardPacks. Each
+// option stashes its explanation text in a data attribute so the "What does this search for?"
+// details block can show it without a second round-trip when the selection changes.
+async function loadAchievementPresets() {
+  const response = await fetch("/api/search/achievement-presets");
+  const presets = await response.json();
+
+  for (const preset of presets) {
+    const option = document.createElement("option");
+    option.value = preset.slug;
+    option.textContent = preset.displayName;
+    option.dataset.explanation = preset.explanation;
+    achievementPresetSelect.appendChild(option);
+  }
+}
+
 dishSelect.addEventListener("change", onDishChanged);
 heatSelect.addEventListener("change", onDishChanged);
 tierInput.addEventListener("input", onDishChanged);
@@ -1076,6 +1107,7 @@ async function loadInit() {
   await loadUnlocksForSetting(settingSelect.value);
   await loadHeatLevels();
   await loadCardPacks();
+  await loadAchievementPresets();
   updateCardPackLock(settingSelect, cardPackSelect);
   updateMapSizeLock();
   addDayTargetRow();
@@ -1131,6 +1163,8 @@ async function prefillFormFromPayload(request) {
   }
   otFriendlyInput.checked = Boolean(request.otFriendly);
   allowRerollInput.checked = Boolean(request.allowRerollPerDay);
+  achievementPresetSelect.value = request.achievementPreset ?? "";
+  achievementPresetSelect.dispatchEvent(new Event("change"));
   updateMapSizeLock();
   if (!mapSizeFieldGroup.classList.contains("disabled")) {
     const requestedSizes = new Set(request.mapSizes ?? []);
@@ -1587,6 +1621,7 @@ function buildSearchPayload() {
     otFriendly: otFriendlyInput.checked,
     allowRerollPerDay: allowRerollInput.checked,
     mapSizes: mapSizeCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+    achievementPreset: achievementPresetSelect.value || null,
     // Collapses to false if the box is checked but subscribing never actually succeeded (denied
     // permission, unsupported browser, etc.) - correctly falls back to today's fully
     // heartbeat-gated behavior with no server-side change needed, since the server never sees
@@ -1693,8 +1728,8 @@ form.addEventListener("submit", async (event) => {
 
   const payload = buildSearchPayload();
 
-  if (payload.dayTargets.length === 0 && !payload.otFriendly && payload.mapSizes.length === 0) {
-    setStatus("Add at least one day target (or check OT Friendly / a map size).", true);
+  if (payload.dayTargets.length === 0 && !payload.otFriendly && payload.mapSizes.length === 0 && !payload.achievementPreset) {
+    setStatus("Add at least one day target (or check OT Friendly / a map size / an achievement preset).", true);
     return;
   }
 

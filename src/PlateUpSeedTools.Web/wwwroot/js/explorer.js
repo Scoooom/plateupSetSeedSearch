@@ -534,16 +534,6 @@ async function renderFrontier(walkStart, myGeneration) {
 
   while (true) {
     const nextDay = current.day + 1;
-    if (nextDay > 15) {
-      if (myGeneration !== explorationGeneration) {
-        return;
-      }
-      dayPanelEl.innerHTML = "";
-      const p = document.createElement("p");
-      p.textContent = "Reached day 15 - this is as far as the Explorer goes.";
-      dayPanelEl.appendChild(p);
-      return;
-    }
 
     if (myGeneration === explorationGeneration) {
       dayPanelEl.innerHTML = "";
@@ -579,6 +569,18 @@ function renderDayPanel(node, day, response, rerollView = false) {
     tag.className = "pack-tag";
     tag.textContent = response.sourcePackName;
     dayPanelEl.appendChild(tag);
+  }
+
+  // Every ground-truth capture this project has ever done stops at day 15 (the last pinned
+  // schedule event, the Franchise Cards Pack) - day 16+ is the day<=15 formula extrapolated
+  // forward, not a verified overtime-day mechanic. Surface that once per overtime day, not just
+  // in docs, since it materially changes how much to trust the result.
+  if (day > 15) {
+    const warning = document.createElement("p");
+    warning.className = "field-note overtime-warning";
+    warning.textContent =
+      "Day 16+ is extrapolated from the day ≤15 schedule - not verified against real overtime-day gameplay.";
+    dayPanelEl.appendChild(warning);
   }
 
   if (rerollView) {

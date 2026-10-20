@@ -501,6 +501,10 @@ button[type="submit"]:hover {
   font-style: italic;
 }
 
+.overtime-warning {
+  color: var(--accent-strong);
+}
+
 .map-size-row {
   display: flex;
   flex-wrap: wrap;

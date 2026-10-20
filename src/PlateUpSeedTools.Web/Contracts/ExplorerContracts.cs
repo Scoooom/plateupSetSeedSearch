@@ -9,10 +9,11 @@ public sealed record ExplorerPathEntryDto(int Day, int CardId, bool Rerolled = f
 /// <summary>
 /// Stateless "what does this seed offer on day N, given these earlier picks" query - the server
 /// holds no session state; the client resends the whole path (day 1..Day-1's committed picks) on
-/// every request and the server replays a fresh CardDrawSimulator from day 1 each time (cheap: at
-/// most 15 deterministic simulation steps, no I/O). See CardDrawSimulator.SimulateDay's "days must
-/// be simulated in increasing order" note for why replay-from-1 is required rather than resuming
-/// mid-stream.
+/// every request and the server replays a fresh CardDrawSimulator from day 1 each time (cheap: a
+/// handful of deterministic simulation steps per day requested, no I/O - unbounded above day 15
+/// for overtime-day scouting, though nothing past day 15 is ground-truth-verified). See
+/// CardDrawSimulator.SimulateDay's "days must be simulated in increasing order" note for why
+/// replay-from-1 is required rather than resuming mid-stream.
 /// </summary>
 public sealed record ExplorerDayRequest(
     string Setting,
