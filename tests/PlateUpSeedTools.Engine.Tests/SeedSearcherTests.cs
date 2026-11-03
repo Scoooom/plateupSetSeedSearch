@@ -145,8 +145,10 @@ public class SeedSearcherTests
     // "v4" and "46" both hash to Seed.IntValue 5861743 - and every RNG stream derives solely from
     // that 32-bit hash, so they are the byte-identical game. The searcher must report only one of
     // them and record the other as an equivalent. Alphabet "v46" length 2 is 9 candidate strings,
-    // exactly one colliding pair, so 8 distinct games. maxDegreeOfParallelism: 1 makes the
-    // first-seen representative deterministic ("v4" is enumerated before "46").
+    // exactly one colliding pair, so 8 distinct games. Doesn't assert WHICH of "v4"/"46" wins -
+    // SeedSearcher.Search enumerates via IndexShuffler now (deliberately decorrelating visiting
+    // order from raw lexicographic index, see that class's doc comment), so "first encountered" is
+    // no longer simple ascending index order - only that the collapsing behavior itself is correct.
     [Fact]
     public void CollapsesSeedStringsThatHashToTheSameValue()
     {
@@ -169,14 +171,15 @@ public class SeedSearcherTests
             onProgress: _ => { },
             cancellationToken: CancellationToken.None);
 
-        Assert.Equal(8, reported.Count);          // 9 strings, one colliding pair collapsed
-        Assert.Contains("v4", reported);          // first-seen wins
-        Assert.DoesNotContain("46", reported);
+        Assert.Equal(8, reported.Count); // 9 strings, one colliding pair collapsed
+        var winner = reported.Contains("v4") ? "v4" : "46";
+        var loser = winner == "v4" ? "46" : "v4";
+        Assert.DoesNotContain(loser, reported);
 
         var equivalent = Assert.Single(result.EquivalentSeeds);
-        Assert.Equal("v4", equivalent.Key);
+        Assert.Equal(winner, equivalent.Key);
         Assert.Equal(1, equivalent.Value.Count);
-        Assert.Equal(new[] { "46" }, equivalent.Value.Sample);
+        Assert.Equal(new[] { loser }, equivalent.Value.Sample);
     }
 
     // With 9 candidate strings but 8 distinct games, a cap of 9 is never reached (proving the cap

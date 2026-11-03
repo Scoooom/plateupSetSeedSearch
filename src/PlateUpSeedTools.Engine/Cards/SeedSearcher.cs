@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Numerics;
 using PlateUpSeedTools.Engine.Data;
 using PlateUpSeedTools.Engine.Seeding;
 using PlateUpSeedTools.Engine.Shop;
@@ -241,7 +242,12 @@ public static class SeedSearcher
                 // string-mode loop below.
                 Parallel.For(0L, IntValueSpaceSize, parallelOptions, i =>
                 {
-                    var seed = Seed.FromIntValue(unchecked((int)(uint)i));
+                    // Shuffled so an early-cancelled/capped run samples spread across the whole
+                    // IntValue space rather than starting from IntValue 0 upward - see
+                    // IndexShuffler's doc comment for why raw index order is a real problem, not
+                    // just a cosmetic one.
+                    var shuffled = IndexShuffler.Permute(i, IntValueSpaceSize);
+                    var seed = Seed.FromIntValue(unchecked((int)(uint)shuffled));
                     if (excludedHashes?.Contains(seed.IntValue) != true)
                     {
                         var (isMatch, otFriendly) = Matches(
@@ -272,9 +278,15 @@ public static class SeedSearcher
             }
             else
             {
+                // The full alphabet/length space (NOT request.TotalToCheck, which may be a much
+                // smaller user-configured limit) - the shuffle must be keyed on the whole space so a
+                // bounded run samples spread across all of it, rather than reshuffling within the
+                // same small prefix it would otherwise be stuck in. See IndexShuffler's doc comment.
+                var stringSpaceSize = ComputeStringSpaceSize(request.Alphabet, request.Length);
                 Parallel.For(0L, request.TotalToCheck, parallelOptions, i =>
                 {
-                    var seedString = IndexToSeedString(i, request.Alphabet, request.Length);
+                    var shuffled = IndexShuffler.Permute(i, stringSpaceSize);
+                    var seedString = IndexToSeedString(shuffled, request.Alphabet, request.Length);
                     var seed = new Seed(seedString);
                     if (excludedHashes?.Contains(seed.IntValue) != true)
                     {
@@ -680,6 +692,15 @@ public static class SeedSearcher
 
             yield return (day, targetMatcher, result, rerolled);
         }
+    }
+
+    // Full alphabet.Length^length space, clamped to long.MaxValue - mirrors the BigInteger.Pow
+    // calculation CLI/web callers already do to produce request.TotalToCheck, recomputed here since
+    // TotalToCheck itself may be a smaller user-configured limit (see its call site's comment).
+    private static long ComputeStringSpaceSize(string alphabet, int length)
+    {
+        var spaceSize = BigInteger.Pow(alphabet.Length, length);
+        return spaceSize > long.MaxValue ? long.MaxValue : (long)spaceSize;
     }
 
     private static string IndexToSeedString(long index, string alphabet, int length)
