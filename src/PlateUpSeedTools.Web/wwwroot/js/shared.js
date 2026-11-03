@@ -1,4 +1,5 @@
-// Shared between index.html (home) and preview.html - no page-specific DOM references here.
+// Shared across all four pages (index, preview, search, explorer) - no page-specific DOM
+// references here.
 
 // Seeds can be any alphanumeric string up to 8 characters - the game's "friendly" alphabet
 // (bdghjmqrtvwxy346789) is only used when it auto-generates a seed for display, it doesn't
@@ -48,9 +49,98 @@ function updateCardPackLock(settingSelectEl, cardPackSelectEl) {
   if (locked) {
     cardPackSelectEl.value = "";
   }
-  cardPackSelectEl.title = locked
-    ? "Only the Normal setting has more than one real card schedule - this setting always uses its own."
-    : "";
+  // Title tooltip alone is invisible on mobile (no hover) - dim the whole field-group so
+  // "disabled" reads as a deliberate lock, not a broken control. The field-note sibling spells
+  // out why it's locked.
+  cardPackSelectEl.closest(".field-group")?.classList.toggle("locked", locked);
+}
+
+let cardInputCounter = 0;
+
+function setDatalistOptions(datalist, names) {
+  datalist.innerHTML = "";
+  for (const name of names) {
+    const option = document.createElement("option");
+    option.value = name;
+    datalist.appendChild(option);
+  }
+}
+
+// The datalist backing a card input built by createCardInput below, looked up by stored id - NOT
+// via the `list` attribute (createCardInput deliberately never sets one, see its own comment).
+function datalistFor(input) {
+  return document.getElementById(input.dataset.datalistId);
+}
+
+// Builds a free-text input for picking a card by name, backed by a <datalist> that holds the
+// current candidate list (read elsewhere via datalistFor(input)), plus a hand-rolled suggestion
+// dropdown rendered in plain DOM. The dropdown exists because the native <datalist> popup turned
+// out to depend on the OS keyboard, not just the browser: confirmed on a real iPhone that
+// suggestions show fine with Apple's stock keyboard but never appear at all with a third-party
+// keyboard app (SwiftKey, Gboard, etc.), since those don't participate in Safari's own
+// suggestion-strip UI - no code-level fix makes a native datalist popup appear there. This input
+// deliberately never sets the `list` attribute at all, so no browser's own datalist popup can
+// render and visually stack with this one on platforms where it otherwise would.
+function createCardInput(className, idPrefix = "card") {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = `card-name-input ${className}`;
+  input.autocomplete = "off";
+  input.placeholder = "Card name";
+
+  const datalistId = `${idPrefix}-datalist-${cardInputCounter++}`;
+  input.dataset.datalistId = datalistId;
+  const datalist = document.createElement("datalist");
+  datalist.id = datalistId;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "card-input-wrapper";
+  const suggestionsBox = document.createElement("div");
+  suggestionsBox.className = "card-suggestions";
+  suggestionsBox.hidden = true;
+  wrapper.appendChild(input);
+  wrapper.appendChild(suggestionsBox);
+
+  function closeSuggestions() {
+    suggestionsBox.hidden = true;
+    suggestionsBox.innerHTML = "";
+  }
+
+  function openSuggestions() {
+    if (input.disabled) {
+      return;
+    }
+    const query = input.value.trim().toLowerCase();
+    const options = [...datalist.options].map((option) => option.value);
+    const matches = (query ? options.filter((name) => name.toLowerCase().includes(query)) : options).slice(0, 25);
+    suggestionsBox.innerHTML = "";
+    if (matches.length === 0) {
+      suggestionsBox.hidden = true;
+      return;
+    }
+    for (const name of matches) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "card-suggestion-item";
+      item.textContent = name;
+      // mousedown (not click) fires before the input would blur, and preventDefault stops that
+      // blur from happening at all - so picking a suggestion can't race the blur-close below.
+      item.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        input.value = name;
+        closeSuggestions();
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      suggestionsBox.appendChild(item);
+    }
+    suggestionsBox.hidden = false;
+  }
+
+  input.addEventListener("focus", openSuggestions);
+  input.addEventListener("input", openSuggestions);
+  input.addEventListener("blur", closeSuggestions);
+
+  return { input, datalist, wrapper };
 }
 
 // Wires the Export/Import Settings dialog shared by search.html and explorer.html - a client-only

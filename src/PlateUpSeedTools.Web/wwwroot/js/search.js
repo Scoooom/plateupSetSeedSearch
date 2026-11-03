@@ -84,7 +84,6 @@ const PREVIEW_CACHE_MAX = 60;
 // directly (not via a click) for a notify-enabled job, which gets its hash eagerly at job start -
 // see the submit handler and loadInit's "live" link branch.
 let currentShareHash = null;
-let datalistCounter = 0;
 
 // "Notify on completion" (Web Push) state - see notifyOnCompletionInput's change handler below.
 // pushSupported/pushConfigured gate whether notifyField is ever shown at all; currentPushSubscription
@@ -262,37 +261,10 @@ function setStatus(message, isError) {
   statusEl.classList.toggle("error", Boolean(isError));
 }
 
-// Builds a text input backed by a <datalist> (rather than a <select>) so it supports typing, not
-// just clicking through a closed list - each row gets its own <datalist> since candidate lists
-// differ per row/day. Repopulating a row's candidates only ever rebuilds the <datalist>'s options,
-// never touches the <input>'s own .value - see refreshDayTargetRow/refreshFranchiseRow for why
-// that matters (a stale/no-longer-reachable selection simply stays typed rather than being
-// silently cleared).
-function createCardInput(className) {
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = className;
-  input.autocomplete = "off";
-  input.placeholder = "Card name";
-  const datalistId = `card-datalist-${datalistCounter++}`;
-  input.setAttribute("list", datalistId);
-
-  const datalist = document.createElement("datalist");
-  datalist.id = datalistId;
-
-  input.addEventListener("blur", () => validateCardInput(input));
-
-  return { input, datalist };
-}
-
-function setDatalistOptions(datalist, names) {
-  datalist.innerHTML = "";
-  for (const name of names) {
-    const option = document.createElement("option");
-    option.value = name;
-    datalist.appendChild(option);
-  }
-}
+// createCardInput/setDatalistOptions/datalistFor come from shared.js. Repopulating a row's
+// candidates only ever rebuilds the <datalist>'s options, never touches the <input>'s own .value
+// - see refreshDayTargetRow/refreshFranchiseRow for why that matters (a stale/no-longer-reachable
+// selection simply stays typed rather than being silently cleared).
 
 // Unlike setDatalistOptions (a <datalist> backing a free-text <input>), this populates a real
 // <select> - so an already-chosen value that's still a valid option must be preserved rather than
@@ -344,7 +316,7 @@ function validateClassInput(select) {
 // blocks submit with a message (via the input's native validity state), rather than silently
 // reverting to the last valid value.
 function validateCardInput(input) {
-  const datalist = document.getElementById(input.getAttribute("list"));
+  const datalist = datalistFor(input);
   const options = datalist ? [...datalist.options].map((o) => o.value) : [];
   const value = input.value.trim();
 
@@ -466,9 +438,10 @@ function addDayTargetRow() {
 
   // Starts empty and disabled - only populated (via /api/search/possible-cards) once this row has
   // a valid day, and only with cards actually reachable that day given the dish/heat/earlier picks.
-  const { input: cardInput, datalist: cardDatalist } = createCardInput("day-target-card");
+  const { input: cardInput, datalist: cardDatalist, wrapper: cardWrapper } = createCardInput("day-target-card", "day-target");
   cardInput.disabled = true;
   cardInput.required = true;
+  cardInput.addEventListener("blur", () => validateCardInput(cardInput));
 
   // Class mode's equivalent of cardInput - a real <select> (not a datalist-backed input, since the
   // option set is small and closed) populated the same way, only with reachable dish classes
@@ -487,7 +460,7 @@ function addDayTargetRow() {
 
   modeSelect.addEventListener("change", () => {
     const cardMode = modeSelect.value === "card";
-    cardInput.hidden = !cardMode;
+    cardWrapper.hidden = !cardMode;
     cardInput.required = cardMode;
     classSelect.hidden = cardMode;
     classSelect.required = !cardMode;
@@ -580,7 +553,7 @@ function addDayTargetRow() {
   row.appendChild(dayInput);
   row.appendChild(anyDayLabel);
   row.appendChild(modeSelect);
-  row.appendChild(cardInput);
+  row.appendChild(cardWrapper);
   row.appendChild(cardDatalist);
   row.appendChild(classSelect);
   row.appendChild(removeButton);
@@ -592,7 +565,8 @@ function addFranchiseCardRow() {
   const row = document.createElement("div");
   row.className = "dynamic-row";
 
-  const { input: cardInput, datalist: cardDatalist } = createCardInput("franchise-card");
+  const { input: cardInput, datalist: cardDatalist, wrapper: cardWrapper } = createCardInput("franchise-card", "franchise-card");
+  cardInput.addEventListener("blur", () => validateCardInput(cardInput));
 
   const removeButton = document.createElement("button");
   removeButton.type = "button";
@@ -610,7 +584,7 @@ function addFranchiseCardRow() {
     scheduleAllFranchiseRefresh();
   });
 
-  row.appendChild(cardInput);
+  row.appendChild(cardWrapper);
   row.appendChild(cardDatalist);
   row.appendChild(removeButton);
   franchiseCardRowsEl.appendChild(row);
@@ -818,7 +792,7 @@ async function fetchFranchiseCandidates(otherSelectedCardNames) {
 async function refreshDayTargetRow(row) {
   const mode = getRowMode(row);
   const cardInput = row.querySelector(".day-target-card");
-  const datalist = document.getElementById(cardInput.getAttribute("list"));
+  const datalist = datalistFor(cardInput);
   const classSelect = row.querySelector(".day-target-class");
   const activeControl = mode === "class" ? classSelect : cardInput;
   const inactiveControl = mode === "class" ? cardInput : classSelect;
@@ -910,7 +884,7 @@ async function refreshFranchiseRow(row) {
   }
 
   const cardInput = row.querySelector(".franchise-card");
-  const datalist = document.getElementById(cardInput.getAttribute("list"));
+  const datalist = datalistFor(cardInput);
   const state = getRowState(row);
   const myGeneration = ++state.generation;
 

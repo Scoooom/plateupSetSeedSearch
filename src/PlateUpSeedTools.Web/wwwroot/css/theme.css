@@ -491,6 +491,10 @@ button[type="submit"]:hover {
   color: var(--text-muted);
 }
 
+.field-group.locked {
+  opacity: 0.5;
+}
+
 .full-width {
   flex-basis: 100%;
 }
@@ -553,14 +557,55 @@ button[type="submit"]:hover {
 }
 
 .dynamic-row select,
-.dynamic-row input[list] {
+.dynamic-row .card-input-wrapper {
   flex: 1;
   min-width: 0;
 }
 
-.dynamic-row input[list]:invalid,
+.card-input-wrapper {
+  position: relative;
+}
+
+.card-input-wrapper .card-name-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.card-name-input:invalid,
 .dynamic-row select:invalid {
   border-color: var(--error, #d33);
+}
+
+.card-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin-top: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.35);
+}
+
+.card-suggestion-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.card-suggestion-item:hover,
+.card-suggestion-item:focus {
+  background: rgba(241, 230, 216, 0.08);
 }
 
 /* The "Specific card"/"Any of class" toggle should stay compact, unlike the card/class value

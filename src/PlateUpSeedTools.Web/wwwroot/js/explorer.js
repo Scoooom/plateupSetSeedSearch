@@ -22,10 +22,10 @@ const layoutPanelLink = document.getElementById("layout-panel-link");
 const layoutPanelImage = document.getElementById("layout-panel-image");
 const layoutPanelStats = document.getElementById("layout-panel-stats");
 
-// VALID_SEED/validateSeed/fetchSettings/populateSettingSelect come from shared.js.
+// VALID_SEED/validateSeed/fetchSettings/populateSettingSelect/createCardInput/setDatalistOptions/
+// datalistFor come from shared.js.
 
 let unlocksForSetting = [];
-let datalistCounter = 0;
 
 // The explored tree: each node is one committed decision (a card accepted, or an explicit skip) at
 // a given day. rootNode is a virtual "before day 1" node. Going back to an earlier node and picking
@@ -52,28 +52,14 @@ function setStatus(message, isError) {
 }
 
 // --- Setup form (setting/dish/sub-option/heat/franchise carryover) - same shape as search.js's
-// equivalent fields, kept separate here rather than sharing a module for this pass (see
-// project plan's "promote to shared.js" note - flagged as a reasonable follow-up, not done here to
-// keep this change scoped to what's needed for the Explorer page itself). ---
+// equivalent fields. createCardInput/setDatalistOptions now live in shared.js (promoted there so
+// both pages' card inputs get the same iOS-keyboard-safe suggestion dropdown - see
+// createCardInput's comment in shared.js). ---
 
-function createCardInput(className) {
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = className;
-  input.autocomplete = "off";
-  input.placeholder = "Card name";
-  const datalistId = `explorer-card-datalist-${datalistCounter++}`;
-  input.setAttribute("list", datalistId);
-
-  // Populated by refreshFranchiseRow, not synchronously here - a franchise-carryover candidate list
-  // needs the copy-expanded ("Variety (copy 1)") names from /api/search/franchise-candidates, not
-  // the raw unlocksForSetting list, which has no copy-numbering at all (see
-  // fetchFranchiseCandidates/refreshFranchiseRow below).
-  const datalist = document.createElement("datalist");
-  datalist.id = datalistId;
-
-  return { input, datalist };
-}
+// Populated by refreshFranchiseRow, not synchronously - a franchise-carryover candidate list needs
+// the copy-expanded ("Variety (copy 1)") names from /api/search/franchise-candidates, not the raw
+// unlocksForSetting list, which has no copy-numbering at all (see fetchFranchiseCandidates/
+// refreshFranchiseRow below).
 
 function getFranchiseCardNames() {
   return [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")]
@@ -83,15 +69,6 @@ function getFranchiseCardNames() {
 
 function getAllFranchiseRows() {
   return [...franchiseCardRowsEl.querySelectorAll(".dynamic-row")];
-}
-
-function setDatalistOptions(datalist, names) {
-  datalist.innerHTML = "";
-  for (const name of names) {
-    const option = document.createElement("option");
-    option.value = name;
-    datalist.appendChild(option);
-  }
 }
 
 // Mirrors search.js's fetchFranchiseCandidates - see that file's comment on FranchiseCandidatesResponse
@@ -131,7 +108,7 @@ async function refreshFranchiseRow(row) {
   }
 
   const input = row.querySelector(".franchise-card");
-  const datalist = document.getElementById(input.getAttribute("list"));
+  const datalist = datalistFor(input);
   const myGeneration = (input._generation = (input._generation ?? 0) + 1);
 
   const otherSelectedCardNames = getAllFranchiseRows()
@@ -158,7 +135,7 @@ function addFranchiseCardRow() {
   const row = document.createElement("div");
   row.className = "dynamic-row";
 
-  const { input, datalist } = createCardInput("franchise-card");
+  const { input, datalist, wrapper } = createCardInput("franchise-card", "explorer-franchise-card");
   input.addEventListener("change", () => {
     resetExploration();
     refreshAllFranchiseRows();
@@ -174,7 +151,7 @@ function addFranchiseCardRow() {
     refreshAllFranchiseRows();
   });
 
-  row.appendChild(input);
+  row.appendChild(wrapper);
   row.appendChild(datalist);
   row.appendChild(removeButton);
   franchiseCardRowsEl.appendChild(row);
