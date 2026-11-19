@@ -86,18 +86,20 @@ public static class SearchEndpoints
     /// are skipped rather than erroring - this endpoint is called on every keystroke elsewhere in
     /// the form and a momentarily-stale other-row value shouldn't break this row's own candidate list.
     ///
-    /// Deliberately validates against dish/sub-option/heat cards but NOT the resolved setting/
-    /// schedule's own bonus StartingUnlockId (e.g. Autumn's "Community") - a carryover card
-    /// represents something owned from a PRIOR run, so it can't be invalidated by a bonus card THIS
-    /// run grants. Some franchise cards ARE genuinely BlockedBy a specific bonus card (e.g. every
-    /// "Variety" copy is BlockedBy Autumn's "Community" - real, ground-truth-verified data), which
-    /// correctly prevents ever freshly drawing them again once that bonus card is owned (see
-    /// GetPossibleCards, unchanged) - but it doesn't retroactively un-own a copy already carried in
-    /// from before that bonus card existed. CardDrawSimulatorGroundTruthTests
-    /// .MatchesRealAutumnFranchiseCapture pins exactly this combination (carried-over Variety +
-    /// this-run's Community) against a real captured game session. Mirrors StartSearch's own
-    /// "defense in depth" re-validation (below), which already excludes StartingUnlockId from its
-    /// baseline for the same reason.
+    /// Validates each candidate ONLY against the other franchise-carryover cards already selected
+    /// in this row set - deliberately NOT against this run's dish, sub-option, heat cards, or the
+    /// resolved setting/schedule's own bonus StartingUnlockId (e.g. Autumn's "Community"). A carryover
+    /// card represents something owned from a PRIOR run, so none of those - all facts about THIS run -
+    /// can retroactively un-own it. A previous version of this check fed the dish/heat baseline in
+    /// too (correctly excluding only StartingUnlockId), which silently hid otherwise-valid carryover
+    /// cards whenever the CURRENT dish happened to appear in their BlockedByIds (e.g. choosing "Coffee"
+    /// as the starting dish hid "Variety" from every row, since every "Variety" copy is genuinely
+    /// BlockedBy "Coffee" - real, ground-truth-verified data, see below) - same bug for "Salad"/
+    /// "Sundaes" hiding "High Standards"/"Ice Cream". That BlockedBy relationship is real and still
+    /// correctly enforced for an actual fresh draw (see GetPossibleCards, unchanged) - it just can't
+    /// also veto a carryover pick representing history from before this run's dish was ever chosen.
+    /// Now matches StartSearch's own "defense in depth" re-validation (below), which already only
+    /// checks carryover cards against each other.
     /// </summary>
     private static IResult GetFranchiseCandidates(FranchiseCandidatesRequest request, GameDataRepository repo)
     {
@@ -112,18 +114,17 @@ public static class SearchEndpoints
         }
 
         var setting = repo.GetSetting(request.Setting);
-        ResolvedRunSetup setup;
         try
         {
-            ResolveStartingUnlockId(repo, setting, request.CardPack); // validates cardPack slug; deliberately not fed into the baseline below
-            setup = RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, startingUnlockId: null);
+            ResolveStartingUnlockId(repo, setting, request.CardPack); // validates cardPack slug
+            RunSetup.Resolve(repo, dish.Id, request.SubOptionChoice, request.Heat, startingUnlockId: null); // validates dish/sub-option/heat; result deliberately unused, see doc comment above
         }
         catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
         {
             return Results.BadRequest(new { error = ex.Message });
         }
 
-        var ownedIds = new HashSet<int>(setup.InitiallyOwnedIds);
+        var ownedIds = new HashSet<int>();
         foreach (var name in request.OtherSelectedCardNames ?? [])
         {
             if (string.IsNullOrEmpty(name) || !TryResolveUnlock(repo, name, "card", out var other, out _))
