@@ -87,7 +87,6 @@ function shippedDefaultColor(key) {
   return getComputedStyle(document.documentElement).getPropertyValue(`--room-${key}`).trim();
 }
 
-const COLOR_OVERRIDES_STORAGE_KEY = "plateup:colorOverrides";
 function loadColorOverrides() {
   try {
     const raw = localStorage.getItem(COLOR_OVERRIDES_STORAGE_KEY);
@@ -99,6 +98,7 @@ function loadColorOverrides() {
 function saveColorOverrides() {
   try {
     localStorage.setItem(COLOR_OVERRIDES_STORAGE_KEY, JSON.stringify(colorOverrides));
+    syncColorCookie();
   } catch {
     // localStorage unavailable (private browsing, storage full, ...) - customization just won't
     // persist across reloads; still works for the current page view.

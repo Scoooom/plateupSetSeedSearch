@@ -39,6 +39,12 @@ public static partial class LayoutEndpoints
     // wwwroot/preview.html's <head>.
     private const string OgMetaMarker = "<!-- OG_META -->";
 
+    // Cookie mirroring the player's saved color overrides (same JSON shape as the `colors` query
+    // param). Written client-side by wwwroot/js/shared.js so every page that shows a .png
+    // (explorer, search, preview) renders with the player's colors, not just requests that carry
+    // `?colors=` explicitly. The query param still wins when both are present.
+    private const string ColorsCookieName = "plateup_colors";
+
     public static void MapLayoutEndpoints(this WebApplication app)
     {
         app.MapGet("/api/settings", (GameDataRepository repo) => repo.ListSettings());
@@ -80,11 +86,23 @@ public static partial class LayoutEndpoints
             return Results.BadRequest(new { error });
         }
 
-        // Content is deterministic per setting+seed+colors - safe for browsers/Discord's own
-        // fetcher to cache (the full override state is baked into the URL itself, not a session/
-        // cookie, so a "public" cache never mixes up different players' choices).
-        httpContext.Response.Headers.CacheControl = "public, max-age=86400";
-        var colorOverrides = ParseColorOverrides(httpContext.Request.Query["colors"]);
+        // Content is deterministic per setting+seed+colors. The `?colors=` query param bakes the
+        // override state into the URL, so that case is safe to cache publicly. A cookie-driven
+        // render depends on who's asking, so it must be "private" (never stored by a shared
+        // cache), and every response varies on Cookie so a browser doesn't reuse a default-colored
+        // image after the player changes their colors. Crawlers/Discord send no cookie, so shared
+        // links and og:image still always get the default palette.
+        var queryColors = httpContext.Request.Query["colors"].ToString();
+        var usedCookie = false;
+        var colorOverrides = ParseColorOverrides(queryColors);
+        if (colorOverrides is null && string.IsNullOrWhiteSpace(queryColors))
+        {
+            colorOverrides = ParseColorOverrides(httpContext.Request.Cookies[ColorsCookieName]);
+            usedCookie = colorOverrides is not null;
+        }
+
+        httpContext.Response.Headers.Vary = "Cookie";
+        httpContext.Response.Headers.CacheControl = usedCookie ? "private, max-age=86400" : "public, max-age=86400";
         var png = LayoutImageRenderer.Render(layout, env.WebRootPath, colorOverrides);
         return Results.File(png, "image/png");
     }

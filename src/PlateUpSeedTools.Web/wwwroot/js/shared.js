@@ -7,6 +7,31 @@
 // this must NOT lowercase the input.
 const VALID_SEED = /^[a-zA-Z0-9]{1,8}$/;
 
+// Custom room/feature colors (set on the Seed Previewer page, stored in localStorage) are also
+// mirrored into a cookie so the server can apply them to every rendered layout image - the
+// explorer and search previews are plain <img src="/preview/.../seed.png"> with no `?colors=`.
+// localStorage stays the source of truth; this just copies it. Called on every page load (so
+// colors saved before the cookie existed get picked up from any page) and again by app.js
+// whenever the player changes a color.
+const COLOR_OVERRIDES_STORAGE_KEY = "plateup:colorOverrides";
+const COLOR_COOKIE_NAME = "plateup_colors";
+
+function syncColorCookie() {
+  try {
+    const raw = localStorage.getItem(COLOR_OVERRIDES_STORAGE_KEY);
+    const overrides = raw ? JSON.parse(raw) : {};
+    const secure = location.protocol === "https:" ? "; Secure" : "";
+    if (overrides && Object.keys(overrides).length > 0) {
+      document.cookie = `${COLOR_COOKIE_NAME}=${encodeURIComponent(JSON.stringify(overrides))}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+    } else {
+      document.cookie = `${COLOR_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+    }
+  } catch {
+    // localStorage/cookies unavailable - colors just won't reach the server-rendered images.
+  }
+}
+syncColorCookie();
+
 function validateSeed(seed) {
   if (!VALID_SEED.test(seed)) {
     return "Seed must be 1-8 alphanumeric characters.";
